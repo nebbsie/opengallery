@@ -1,0 +1,175 @@
+---
+description: Opinionated Angular best-practice rules with a focus on inline templates, Tailwind CSS, modern TypeScript, standalone components, signals, and performance.
+globs: ["**/*.{ts,css}"]
+---
+
+# Angular Best Practices (Inline Templates + Tailwind)
+
+This project emphasizes **inline templates** and **Tailwind CSS** for fast, consistent development while maintaining performance, accessibility, and scalability.
+
+## TypeScript Best Practices
+
+- **Strict Type Checking:** Keep `strict` on.
+- **Prefer Type Inference:** Let TS infer when obvious.
+  - **Bad:**
+    ```ts
+    let name: string = 'Angular';
+    ```
+  - **Good:**
+    ```ts
+    let name = 'Angular';
+    ```
+- **Avoid `any`:** Prefer `unknown` and narrow properly.
+
+## Angular Best Practices
+
+- **Standalone Only:** Use standalone components, directives, and pipes. Avoid `NgModules` for new/refactored code.
+- **Implicit Standalone:** You don’t need `standalone: true`; it’s implied.
+  - **Bad:**
+    ```ts
+    @Component({ standalone: true })
+    export class MyComponent {}
+    ```
+  - **Good:**
+    ```ts
+    @Component({})
+    export class MyComponent {}
+    ```
+- **Signals:** Use Angular Signals for reactive state in components/services.
+- **Lazy Loading:** Lazy-load feature routes.
+- **NgOptimizedImage:** Use for all static images.
+- **Host Bindings:** Use the `host` object; **do not** use `@HostBinding` / `@HostListener`.
+
+## Components
+
+- **Single Responsibility:** Small, focused components.
+- **Inline Templates (Default):** Use `template` and (optionally) `styles` inline.
+  - **Example (inline + Tailwind):**
+    ```ts
+    import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
+
+    @Component({
+      selector: 'og-card',
+      changeDetection: ChangeDetectionStrategy.OnPush,
+      template: `
+        <section class="rounded-xl border p-4 shadow-sm bg-white dark:bg-zinc-900">
+          <header class="mb-2 flex items-center justify-between">
+            <h2 class="text-lg font-semibold">{{ title() }}</h2>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              (click)="refresh.emit()"
+            >
+              Refresh
+            </button>
+          </header>
+
+          @if (loading()) {
+            <p class="animate-pulse text-sm text-zinc-500">Loading…</p>
+          } @else {
+            <div class="prose dark:prose-invert max-w-none">
+              <ng-content />
+            </div>
+          }
+        </section>
+      `,
+    })
+    export class OgCardComponent {
+      title = input.required<string>();
+      refresh = output<void>();
+      loading = signal(false);
+      // Example derived state
+      upper = computed(() => this.title().toUpperCase());
+    }
+    ```
+- **Inputs/Outputs:** Prefer `input()` / `output()` over decorators.
+- **Derived State:** Use `computed()`.
+- **Change Detection:** Always set `ChangeDetectionStrategy.OnPush`.
+- **Reactive Forms:** Prefer Reactive Forms for anything non-trivial.
+
+## Tailwind CSS Guidelines
+
+- **Utilities First:** Prefer Tailwind utility classes for layout, spacing, typography, and state. Avoid per-component SCSS when utilities suffice.
+- **Semantic Grouping:** Order classes roughly: layout → box-model → typography → effects → states (`hover:`/`focus:`) → responsive (`sm:`…).
+- **Avoid `ngClass`/`ngStyle` when possible:** Use native `class` and `style` bindings.
+  - **Bad:**
+    ```html
+    <section [ngClass]="{'active': isActive}"></section>
+    ```
+  - **Good:**
+    ```html
+    <section [class.active]="isActive" class="p-4 rounded-lg"></section>
+    ```
+- **Design Tokens via Tailwind Config:** Define theme colors, spacing, and fonts in `tailwind.config.js` rather than ad-hoc CSS.
+- **Minimal CSS Files:** Use global `styles.css` for base resets and rare `@layer components` abstractions; avoid deep component-level CSS unless necessary.
+- **Use `@apply` Sparingly:** Only to extract repeated patterns that aren’t components yet.
+
+### Tailwind Setup (reference)
+
+- `styles.css`
+  ```css
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities;
+
+  /* Optional: global tweaks */
+  html, body { @apply h-full bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100; }
+  ```
+- `tailwind.config.js`
+  ```js
+  /** @type {import('tailwindcss').Config} */
+  module.exports = {
+    content: ["./src/**/*.{html,ts}"],
+    darkMode: 'media', // or 'class'
+    theme: { extend: {} },
+    plugins: [require('@tailwindcss/typography'), require('@tailwindcss/forms')],
+  };
+  ```
+
+## State Management
+
+- **Local State:** Signals.
+- **Derived:** `computed()`.
+- **Pure Updates:** No side effects in transforms.
+- **No `mutate`:** Use `set`/`update`.
+
+## Templates
+
+- **Keep Simple:** Move logic to TS.
+- **Native Control Flow:** Prefer `@if`, `@for`, `@switch`.
+  - **Old:**
+    ```html
+    <section *ngIf="isVisible">Content</section>
+    ```
+  - **New (inline):**
+    ```ts
+    template: `
+      @if (isVisible()) {
+        <section class="p-4">Content</section>
+      }
+      @for (item of items(); track item.id) {
+        <div class="py-1">{{ item.name }}</div>
+      }
+    `
+    ```
+- **Async Pipe:** Use `| async` when binding Observables in templates; prefer converting to signals in TS when practical.
+
+## Services
+
+- **Single Responsibility:** One clear purpose.
+- **`providedIn: 'root'`:** Singleton + tree-shakable.
+- **`inject()` Function:** Prefer over constructor injection, especially in computed/standalone contexts.
+  - **Example:**
+    ```ts
+    import { inject, Injectable, signal } from '@angular/core';
+
+    @Injectable({ providedIn: 'root' })
+    export class PhotosService {
+      private http = inject(HttpClient);
+      photos = signal<Photo[]>([]);
+
+      load() {
+        this.http.get<Photo[]>('/api/photos').subscribe(this.photos.set);
+      }
+    }
+    ```
