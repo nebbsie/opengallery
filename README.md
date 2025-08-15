@@ -5,12 +5,14 @@
 ---
 
 ## 📦 Overview
+
 OpenGallery is a **monorepo** containing multiple packages and services that work together to provide a lightning-fast, private, and customizable photo management experience.  
 The repository is structured for consistent development, testing, and deployment across all modules.
 
 ---
 
 ## 🗂 Repository Structure
+
 ```
 /web   # Web application for OpenGallery
 ```
@@ -18,11 +20,19 @@ The repository is structured for consistent development, testing, and deployment
 ---
 
 ## 🚀 Getting Started
+
+Start infra:
+
+```
+docker compose up -d --remove-orphans
+```
+
 To get started with the web app, check out the [Web README](web/README.md).
 
 ---
 
 ## 📖 Contributing
+
 To maintain consistency and quality, please follow these guidelines:
 
 - **Code Style** — Keep your code style consistent with existing code.

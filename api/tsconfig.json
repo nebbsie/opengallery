@@ -12,6 +12,7 @@
     "skipLibCheck": true,
     "rootDir": "src",
     "outDir": "dist",
+    "declaration": true,
     "baseUrl": ".",
     "types": ["node"]
   },

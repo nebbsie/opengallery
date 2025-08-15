@@ -17,7 +17,7 @@
     "paths": {
       "@core/*": ["./src/@core/*"],
       "@env/*": ["./src/environments/*"],
-      "@api/*": ["../api/src/*"]
+      "@api-types/*": ["../api/dist/index.d.ts"]
     }
   },
   "angularCompilerOptions": {

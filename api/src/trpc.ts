@@ -1,12 +1,20 @@
 import { initTRPC } from "@trpc/server";
 import superjson from "superjson";
+import type { Context } from "./context.js";
+import { auth } from "./auth/auth.js";
 
-export const t = initTRPC.create({
+export const t = initTRPC.context<Context>().create({
   transformer: superjson,
 });
 
 const isAuthenticated = (required: boolean) =>
   t.middleware(async (req) => {
+    const res = await auth.api.getSession({
+      headers: toHeaders(req.ctx.req.headers),
+    });
+
+    console.log("Checking authentication for", res);
+
     return req.next();
   });
 
@@ -32,6 +40,15 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
 
   return result;
 });
+
+export function toHeaders(h: import("http").IncomingHttpHeaders): Headers {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(h)) {
+    if (Array.isArray(v)) v.forEach((val) => headers.append(k, val));
+    else if (v !== undefined) headers.set(k, String(v));
+  }
+  return headers;
+}
 
 export const router = t.router;
 
