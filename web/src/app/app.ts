@@ -1,12 +1,22 @@
-import { Component, signal } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
-import { environment } from '../environments/environment';
+import { Component, inject } from '@angular/core';
+import { Health } from '@core/services/health/health';
+import { JsonPipe } from '@angular/common';
 
 @Component({
   selector: 'app-root',
-  template: `<h1 class="text-3xl font-bold underline">{{ environment.environment }}</h1>`,
+  template: `
+    @if (currentHealth.isLoading()) {
+      <p>Loading...</p>
+    } @else if (currentHealth.isError()) {
+      <p>Error: {{ currentHealth.error().message }}</p>
+    } @else if (currentHealth.isSuccess()) {
+      <span> {{ currentHealth.data() | json }}</span>
+    }
+  `,
+  imports: [JsonPipe],
 })
 export class App {
-  protected readonly title = signal('opengallery');
-  protected readonly environment = environment;
+  private health = inject(Health);
+
+  currentHealth = this.health.get();
 }
