@@ -2,6 +2,8 @@ import {
   ApplicationConfig,
   provideBrowserGlobalErrorListeners,
   provideZonelessChangeDetection,
+  inject,
+  provideAppInitializer,
 } from '@angular/core';
 import { provideRouter, withComponentInputBinding, withInMemoryScrolling } from '@angular/router';
 import { routes } from './app.routes';
@@ -13,8 +15,9 @@ import {
   QueryClient,
   withDevtools,
 } from '@tanstack/angular-query-experimental';
-import { provideAuthClient } from '@core/services/auth/auth-client';
+import { provideBetterAuthClient } from '@core/services/auth/better-auth-client';
 import { environment } from '@env/environment';
+import { Auth } from '@core/services/auth/auth';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -35,6 +38,10 @@ export const appConfig: ApplicationConfig = {
       new QueryClient(),
       withDevtools(() => ({ loadDevtools: 'auto' })),
     ),
-    provideAuthClient(environment.api.url),
+    provideBetterAuthClient(environment.api.url),
+    provideAppInitializer(() => {
+      const auth = inject(Auth);
+      return auth.initialize();
+    }),
   ],
 };

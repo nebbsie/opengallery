@@ -6,7 +6,7 @@ import { createTRPCProxyClient, TRPCClient, TRPCClientError, TRPCLink } from '@t
 import { catchError, Observable, throwError } from 'rxjs';
 import { deserialize, serialize, SuperJSONResult } from 'superjson';
 import { TrpcCache } from '@core/services/trpc/trpc-cache';
-import { AUTH_CLIENT, type AuthClient } from '@core/services/auth/auth-client';
+import { BETTER_AUTH_CLIENT, type BetterAuthClient } from '@core/services/auth/better-auth-client';
 
 const TRPC_CLIENT = new InjectionToken<TRPCClient<AppRouter>>('TRPC_CLIENT');
 
@@ -14,7 +14,7 @@ interface AngularLinkOptions {
   url: string;
 }
 
-const angularLink = (http: HttpClient, cache: TrpcCache, auth: AuthClient) => {
+const angularLink = (http: HttpClient, cache: TrpcCache, auth: BetterAuthClient) => {
   return <TRouter extends AppRouter>(opts: AngularLinkOptions): TRPCLink<TRouter> => {
     return () =>
       ({ op }) =>
@@ -51,23 +51,9 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: AuthClient) => {
 
           const perform = async () => {
             try {
-              // Try to retrieve access token from Better Auth client session
-              try {
-                const sessionResult =
-                  (await (auth.getSession() as unknown as Promise<unknown>)) as {
-                    data?: unknown;
-                  } | null;
-                const data = (sessionResult as { data?: any } | null)?.data ?? sessionResult;
-                const possibleToken =
-                  (data as any)?.accessToken ||
-                  (data as any)?.token ||
-                  (data as any)?.session?.token ||
-                  (data as any)?.session?.accessToken;
-                if (possibleToken && typeof possibleToken === 'string') {
-                  headers['Authorization'] = `Bearer ${possibleToken}`;
-                }
-              } catch {
-                // ignore token retrieval errors; proceed without Authorization header
+              const session = await auth.getSession();
+              if (session?.data?.session.token) {
+                headers['Authorization'] = `Bearer ${session.data.session.token}`;
               }
 
               switch (op.type) {
@@ -107,8 +93,6 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: AuthClient) => {
                         observer.next({ result: { type: 'data', data: parsedResponse } });
                         observer.complete();
                       },
-                      // eslint-disable-next-line @typescript-eslint/no-empty-function
-                      error: () => {},
                     });
 
                   break;
@@ -136,8 +120,6 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: AuthClient) => {
                         observer.next({ result: { type: 'data', data: parsedResponse } });
                         observer.complete();
                       },
-                      // eslint-disable-next-line @typescript-eslint/no-empty-function
-                      error: () => {},
                     });
                   break;
                 }
@@ -155,7 +137,7 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: AuthClient) => {
 export const provideTrpcClient = () => {
   return {
     provide: TRPC_CLIENT,
-    useFactory: (http: HttpClient, auth: AuthClient) =>
+    useFactory: (http: HttpClient, auth: BetterAuthClient) =>
       createTRPCProxyClient<AppRouter>({
         links: [
           angularLink(
@@ -167,7 +149,7 @@ export const provideTrpcClient = () => {
           }),
         ],
       }),
-    deps: [HttpClient, AUTH_CLIENT],
+    deps: [HttpClient, BETTER_AUTH_CLIENT],
   };
 };
 

@@ -1,7 +1,5 @@
 import { Component, inject } from '@angular/core';
-import { injectAuthClient } from '@core/services/auth/auth-client';
-import { Health } from '@core/services/health/health';
-import { AsyncPipe, JsonPipe } from '@angular/common';
+import { Auth } from '@core/services/auth/auth';
 
 @Component({
   selector: 'app-root',
@@ -12,20 +10,17 @@ import { AsyncPipe, JsonPipe } from '@angular/common';
       <button (click)="handleSignOut()">Sign Out</button>
     </div>
 
-    <code>{{ session | async | json }}</code>
+    <code>{{ authenticated() }}</code>
   `,
-  imports: [JsonPipe, AsyncPipe],
+  imports: [],
 })
 export class App {
-  private readonly auth = injectAuthClient();
-  private readonly health = inject(Health);
+  private readonly auth = inject(Auth);
 
-  session = this.auth.getSession();
-
-  healthCheck = this.health.get();
+  authenticated = this.auth.isAuthenticated;
 
   async handleSignIn() {
-    const { data, error } = await this.auth.signIn.email({
+    const { data, error } = await this.auth.signInEmail({
       email: 'nebbsie@gmail.com',
       password: 'password',
     });
@@ -47,7 +42,7 @@ export class App {
   }
 
   async handleSignUp() {
-    const { data, error } = await this.auth.signUp.email({
+    const { data, error } = await this.auth.signUpEmail({
       email: 'nebbsie@gmail.com',
       password: 'password',
       name: 'nebbsie',
