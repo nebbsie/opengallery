@@ -22,6 +22,12 @@ export const routes: Routes = [
     loadComponent: () => import('./gallery/gallery').then((m) => m.Gallery),
   },
   {
+    path: 'settings',
+    title: 'Settings - Open Gallery',
+    canActivate: [AuthGuard],
+    loadComponent: () => import('./settings/settings').then((m) => m.Settings),
+  },
+  {
     path: '**',
     redirectTo: 'login',
     pathMatch: 'full',

@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
 
 @Component({
   selector: 'app-gallery',
-  template: ``,
+  template: `<p>Gallery works!</p>`,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Gallery {}

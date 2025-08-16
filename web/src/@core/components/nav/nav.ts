@@ -3,17 +3,25 @@ import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/c
 import { Logo } from '@core/components/logo/logo';
 import { Auth } from '@core/services/auth/auth';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideLogOut, lucideUpload, lucideMoon } from '@ng-icons/lucide';
+import {
+  lucideLogOut,
+  lucideUpload,
+  lucideMoon,
+  lucideSettings,
+  lucideSearch,
+} from '@ng-icons/lucide';
 import { BrnPopover, BrnPopoverContent, BrnPopoverTrigger } from '@spartan-ng/brain/popover';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmInput } from '@spartan-ng/helm/input';
-import { HlmPopoverContent } from '@spartan-ng/helm/popover';
+import { HlmPopoverClose, HlmPopoverContent } from '@spartan-ng/helm/popover';
 import { Theme } from '@core/services/theme/theme';
+import { RouterLink } from '@angular/router';
 
 @Component({
   selector: 'app-nav',
-  providers: [provideIcons({ lucideLogOut, lucideUpload, lucideMoon })],
+  providers: [
+    provideIcons({ lucideLogOut, lucideUpload, lucideMoon, lucideSettings, lucideSearch }),
+  ],
   imports: [
     Logo,
     BrnPopover,
@@ -24,18 +32,20 @@ import { Theme } from '@core/services/theme/theme';
     HlmButton,
     NgIcon,
     HlmIcon,
-    HlmInput,
+    RouterLink,
   ],
   host: {
     class: 'flex w-full items-center border-b p-4 space-x-4',
   },
   template: `
-    <app-logo [size]="32" />
+    <a routerLink="/gallery">
+      <app-logo [size]="32" />
+    </a>
 
     <div
       class="bg-muted/30 hover:bg-muted/50 flex h-12 w-full max-w-md items-center rounded-full px-4 transition"
     >
-      <!-- Search icon -->
+      <ng-icon hlm name="lucideSearch" />
       <svg
         class="text-muted-foreground mr-2 h-5 w-5"
         fill="none"
@@ -75,6 +85,29 @@ import { Theme } from '@core/services/theme/theme';
       </button>
 
       <div hlmPopoverContent class="right-4 flex w-80 flex-col gap-4" *brnPopoverContent="let ctx">
+        <div class="flex justify-between">
+          <button
+            class="text-foreground"
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            (click)="toggleTheme()"
+          >
+            <ng-icon class="text-foreground" hlm name="lucideMoon" />
+          </button>
+
+          <button
+            class="text-foreground"
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            (click)="ctx.close()"
+            routerLink="/settings"
+          >
+            <ng-icon class="text-foreground" hlm name="lucideSettings" />
+          </button>
+        </div>
+
         <div class="flex flex-col items-center justify-center gap-2">
           <img
             class="rounded-full border-b"
@@ -85,10 +118,6 @@ import { Theme } from '@core/services/theme/theme';
           />
           <p class="text-muted-foreground text-sm">{{ email() }}</p>
         </div>
-
-        <button class="text-foreground" hlmBtn variant="ghost" size="icon" (click)="toggleTheme()">
-          <ng-icon class="text-foreground" hlm name="lucideMoon" />
-        </button>
 
         <button hlmBtn variant="outline" size="sm" (click)="logOut()">
           <ng-icon hlm size="sm" name="lucideLogOut" />
@@ -107,12 +136,10 @@ export class Nav {
   email = computed(() => this.auth.user()?.email);
 
   async logOut() {
-    console.log('Logging out...');
     await this.auth.signOut();
   }
 
   toggleTheme() {
-    console.log('Toggle theme...');
     this.theme.toggle();
   }
 }

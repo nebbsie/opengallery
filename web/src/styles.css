@@ -77,3 +77,7 @@
     @apply border-border;
   }
 }
+
+p {
+  @apply text-foreground;
+}

@@ -125,7 +125,6 @@ export class Auth {
     const nextSession = s.data?.session ?? null;
     this._session.set(nextSession);
     const nextUser = s.data?.user ?? s.data?.session?.user ?? null;
-    console.log(nextUser);
     this._user.set(nextUser);
     this._isAuthenticated.set(!!nextSession?.token);
   }
