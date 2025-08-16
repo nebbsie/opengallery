@@ -22,7 +22,6 @@ export class Theme {
   }
 
   toggle() {
-    console.log('Toggling theme');
     this.set(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
   }
 }

@@ -1,8 +1,22 @@
-import { Injectable, signal } from '@angular/core';
+import { inject, Injectable, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { injectBetterAuthClient } from '@core/services/auth/better-auth-client';
 
+interface UserRecord {
+  id: string;
+  name: string;
+  email: string;
+  image?: string;
+}
+type User = UserRecord | null;
+
+type SessionData = {
+  session?: { token?: string; user?: UserRecord };
+  user?: UserRecord;
+} | null;
+
 type SessionQueryState = {
-  data: { session?: { token?: string } } | null;
+  data: SessionData;
   isPending: boolean;
   isRefetching?: boolean;
   refetch?: () => Promise<unknown>;
@@ -10,10 +24,13 @@ type SessionQueryState = {
 
 @Injectable({ providedIn: 'root' })
 export class Auth {
+  private readonly router = inject(Router);
   private readonly client = injectBetterAuthClient();
 
   private readonly _isAuthenticated = signal(false);
   private readonly _ready = signal(false);
+  private readonly _session = signal<{ token?: string } | null>(null);
+  private readonly _user = signal<User>(null);
   private _initPromise: Promise<void> | null = null;
 
   constructor() {
@@ -27,19 +44,41 @@ export class Auth {
   get ready() {
     return this._ready.asReadonly();
   }
+  get session() {
+    return this._session.asReadonly();
+  }
+  get user() {
+    return this._user.asReadonly();
+  }
 
   getSession() {
     // Exposed in case templates/components still use it.
     return this.client.getSession();
   }
   signInEmail(p: { email: string; password: string }) {
-    return this.client.signIn.email(p);
+    return this.client.signIn.email(p).then((res) => {
+      if (res.error) {
+        return { error: res.error, data: null };
+      }
+      this._isAuthenticated.set(true);
+      return { error: null, data: res.data };
+    });
   }
   signUpEmail(p: { email: string; password: string; name: string }) {
-    return this.client.signUp.email(p);
+    return this.client.signUp.email(p).then((res) => {
+      if (res.error) {
+        return { error: res.error, data: null };
+      }
+      this._isAuthenticated.set(true);
+      return { error: null, data: res.data };
+    });
   }
-  signOut() {
-    return this.client.signOut();
+  async signOut() {
+    this._isAuthenticated.set(false);
+    this._session.set(null);
+    this._user.set(null);
+    this.client.signOut();
+    await this.router.navigate(['/login']);
   }
 
   // --- lifecycle -------------------------------------------------------------
@@ -71,14 +110,24 @@ export class Auth {
   private async ensureSessionFetchStarted() {
     const s = this.currentState();
     const shouldFetch = s && !s.isPending && !s.isRefetching && !s.data;
-    if (shouldFetch) await s!.refetch?.().catch(() => {});
+    if (shouldFetch)
+      try {
+        await s!.refetch?.();
+      } catch {
+        void 0;
+      }
   }
 
   /** Update `_isAuthenticated` only when the store is settled. */
   private syncFromSessionStore() {
     const s = this.currentState();
     if (!s || s.isPending) return;
-    this._isAuthenticated.set(!!s.data?.session?.token);
+    const nextSession = s.data?.session ?? null;
+    this._session.set(nextSession);
+    const nextUser = s.data?.user ?? s.data?.session?.user ?? null;
+    console.log(nextUser);
+    this._user.set(nextUser);
+    this._isAuthenticated.set(!!nextSession?.token);
   }
 
   /** Wait until `useSession` is not pending/refetching (or timeout). */

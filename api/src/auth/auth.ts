@@ -8,6 +8,7 @@ export const auth = betterAuth({
     provider: "pg",
     schema: authSchema,
   }),
+  telemetry: { enabled: false },
   trustedOrigins: ["http://localhost:3000", 'http://localhost:4200"'],
   emailAndPassword: {
     enabled: true,

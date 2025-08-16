@@ -39,6 +39,11 @@ export const appConfig: ApplicationConfig = {
       withDevtools(() => ({ loadDevtools: 'auto' })),
     ),
     provideBetterAuthClient(environment.api.url),
-    provideAppInitializer(() => inject(Auth).initialize()),
+    provideAppInitializer(() => {
+      const timer = performance.now();
+      inject(Auth).initialize();
+      const elapsed = performance.now() - timer;
+      console.log(`Auth initialized in ${elapsed.toFixed(2)} ms`);
+    }),
   ],
 };

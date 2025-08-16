@@ -10,7 +10,7 @@ import {
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmInput } from '@spartan-ng/helm/input';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { Logo } from '@core/components/logo/logo';
 import { Auth } from '@core/services/auth/auth';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -63,7 +63,7 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
                 [formControl]="emailControl"
                 type="email"
                 id="email"
-                placeholder="m@example.com"
+                placeholder="john@smith.com"
                 required
                 hlmInput
               />
@@ -107,6 +107,7 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
 })
 export class LoginForm {
   private auth = inject(Auth);
+  private router = inject(Router);
 
   error = signal(false);
   loading = signal(false);
@@ -136,16 +137,13 @@ export class LoginForm {
     });
 
     if (error) {
-      console.error('Login failed:', error);
       this.error.set(true);
       this.loading.set(false);
       return;
     }
 
     if (data) {
-      console.log('Login successful:', data);
-      // Optionally, you can navigate to a different page after successful login
-      // this.router.navigate(['/dashboard']);
+      await this.router.navigate(['/gallery']);
     }
   }
 }
