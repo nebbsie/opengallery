@@ -39,9 +39,6 @@ export const appConfig: ApplicationConfig = {
       withDevtools(() => ({ loadDevtools: 'auto' })),
     ),
     provideBetterAuthClient(environment.api.url),
-    provideAppInitializer(() => {
-      const auth = inject(Auth);
-      return auth.initialize();
-    }),
+    provideAppInitializer(() => inject(Auth).initialize()),
   ],
 };
