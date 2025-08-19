@@ -74,7 +74,7 @@ import { listVariants } from './hlm-tabs-list';
 export class HlmTabsPaginatedList extends BrnTabsPaginatedList {
 	public readonly items = contentChildren(BrnTabsTrigger, { descendants: false });
 	/** Explicitly annotating type to avoid non-portable inferred type */
-	public readonly itemsChanges: Observable<ReadonlyArray<BrnPaginatedTabHeaderItem>> = toObservable(this.items);
+	public readonly itemsChanges: Observable<readonly BrnPaginatedTabHeaderItem[]> = toObservable(this.items);
 
 	public readonly tabListContainer = viewChild.required<ElementRef<HTMLElement>>('tabListContainer');
 	public readonly tabList = viewChild.required<ElementRef<HTMLElement>>('tabList');
@@ -87,10 +87,10 @@ export class HlmTabsPaginatedList extends BrnTabsPaginatedList {
 		hlm('flex overflow-hidden relative gap-1 flex-shrink-0', this.userClass()),
 	);
 
-	public readonly tabListClass = input<ClassValue>('', { alias: 'tabListClass' });
+	public readonly tabListClass = input<ClassValue>('');
 	protected readonly _tabListClass = computed(() => hlm(listVariants(), this.tabListClass()));
 
-	public readonly paginationButtonClass = input<ClassValue>('', { alias: 'paginationButtonClass' });
+	public readonly paginationButtonClass = input<ClassValue>('');
 	protected readonly _paginationButtonClass = computed(() =>
 		hlm(
 			'relative z-[2] select-none disabled:cursor-default',

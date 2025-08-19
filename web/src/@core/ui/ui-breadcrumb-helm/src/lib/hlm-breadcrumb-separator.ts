@@ -5,7 +5,7 @@ import { hlm } from '@spartan-ng/brain/core';
 import type { ClassValue } from 'clsx';
 
 @Component({
-	// eslint-disable-next-line @angular-eslint/component-selector
+	 
 	selector: '[hlmBreadcrumbSeparator]',
 	imports: [NgIcon],
 	providers: [provideIcons({ lucideChevronRight })],

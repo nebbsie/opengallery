@@ -1,10 +1,8 @@
-import { Component, computed, inject } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { Logo } from '@core/components/logo/logo';
-import { Auth } from '@core/services/auth/auth';
-import { NgIcon } from '@ng-icons/core';
-import { HlmIcon } from '@spartan-ng/helm/icon';
 import { Nav } from '@core/components/nav/nav';
+import { SideNav } from '@core/components/side-nav/side-nav';
+import { Auth } from '@core/services/auth/auth';
 
 @Component({
   selector: 'app-root',
@@ -12,17 +10,42 @@ import { Nav } from '@core/components/nav/nav';
     class: 'flex flex-col h-screen',
   },
   template: `
-    @if (showTopNav()) {
-      <app-nav />
+    @if (isAuthenticated()) {
+      <app-nav (sideNavToggle)="showSideNav.set(!showSideNav())" />
     }
-    <main class="flex-1 overflow-scroll">
+    <main class="relative flex flex-1">
+      @if (isAuthenticated()) {
+        <div
+          class="bg-background absolute inset-0 z-50 transition-transform duration-150 ease-in-out sm:hidden"
+          [class.-translate-x-full]="!showSideNav()"
+          [class.translate-x-0]="showSideNav()"
+          [class.pointer-events-none]="!showSideNav()"
+          [attr.aria-hidden]="!showSideNav()"
+        >
+          <app-side-nav (sideNavToggle)="showSideNav.set(!showSideNav())" />
+        </div>
+      }
+
+      @if (isAuthenticated()) {
+        <div
+          class="hidden shrink-0 overflow-hidden transition-[width] duration-150 ease-in-out sm:block"
+          [style.width.px]="showSideNav() ? 250 : 0"
+          [attr.aria-hidden]="!showSideNav()"
+          [class.pointer-events-none]="!showSideNav()"
+        >
+          <app-side-nav />
+        </div>
+      }
+
       <router-outlet />
     </main>
   `,
-  imports: [RouterOutlet, Nav],
+  imports: [RouterOutlet, Nav, SideNav],
 })
 export class App {
   private auth = inject(Auth);
 
-  showTopNav = computed(() => this.auth.isAuthenticated());
+  isAuthenticated = this.auth.isAuthenticated;
+
+  showSideNav = signal(true);
 }

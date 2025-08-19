@@ -81,3 +81,8 @@
 p {
   @apply text-foreground;
 }
+
+html,
+body {
+  overscroll-behavior: none; /** Stops the scroll bouncing */
+}
