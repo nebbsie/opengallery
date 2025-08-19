@@ -1,32 +1,22 @@
 import { NgOptimizedImage } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  effect,
-  inject,
-  output,
-} from '@angular/core';
-import { RouterLink, Router, NavigationEnd } from '@angular/router';
-import { Logo } from '@core/components/logo/logo';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { Auth } from '@core/services/auth/auth';
+import { Sidebar } from '@core/services/sidebar/sidebar';
 import { Theme } from '@core/services/theme/theme';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideLogOut,
+  lucideMenu,
   lucideMoon,
   lucideSearch,
   lucideSettings,
   lucideUpload,
-  lucideMenu,
 } from '@ng-icons/lucide';
 import { BrnPopover, BrnPopoverContent, BrnPopoverTrigger } from '@spartan-ng/brain/popover';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmPopoverContent } from '@spartan-ng/helm/popover';
-import { toSignal } from '@angular/core/rxjs-interop';
-import { filter } from 'rxjs';
-import { ScreenSize } from '@core/services/screen-size/screen-size';
 
 @Component({
   selector: 'app-nav',
@@ -41,7 +31,6 @@ import { ScreenSize } from '@core/services/screen-size/screen-size';
     }),
   ],
   imports: [
-    Logo,
     BrnPopover,
     BrnPopoverTrigger,
     NgOptimizedImage,
@@ -59,10 +48,6 @@ import { ScreenSize } from '@core/services/screen-size/screen-size';
     <button class="text-foreground" (click)="toggleSideNav()" hlmBtn variant="ghost" size="sm">
       <ng-icon hlm size="sm" name="lucideMenu" />
     </button>
-
-    <a class="hidden sm:visible" routerLink="/gallery" (click)="toggleSideNav()">
-      <app-logo [size]="32" />
-    </a>
 
     <button class="text-foreground ml-auto" hlmBtn variant="ghost" size="sm">
       <ng-icon hlm size="sm" name="lucideUpload" />
@@ -127,9 +112,7 @@ import { ScreenSize } from '@core/services/screen-size/screen-size';
 export class Nav {
   private readonly auth = inject(Auth);
   private readonly theme = inject(Theme);
-  private readonly size = inject(ScreenSize);
-
-  sideNavToggle = output<void>();
+  private readonly sidebar = inject(Sidebar);
 
   avatarUrl = computed(() => this.auth.user()?.image ?? 'profile_placeholder.png');
   email = computed(() => this.auth.user()?.email);
@@ -143,6 +126,6 @@ export class Nav {
   }
 
   toggleSideNav() {
-    this.sideNavToggle.emit();
+    this.sidebar.toggle();
   }
 }

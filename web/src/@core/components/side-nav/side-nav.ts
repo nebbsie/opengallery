@@ -1,10 +1,11 @@
-import { ChangeDetectionStrategy, Component, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { ScreenSize } from '@core/services/screen-size/screen-size';
+import { Sidebar } from '@core/services/sidebar/sidebar';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCamera, lucideFilm, lucideImages, lucideLayoutDashboard } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { ScreenSize } from '@core/services/screen-size/screen-size';
 
 @Component({
   selector: 'app-side-nav',
@@ -45,7 +46,7 @@ import { ScreenSize } from '@core/services/screen-size/screen-size';
 
     <a
       class="mb-1"
-      hlmBtn="asdasdas"
+      hlmBtn
       routerLink="/gallery/videos"
       routerLinkActive="active"
       #rlaVideos="routerLinkActive"
@@ -75,14 +76,11 @@ import { ScreenSize } from '@core/services/screen-size/screen-size';
 })
 export class SideNav {
   private readonly size = inject(ScreenSize);
-
-  sideNavToggle = output<void>();
+  private readonly sidebar = inject(Sidebar);
 
   handleClicked() {
-    if (!this.size.isMobile()) {
-      return;
+    if (this.size.isMobile()) {
+      this.sidebar.close();
     }
-
-    this.sideNavToggle.emit();
   }
 }
