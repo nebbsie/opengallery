@@ -1,7 +1,8 @@
-import { privateProcedure, publicProcedure, router } from "../trpc.js";
+import { privateProcedure, router } from "../trpc.js";
+import { z } from "zod";
 
 export const mediaLocationsRouter = router({
-  create: privateProcedure.query(async (req) => {
+  create: privateProcedure.input(z.string()).mutation(async (req) => {
     return { status: "ok" };
   }),
 });

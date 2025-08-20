@@ -28,6 +28,17 @@ export class Sidebar {
       this.writeToStorage(this.isOpenSignal());
     });
 
+    // Initialize sidebar content from storage first to avoid flash on reload
+    const storedContent = this.readContentFromStorage();
+    if (storedContent !== null) {
+      this.sidebarContent.set(storedContent);
+    }
+
+    // Keep sidebar content persisted
+    effect(() => {
+      this.writeContentToStorage(this.sidebarContent());
+    });
+
     // Initialize sidebar content based on current URL (handles hard reloads)
     this.updateContentForUrl(this.router.url);
 
@@ -50,10 +61,6 @@ export class Sidebar {
 
   toggle() {
     this.isOpenSignal.update((value) => !value);
-  }
-
-  setContent(value: 'default' | 'settings') {
-    this.sidebarContent.set(value);
   }
 
   private updateContentForUrl(url: string) {
@@ -84,6 +91,26 @@ export class Sidebar {
     if (!this.canUseStorage()) return;
     try {
       window.localStorage.setItem('sidebar.isOpen', String(value));
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  private readContentFromStorage(): 'default' | 'settings' | null {
+    if (!this.canUseStorage()) return null;
+    try {
+      const raw = window.localStorage.getItem('sidebar.content');
+      if (raw !== 'default' && raw !== 'settings') return null;
+      return raw;
+    } catch {
+      return null;
+    }
+  }
+
+  private writeContentToStorage(value: 'default' | 'settings'): void {
+    if (!this.canUseStorage()) return;
+    try {
+      window.localStorage.setItem('sidebar.content', value);
     } catch {
       // ignore storage failures
     }

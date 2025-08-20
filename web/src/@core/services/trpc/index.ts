@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, InjectionToken } from '@angular/core';
 import { environment } from '@env/environment';
-import type { AppRouter } from '@api-types/';
+import type { AppRouter } from '../../../../../api/src';
 import { createTRPCProxyClient, TRPCClient, TRPCClientError, TRPCLink } from '@trpc/client';
 import { catchError, Observable, throwError } from 'rxjs';
 import { deserialize, serialize, SuperJSONResult } from 'superjson';

@@ -1,4 +1,4 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { Context } from "./context.js";
 import { auth } from "./auth/auth.js";
@@ -9,26 +9,32 @@ export const t = initTRPC.context<Context>().create({
 
 const isAuthenticated = (required: boolean) =>
   t.middleware(async (req) => {
-    const res = await auth.api.getSession({
+    if (!required) {
+      return req.next();
+    }
+
+    const session = await auth.api.getSession({
       headers: toHeaders(req.ctx.req.headers),
     });
 
-    console.log("Checking authentication for", res);
+    if (required && !session?.user?.id) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+
+    if (
+      session?.session?.expiresAt &&
+      new Date(session?.session?.expiresAt) <= new Date()
+    ) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "Session expired" });
+    }
 
     return req.next();
   });
 
-/**
- * Middleware for timing procedure execution and adding an artificial delay in development.
- *
- * You can remove this if you don't like it, but it can help catch unwanted waterfalls by simulating
- * network latency that would occur in production but not in local development.
- */
 const timingMiddleware = t.middleware(async ({ next, path }) => {
   const start = Date.now();
 
   if (t._config.isDev) {
-    // artificial delay in dev
     const waitMs = Math.floor(Math.random() * 700) + 100;
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
