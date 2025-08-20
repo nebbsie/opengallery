@@ -74,6 +74,7 @@ import { HlmLabel } from '@spartan-ng/helm/label';
     :host {
       display: block;
       padding: 1rem;
+      flex: 1;
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
