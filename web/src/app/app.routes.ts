@@ -28,6 +28,12 @@ export const routes: Routes = [
     loadChildren: () => import('./settings/settings.routes').then((r) => r.routes),
   },
   {
+    path: 'setup',
+    title: 'Setup - Library Management',
+    canActivate: [AuthGuard],
+    loadComponent: () => import('./setup/setup').then((m) => m.Setup),
+  },
+  {
     path: '**',
     redirectTo: 'login',
     pathMatch: 'full',
