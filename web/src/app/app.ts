@@ -15,7 +15,7 @@ import { Sidebar } from '@core/services/sidebar/sidebar';
     @if (isAuthenticated()) {
       <app-nav />
     }
-    <main class="relative flex flex-1">
+    <main class="relative flex flex-1 overflow-hidden">
       @if (isAuthenticated()) {
         <div
           class="bg-background absolute inset-0 z-50 transition-transform duration-150 ease-in-out sm:static sm:inset-auto sm:z-auto sm:shrink-0 sm:overflow-hidden sm:transition-[width] sm:duration-150 sm:ease-in-out"
@@ -29,7 +29,9 @@ import { Sidebar } from '@core/services/sidebar/sidebar';
         </div>
       }
 
-      <router-outlet />
+      <div class="min-w-0 flex-1 overflow-y-auto p-4">
+        <router-outlet />
+      </div>
     </main>
   `,
   imports: [RouterOutlet, Nav, SideNav],

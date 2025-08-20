@@ -1,149 +1,97 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { injectTrpcClient } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideTrash2, lucideCircleHelp } from '@ng-icons/lucide';
 import { FormArray, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { BrnTooltipContentTemplate } from '@spartan-ng/brain/tooltip';
-import { HlmTooltip, HlmTooltipTrigger } from '@spartan-ng/helm/tooltip';
+import { HlmInput } from '@spartan-ng/helm/input';
+import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
 
 @Component({
   selector: 'app-settings-sources',
   providers: [provideIcons({ lucideTrash2, lucideCircleHelp })],
-  imports: [
-    ReactiveFormsModule,
-    HlmButton,
-    HlmIcon,
-    NgIcon,
-    HlmTooltipTrigger,
-    BrnTooltipContentTemplate,
-    HlmTooltip,
-  ],
+  imports: [ReactiveFormsModule, HlmButton, HlmIcon, NgIcon, HlmInput, HlmCheckbox],
+  host: {
+    class: 'w-full',
+  },
   template: `
-    <div class="mx-auto max-w-3xl">
-      <h1 class="text-foreground mb-10 block text-lg font-bold">External Library Management</h1>
+    <h1 class="text-foreground mb-2 block text-lg font-bold">Source Folders</h1>
 
-      <label class="text-foreground mb-2 block text-sm font-bold" for="library-path">
-        Library Path(s)
-      </label>
+    <p class="text-muted mb-6 text-sm font-light">
+      Specify the folders where your media files are stored. The application will scan these
+      locations to import your photos and videos.
+    </p>
 
-      @for (control of libraryPathsArray.controls; track $index) {
-        <div class="flex gap-x-2">
-          <input
-            [formControl]="control"
-            class="focus:shadow-outline bg-muted/30 hover:bg-muted/50 text-foreground placeholder-muted-foreground mb-2 w-full appearance-none rounded-full px-3 py-2 text-sm leading-tight shadow outline-none focus:outline-none"
-            id="library-path"
-            type="text"
-            placeholder="e.g. /storage/Photos"
-          />
+    @for (control of pathsControlArray.controls; track $index) {
+      <div class="mb-4 flex max-w-lg gap-x-2">
+        <input [formControl]="control" hlmInput type="text" placeholder="e.g. /storage/Photos" />
 
-          @if ($index !== 0) {
-            <button
-              class="text-foreground ml-auto"
-              hlmBtn
-              variant="ghost"
-              size="sm"
-              (click)="removeInput($index)"
-            >
-              <ng-icon hlm size="sm" name="lucideTrash2" />
-            </button>
-          }
-        </div>
-      }
-
-      <div class="flex flex-auto flex-col items-start">
-        <button
-          hlmBtn
-          type="button"
-          (click)="addLibraryPaths()"
-          class="bg-muted/50 hover:bg-muted/70 text-foreground mb-6 rounded-full px-3 py-2 text-sm"
-        >
-          Add Another Path
-        </button>
-
-        <div class="mb-6 flex items-center">
+        @if ($index !== 0) {
           <button
+            class="text-foreground ml-auto"
             hlmBtn
-            type="button"
-            class="bg-muted/50 hover:bg-muted/70 text-foreground rounded-full px-3 py-2 text-sm"
+            variant="ghost"
+            size="sm"
+            (click)="removeInput($index)"
           >
-            Auto Import Albums
+            <ng-icon hlm size="sm" name="lucideTrash2" />
           </button>
-
-          <hlm-tooltip>
-            <button
-              hlmTooltipTrigger
-              class="text-foreground ml-1"
-              hlmBtn
-              variant="ghost"
-              size="sm"
-            >
-              <ng-icon hlm size="sm" name="lucideCircleHelp" />
-            </button>
-            <span *brnTooltipContent>This job scans your file system structure and creates albums based on your existing folder structure.</span>
-          </hlm-tooltip>
-        </div>
-
-        <div class="flex w-full justify-end">
-          <button
-            hlmBtn
-            type="button"
-            class="bg-muted/50 hover:bg-muted/70 text-foreground mb-6 rounded-full px-3 py-2 text-sm"
-            (click)="saveLibraryManagementInfo()"
-          >
-            Save
-          </button>
-        </div>
+        }
       </div>
-    </div>
-  `,
-  styles: `
-    :host {
-      display: block;
-      padding: 1rem;
     }
+
+    <button class="mb-10" hlmBtn variant="outline" (click)="addPath()">Add Another Path</button>
+
+    <h1 class="text-foreground mb-2 block text-lg font-bold">Folder Settings</h1>
+    <p class="text-muted mb-6 text-sm font-light">
+      Specify how the application should handle scanning and importing media from the specified
+      folders.
+    </p>
+
+    <label class="hover:bg-accent/50 mb-10 flex max-w-lg items-start gap-3 rounded-lg border p-3">
+      <hlm-checkbox id="toggle-2" [checked]="importAlbums" (changed)="importAlbums = $event" />
+      <div class="grid gap-1.5 font-normal">
+        <p class="text-sm leading-none font-bold">Import Albums</p>
+        <p class="text-muted-foreground text-sm font-light">
+          Automatically import your media into albums based on folder structure.
+        </p>
+      </div>
+    </label>
+
+    <button hlmBtn size="sm" (click)="saveChanges()">Save Changes</button>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SettingsSources {
   private trpc = injectTrpcClient();
 
-  //can have more than 1 library path, to begin with only 1 field will be visible, but can be expanded
-  libraryPathsArray = new FormArray([
-    new FormControl<string | null>(null, [Validators.required]), // Start with one input
-  ]);
+  importAlbums = false;
 
-  addLibraryPaths(): void {
-    this.libraryPathsArray.push(new FormControl<string | null>(null, [Validators.required]));
+  pathsControlArray = new FormArray([new FormControl<string | null>(null, [Validators.required])]);
+
+  addPath(): void {
+    this.pathsControlArray.push(new FormControl<string | null>(null, [Validators.required]));
   }
 
   removeInput(index: number) {
-    if (this.libraryPathsArray.length > 1) {
-      this.libraryPathsArray.removeAt(index);
+    if (this.pathsControlArray.length > 1) {
+      this.pathsControlArray.removeAt(index);
     }
   }
 
-  getAllLibraryPaths() {
-    return this.libraryPathsArray.value;
-  }
+  saveChanges() {
+    const nonBlankPaths = this.pathsControlArray.value.filter(
+      (value) => value && value.trim() !== '',
+    );
 
-  saveLibraryManagementInfo() {
-    console.log('clicked button...');
+    this.pathsControlArray.markAllAsTouched();
 
-    const nonBlankPaths = this.getAllLibraryPaths().filter((value) => value && value.trim() !== '');
-
-    /*this.libraryPathsArray.valid && */
-    if (nonBlankPaths.length > 0) {
-      console.log('Saving:', nonBlankPaths);
-    } else {
-      console.log('Form invalid or no valid entries');
-      // Mark all as touched to show validation errors
-      this.libraryPathsArray.markAllAsTouched();
+    if (nonBlankPaths.length === 0) {
+      console.log('No valid paths to save');
+      return;
     }
-  }
 
-  test() {
-    this.trpc.mediaLocations.create.mutate('aaron');
+    console.log('Save');
   }
 }

@@ -1,7 +1,9 @@
 import { NgOptimizedImage } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { Logo } from '@core/components/logo/logo';
 import { Auth } from '@core/services/auth/auth';
+import { ScreenSize } from '@core/services/screen-size/screen-size';
 import { Sidebar } from '@core/services/sidebar/sidebar';
 import { Theme } from '@core/services/theme/theme';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -17,8 +19,6 @@ import { BrnPopover, BrnPopoverContent, BrnPopoverTrigger } from '@spartan-ng/br
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmPopoverContent } from '@spartan-ng/helm/popover';
-import { Logo } from '@core/components/logo/logo';
-import { ScreenSize } from '@core/services/screen-size/screen-size';
 
 @Component({
   selector: 'app-nav',
@@ -45,7 +45,7 @@ import { ScreenSize } from '@core/services/screen-size/screen-size';
     Logo,
   ],
   host: {
-    class: 'flex w-full items-center border-b p-4 space-x-4',
+    class: 'flex w-full items-center border-b p-4 space-x-4 sticky top-0 z-50 bg-background',
   },
   template: `
     <button class="text-foreground" (click)="toggleSideNav()" hlmBtn variant="ghost" size="sm">
