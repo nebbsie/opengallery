@@ -1,20 +1,13 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
 
 @Component({
   selector: 'app-settings',
-  imports: [],
-  template: `
-    <p>
-      settings works!
-    </p>
-  `,
-  styles: `
-    :host {
-      display: block;
-    }
-  `,
-  changeDetection: ChangeDetectionStrategy.OnPush
+  imports: [RouterOutlet],
+  host: {
+    class: 'p-4',
+  },
+  template: ` <router-outlet /> `,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class Settings {
-
-}
+export class Settings {}

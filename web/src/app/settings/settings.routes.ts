@@ -6,12 +6,15 @@ export const routes: Routes = [
     loadComponent: () => import('./settings').then((c) => c.Settings),
     children: [
       {
-        path: 'library',
+        path: '',
+        redirectTo: 'sources',
+        pathMatch: 'full',
+      },
+      {
+        path: 'sources',
         loadComponent: () =>
-          import('./settings-library/settings-library').then((c) => c.SettingsLibrary),
+          import('./settings-sources/settings-sources').then((c) => c.SettingsSources),
       },
     ],
-
-
   },
 ];
