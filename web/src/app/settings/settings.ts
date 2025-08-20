@@ -5,7 +5,7 @@ import { RouterOutlet } from '@angular/router';
   selector: 'app-settings',
   imports: [RouterOutlet],
   host: {
-    class: 'p-4',
+    class: 'flex-1 p-4',
   },
   template: ` <router-outlet /> `,
   changeDetection: ChangeDetectionStrategy.OnPush,

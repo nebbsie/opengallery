@@ -11,7 +11,7 @@ import { DatePipe } from '@angular/common';
         <p class="mb-2">{{ dateGroup.key | date: 'EEE, dd MMM yyyy' }}</p>
         <!--Mon, 18 Aug 2025-->
 
-        <div class="mb-6 flex gap-x-2">
+        <div class="mb-6 flex flex-wrap gap-x-2 gap-y-2">
           @for (media of dateGroup.value; track $index) {
             <img [src]="media.location" [alt]="media.id" />
           }
