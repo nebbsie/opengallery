@@ -6,20 +6,21 @@ import {
   inject,
   signal,
 } from '@angular/core';
+import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
+import { ErrorAlert } from '@core/components/error/error';
+import { PathSelect } from '@core/dialogs/path-select/path-select';
+import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc, RouterOutputs } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideTrash2, lucideCircleHelp } from '@ng-icons/lucide';
-import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
+import { lucideCircleHelp, lucideTrash2 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
+import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
-import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
-import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
-import { ErrorAlert } from '@core/components/error/error';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
-import { CacheKey } from '@core/services/cache-key.types';
-import { HlmDialogService } from '@spartan-ng/helm/dialog';
-import { PathSelect } from '@core/dialogs/path-select/path-select';
+import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
+import { Confirm } from '@core/dialogs/confirm/confirm';
 
 type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
 
@@ -65,7 +66,7 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
             hlmBtn
             variant="ghost"
             size="icon"
-            (click)="deleteSource.mutate(path.id)"
+            (click)="handleDeleteSource(path.id)"
           >
             <ng-icon hlm size="sm" name="lucideTrash2" />
           </button>
@@ -81,7 +82,11 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
       </p>
 
       <label class="hover:bg-accent/50 mb-10 flex max-w-lg items-start gap-3 rounded-lg border p-3">
-        <hlm-checkbox id="toggle-2" [(checked)]="importAlbums" />
+        <hlm-checkbox
+          id="toggle-2"
+          [checked]="importAlbums()"
+          (changed)="clickedImportAlbums($event)"
+        />
         <div class="grid gap-1.5 font-normal">
           <p class="text-sm leading-none font-bold">Import Albums</p>
           <p class="text-muted-foreground text-sm">
@@ -124,13 +129,13 @@ export class SettingsSources {
           ? {
               ...old,
               paths: [
+                ...old.paths,
                 {
                   id: tempId,
                   path,
                   createdAt: new Date(),
                   updatedAt: new Date(),
                 },
-                ...old.paths,
               ],
             }
           : old,
@@ -191,17 +196,12 @@ export class SettingsSources {
       return [];
     }
 
-    const vals = [];
-    for (const p of res.paths) {
-      vals.push({
-        id: p.id,
-        control: new FormControl<string | null>({ value: p.path, disabled: true }, [
-          Validators.required,
-        ]),
-      });
-    }
-
-    return vals;
+    return res.paths.map((path) => ({
+      id: path.id,
+      control: new FormControl<string | null>({ value: path.path, disabled: true }, [
+        Validators.required,
+      ]),
+    }));
   });
 
   importAlbums = signal(false);
@@ -221,5 +221,23 @@ export class SettingsSources {
         this.addSource.mutate(path);
       }
     });
+  }
+
+  clickedImportAlbums(checked: boolean) {
+    this.trpc.mediaSourcesSettings.updateSettings.mutate({ autoImportAlbums: checked });
+  }
+
+  handleDeleteSource(id: string) {
+    this.dialog
+      .open(Confirm, {
+        context: {
+          message: 'You will no longer track and show media from this source if deleted.',
+        },
+      })
+      .closed$.subscribe((res: boolean) => {
+        if (res) {
+          this.deleteSource.mutate(id);
+        }
+      });
   }
 }

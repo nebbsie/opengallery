@@ -21,6 +21,7 @@ import {
   lucideCornerRightUp,
 } from '@ng-icons/lucide';
 import { BrnDialogRef } from '@spartan-ng/brain/dialog';
+import { HlmDialogFooter } from '@spartan-ng/helm/dialog';
 
 type LsResult = RouterOutputs['directory']['ls'];
 type Entry = LsResult['entries'][number];
@@ -31,21 +32,9 @@ type Entry = LsResult['entries'][number];
   providers: [
     provideIcons({ lucideHouse, lucideRefreshCcw, lucideFolder, lucideFile, lucideCornerRightUp }),
   ],
-  imports: [ErrorAlert, HlmButton, NgIcon],
+  imports: [ErrorAlert, HlmButton, NgIcon, HlmDialogFooter],
   template: `
     <div class="mb-3 flex w-[400px] items-center gap-2">
-      <button
-        class="text-foreground"
-        type="button"
-        hlmBtn
-        variant="ghost"
-        size="icon"
-        (click)="goRoot()"
-        [disabled]="currentPath() === '/'"
-      >
-        <ng-icon name="lucideHouse" />
-      </button>
-
       <div class="text-foreground min-w-0 flex-1 truncate text-sm" [title]="currentPath()">
         @for (crumb of breadcrumbs(); track crumb.path; let last = $last) {
           <button
@@ -77,7 +66,7 @@ type Entry = LsResult['entries'][number];
       <app-error-alert [error]="folders.error()" />
     }
 
-    <div class="text-foreground overflow-hidden rounded-md border">
+    <div class="text-foreground mb-6 overflow-hidden rounded-md border">
       <div
         class="bg-muted/50 text-foreground grid grid-cols-[24px_minmax(0,1fr)] gap-3 p-2 text-xs font-medium"
       >
@@ -116,10 +105,10 @@ type Entry = LsResult['entries'][number];
       </div>
     </div>
 
-    <div class="mt-2 flex items-center justify-between">
-      <p class="text-muted-foreground text-xs">{{ data().length }} item(s)</p>
-      <button hlmBtn size="sm" (click)="selectCurrent()">Select this folder</button>
-    </div>
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" (click)="_dialogRef.close()">Cancel</button>
+      <button hlmBtn (click)="selectCurrent()">Select this folder</button>
+    </hlm-dialog-footer>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

@@ -4,7 +4,7 @@ import { ApiResponse } from "../types.js";
 import { MediaPathTable, MediaSettingsTable } from "../db/schema.js";
 import { db } from "../db/index.js";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 
 export const mediaSourcesSettingsRouter = router({
   createSource: privateProcedure.input(z.string()).mutation(async (req) => {
@@ -29,9 +29,20 @@ export const mediaSourcesSettingsRouter = router({
     .mutation(async (req) => {
       return ApiResponse.Ok();
     }),
-
+  updateSettings: privateProcedure
+    .input(
+      z.object({
+        autoImportAlbums: z.boolean(),
+      }),
+    )
+    .mutation(async (req) => {
+      return db.update(MediaSettingsTable).set(req.input).returning();
+    }),
   get: privateProcedure.query(async () => {
-    const paths = await db.select().from(MediaPathTable);
+    const paths = await db
+      .select()
+      .from(MediaPathTable)
+      .orderBy(asc(MediaPathTable.createdAt));
     const settings = await findOrCreateMediaSettings();
 
     return {

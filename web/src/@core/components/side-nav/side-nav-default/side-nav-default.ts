@@ -55,18 +55,18 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 
     <p class="mt-6 mb-2 font-medium">Albums</p>
 
-    <button class="mb-1" hlmBtn variant="menu">
+    <a class="mb-1" hlmBtn variant="menu">
       <ng-icon hlm size="sm" name="lucideImages" />
       Birthdays
-    </button>
-    <button class="mb-1" hlmBtn variant="menu">
+    </a>
+    <a class="mb-1" hlmBtn variant="menu">
       <ng-icon hlm size="sm" name="lucideImages" />
       Christmas
-    </button>
-    <button class="mb-1" hlmBtn variant="menu">
+    </a>
+    <a class="mb-1" hlmBtn variant="menu">
       <ng-icon hlm size="sm" name="lucideImages" />
       Holidays
-    </button>
+    </a>
   `,
 
   changeDetection: ChangeDetectionStrategy.OnPush,
