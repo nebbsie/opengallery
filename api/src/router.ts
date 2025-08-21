@@ -1,10 +1,12 @@
 import { router } from "./trpc.js";
 import { healthRouter } from "./routers/health.router.js";
-import { mediaLocationsRouter } from "./routers/media-locations.router.js";
+import { mediaSourcesSettingsRouter } from "./routers/media-sources-settings.router.js";
+import { directoryRouter } from "./routers/directory.router.js";
 
 export const appRouter = router({
   health: healthRouter,
-  mediaLocations: mediaLocationsRouter,
+  mediaSourcesSettings: mediaSourcesSettingsRouter,
+  directory: directoryRouter,
 });
 
 export type AppRouter = typeof appRouter;

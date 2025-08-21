@@ -76,10 +76,10 @@
   * {
     @apply border-border;
   }
-}
 
-p {
-  @apply text-foreground;
+  p {
+    @apply text-foreground;
+  }
 }
 
 html,

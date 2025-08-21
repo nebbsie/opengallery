@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 const createdAt = () =>
   timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -8,9 +8,13 @@ const updatedAt = () =>
 
 const id = () => uuid("id").primaryKey().defaultRandom();
 
-export const MediaLocationTable = pgTable("media_location", {
+export const MediaPathTable = pgTable("media_path", {
   id: id(),
-  location: text("location").notNull(),
+  path: text("path").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
+});
+
+export const MediaSettingsTable = pgTable("media_settings", {
+  autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
 });

@@ -1,12 +1,13 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, InjectionToken } from '@angular/core';
-import { environment } from '@env/environment';
-import type { AppRouter } from '../../../../../api/src';
-import { createTRPCProxyClient, TRPCClient, TRPCClientError, TRPCLink } from '@trpc/client';
-import { catchError, Observable, throwError } from 'rxjs';
-import { deserialize, serialize, SuperJSONResult } from 'superjson';
-import { TrpcCache } from '@core/services/trpc/trpc-cache';
 import { BETTER_AUTH_CLIENT, type BetterAuthClient } from '@core/services/auth/better-auth-client';
+import { TrpcCache } from '@core/services/trpc/trpc-cache';
+import { environment } from '@env/environment';
+import { createTRPCProxyClient, TRPCClient, TRPCClientError, TRPCLink } from '@trpc/client';
+import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
+import { Observable } from 'rxjs';
+import { deserialize, serialize, SuperJSONResult } from 'superjson';
+import type { AppRouter } from '../../../../../api/src';
 
 const TRPC_CLIENT = new InjectionToken<TRPCClient<AppRouter>>('TRPC_CLIENT');
 
@@ -21,6 +22,8 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: BetterAuthClient)
         new Observable((observer) => {
           const url = `${opts.url}/${op.path}`;
           const headers: Record<string, string> = {};
+
+          headers['Content-Type'] = 'application/json';
 
           // consider input "valid" only if not undefined AND not null
           const isValidInput = typeof op.input !== 'undefined' && op.input !== null;
@@ -51,11 +54,6 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: BetterAuthClient)
 
           const perform = async () => {
             try {
-              const session = await auth.getSession();
-              if (session?.data?.session.token) {
-                headers['Authorization'] = `Bearer ${session.data.session.token}`;
-              }
-
               switch (op.type) {
                 case 'subscription': {
                   observer.error(new TRPCClientError('Subscriptions are not supported'));
@@ -78,49 +76,70 @@ const angularLink = (http: HttpClient, cache: TrpcCache, auth: BetterAuthClient)
                     ...(isValidInput ? { params: { input: JSON.stringify(serialized) } } : {}),
                   } as const;
 
-                  http
-                    .get<{ result: { data: SuperJSONResult } }>(url, options)
-                    .pipe(
-                      catchError((error: HttpErrorResponse) => {
-                        handleError(error);
-                        return throwError(() => error);
-                      }),
-                    )
-                    .subscribe({
+                  const execute = () =>
+                    http.get<{ result: { data: SuperJSONResult } }>(url, options);
+
+                  let retried = false;
+                  const subscribeOnce = () => {
+                    execute().subscribe({
                       next: (res) => {
                         const parsedResponse = deserialize(res.result.data);
                         cache.set(cacheKey, parsedResponse);
                         observer.next({ result: { type: 'data', data: parsedResponse } });
                         observer.complete();
                       },
+                      error: async (error: HttpErrorResponse) => {
+                        if (!retried && error.status === 401) {
+                          retried = true;
+                          try {
+                            await auth.getSession();
+                          } catch {}
+                          subscribeOnce();
+                          return;
+                        }
+                        handleError(error);
+                      },
                     });
+                  };
+
+                  subscribeOnce();
 
                   break;
                 }
 
                 case 'mutation': {
-                  // Angular's post requires a body param; use null if input is invalid
                   const body = isValidInput ? serialized : null;
 
-                  http
-                    .post<{ result: { data: SuperJSONResult } }>(url, body, {
+                  const execute = () =>
+                    http.post<{ result: { data: SuperJSONResult } }>(url, body, {
                       headers,
                       withCredentials: true,
-                    })
-                    .pipe(
-                      catchError((error: HttpErrorResponse) => {
-                        handleError(error);
-                        return throwError(() => error);
-                      }),
-                    )
-                    .subscribe({
+                    });
+
+                  let retried = false;
+                  const subscribeOnce = () => {
+                    execute().subscribe({
                       next: (res) => {
                         const parsedResponse = deserialize(res.result.data);
                         cache.clear();
                         observer.next({ result: { type: 'data', data: parsedResponse } });
                         observer.complete();
                       },
+                      error: async (error: HttpErrorResponse) => {
+                        if (!retried && error.status === 401) {
+                          retried = true;
+                          try {
+                            await auth.getSession();
+                          } catch {}
+                          subscribeOnce();
+                          return;
+                        }
+                        handleError(error);
+                      },
                     });
+                  };
+
+                  subscribeOnce();
                   break;
                 }
               }
@@ -153,6 +172,9 @@ export const provideTrpcClient = () => {
   };
 };
 
-export function injectTrpcClient() {
+export function injectTrpc() {
   return inject(TRPC_CLIENT);
 }
+
+export type RouterOutputs = inferRouterOutputs<AppRouter>;
+export type RouterInputs = inferRouterInputs<AppRouter>;
