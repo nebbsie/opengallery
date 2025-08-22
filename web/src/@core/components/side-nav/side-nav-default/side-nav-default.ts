@@ -53,7 +53,12 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       Videos
     </a>
 
-    <p class="mt-6 mb-2 font-medium">Albums</p>
+    <div class="flex items-center justify-between">
+      <p class="font-medium">Albums</p>
+      <a class="text-xs text-blue-500" size="sm" hlmBtn variant="link" routerLink="/albums"
+        >View All</a
+      >
+    </div>
 
     <a class="mb-1" hlmBtn variant="menu">
       <ng-icon hlm size="sm" name="lucideImages" />

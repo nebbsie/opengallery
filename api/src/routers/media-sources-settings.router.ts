@@ -43,6 +43,7 @@ export const mediaSourcesSettingsRouter = router({
       .select()
       .from(MediaPathTable)
       .orderBy(asc(MediaPathTable.createdAt));
+
     const settings = await findOrCreateMediaSettings();
 
     return {

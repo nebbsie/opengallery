@@ -50,31 +50,6 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
     }
 
     @if (settings.isSuccess()) {
-      <h1 class="text-foreground mb-2 block text-lg font-bold">Source Folders</h1>
-
-      <p class="text-muted-foreground mb-6 text-sm">
-        Specify the folders where your media files are stored. The application will scan these
-        locations to import your photos and videos.
-      </p>
-
-      @for (path of items(); track path.id) {
-        <div class="mb-4 flex max-w-lg gap-x-2">
-          <input [formControl]="path.control" hlmInput type="email" placeholder="Email" />
-
-          <button
-            class="text-foreground"
-            hlmBtn
-            variant="ghost"
-            size="icon"
-            (click)="handleDeleteSource(path.id)"
-          >
-            <ng-icon hlm size="sm" name="lucideTrash2" />
-          </button>
-        </div>
-      }
-
-      <button class="mb-10" hlmBtn variant="outline" (click)="addPath()">Add Another Path</button>
-
       <h1 class="text-foreground mb-2 block text-lg font-bold">Folder Settings</h1>
       <p class="text-muted-foreground mb-6 text-sm">
         Specify how the application should handle scanning and importing media from the specified
@@ -94,6 +69,31 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
           </p>
         </div>
       </label>
+
+      <h1 class="text-foreground mb-2 block text-lg font-bold">Source Folders</h1>
+
+      <p class="text-muted-foreground mb-6 text-sm">
+        Specify the locations of the existing media you have. These will be ingested, the raw files
+        will not be moved or modified.
+      </p>
+
+      @for (path of items(); track path.id) {
+        <div class="mb-4 flex max-w-lg gap-x-2">
+          <input [formControl]="path.control" hlmInput type="email" placeholder="Email" />
+
+          <button
+            class="text-foreground"
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            (click)="handleDeleteSource(path.id)"
+          >
+            <ng-icon hlm size="sm" name="lucideTrash2" />
+          </button>
+        </div>
+      }
+
+      <button class="mb-10" hlmBtn variant="outline" (click)="addPath()">Add Another Path</button>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -106,7 +106,6 @@ export class SettingsSources {
   settings = injectQuery(() => ({
     queryKey: [CacheKey.MediaSourcesSettings],
     queryFn: async () => this.trpc.mediaSourcesSettings.get.query(),
-    retryDelay: 0,
   }));
 
   addSource = injectMutation(() => ({
