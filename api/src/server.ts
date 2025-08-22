@@ -1,17 +1,17 @@
+import cors from "@fastify/cors";
 import {
   fastifyTRPCPlugin,
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
 import Fastify, { type FastifyInstance } from "fastify";
-import { appRouter, type AppRouter } from "./router.js";
-import { createContext } from "./context.js";
-import cors from "@fastify/cors";
 import { auth } from "./auth/auth.js";
+import { createContext } from "./context.js";
+import { appRouter, type AppRouter } from "./router.js";
 
 const server: FastifyInstance = Fastify();
 
 await server.register(cors, {
-  origin: process.env.CLIENT_ORIGIN || "http://localhost:4200",
+  origin: process.env.TRUSTED_ORIGIN || "http://localhost:4200",
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   credentials: true,
@@ -73,8 +73,11 @@ server.register(fastifyTRPCPlugin, {
 
 const start = async () => {
   try {
-    console.log("Starting server on port 3000 ...");
-    await server.listen({ port: 3000 });
+    const port = process.env["PORT"] ? parseInt(process.env["PORT"], 10) : 3000;
+    const host = process.env["HOST"] ?? "0.0.0.0";
+    console.log(`Starting server on ${host}:${port} ...`);
+
+    await server.listen({ port, host });
   } catch (err) {
     server.log.error(err);
     process.exit(1);

@@ -1,0 +1,71 @@
+name: opengallery
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-opengallery}
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3219
+      DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
+      TRUSTED_ORIGIN: http://localhost:4321
+    depends_on:
+      db:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    ports:
+      - "${API_PORT:-3219}:3219"
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-4321}:4321"
+    environment:
+      NODE_ENV: production
+      PORT: 4321
+    depends_on:
+      api:
+        condition: service_started
+
+  migrations:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+      target: builder
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
+      NODE_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "npm run db:migrate"]
+    working_dir: /app
+    restart: "no"
+    ports:
+      - "${WEB_PORT:-4321}:4321"
+
+volumes:
+  pgdata:

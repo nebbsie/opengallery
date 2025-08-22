@@ -3,13 +3,17 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "../db/index.js";
 import { authSchema } from "../db/auth-schema.js";
 
+const trustedOrigins = process.env["TRUSTED_ORIGIN"]
+  ? [process.env["TRUSTED_ORIGIN"]]
+  : ["http://localhost:4200"];
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: "pg",
     schema: authSchema,
   }),
   telemetry: { enabled: false },
-  trustedOrigins: ["http://localhost:3000", 'http://localhost:4200"'],
+  trustedOrigins,
   emailAndPassword: {
     enabled: true,
   },
