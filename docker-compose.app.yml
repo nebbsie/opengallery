@@ -18,16 +18,12 @@ services:
       retries: 30
 
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ghcr.io/nebbsie/opengallery-api:latest
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      HOST: 0.0.0.0
       PORT: 3219
       DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
-      TRUSTED_ORIGIN: http://localhost:4321
     depends_on:
       db:
         condition: service_healthy
@@ -35,37 +31,30 @@ services:
         condition: service_completed_successfully
     ports:
       - "${API_PORT:-3219}:3219"
+    volumes:
+      - /mnt/storage:/storage
 
   web:
-    build:
-      context: .
-      dockerfile: web/Dockerfile
+    image: ghcr.io/nebbsie/opengallery-web:latest
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-4321}:4321"
     environment:
-      NODE_ENV: production
       PORT: 4321
     depends_on:
       api:
         condition: service_started
 
   migrations:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
-      target: builder
+    image: ghcr.io/nebbsie/opengallery-api-migrations:latest
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
-      NODE_ENV: development
     depends_on:
       db:
         condition: service_healthy
     command: ["sh", "-c", "npm run db:migrate"]
     working_dir: /app
     restart: "no"
-    ports:
-      - "${WEB_PORT:-4321}:4321"
 
 volumes:
   pgdata:

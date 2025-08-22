@@ -10,46 +10,91 @@ import { appRouter, type AppRouter } from "./router.js";
 
 const server: FastifyInstance = Fastify();
 
+// TRUSTED_ORIGINS examples:
+//   "*"                          -> allow any origin (reflected), with credentials
+//   "http://a.com,http://b.com"  -> allowlist
+const rawOrigins = process.env["TRUSTED_ORIGINS"];
+const allowAll = !rawOrigins || rawOrigins.trim() === "*";
+const parsedOrigins = rawOrigins
+  ? rawOrigins
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean)
+  : [];
+
 await server.register(cors, {
-  origin: process.env.TRUSTED_ORIGIN || "http://localhost:4200",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  // Reflect any Origin when allowAll. Otherwise allow only those in parsedOrigins.
+  origin: allowAll
+    ? (_origin, cb) => cb(null, true)
+    : (origin, cb) => cb(null, !!origin && parsedOrigins.includes(origin)),
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   maxAge: 86400,
 });
 
 server.get("/health", async () => ({ status: "ok" }));
 
-// Register authentication endpoint
+// Authentication passthrough with CORS-safe header forwarding
 server.route({
-  method: ["GET", "POST"],
+  method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   url: "/api/auth/*",
   async handler(request, reply) {
     try {
-      // Construct request URL
+      // Preflight is handled by @fastify/cors already, but this keeps route unified.
+      if (request.method === "OPTIONS") {
+        return reply.status(204).send();
+      }
+
       const url = new URL(request.url, `http://${request.headers.host}`);
 
-      // Convert Fastify headers to standard Headers object
+      // Build Headers for fetch request
       const headers = new Headers();
       Object.entries(request.headers).forEach(([key, value]) => {
-        if (value) headers.append(key, value.toString());
+        if (value !== undefined) headers.append(key, String(value));
       });
 
-      // Create Fetch API-compatible request
+      // Build fetch-compatible Request
+      // Using global WHATWG fetch types at runtime. Types may require // @ts-ignore
+      // if your tsconfig lacks "DOM".
       // @ts-ignore
       const req = new Request(url.toString(), {
         method: request.method,
         headers,
-        body: request.body ? JSON.stringify(request.body) : undefined,
+        body:
+          request.body && typeof request.body !== "string"
+            ? JSON.stringify(request.body)
+            : (request.body as any),
       });
 
-      // Process authentication request
+      // Delegate to your auth handler
       const response = await auth.handler(req);
 
-      // Forward response to client
+      // Apply status
       reply.status(response.status);
-      response.headers.forEach((value, key) => reply.header(key, value));
-      reply.send(response.body ? await response.text() : null);
+
+      // Strip any upstream CORS headers to avoid conflicts with @fastify/cors
+      const strip = new Set([
+        "access-control-allow-origin",
+        "access-control-allow-credentials",
+        "access-control-allow-headers",
+        "access-control-allow-methods",
+        "access-control-expose-headers",
+        "access-control-max-age",
+        "vary",
+      ]);
+
+      // Forward only non-CORS headers, including Set-Cookie
+      response.headers.forEach((value, key) => {
+        if (!strip.has(key.toLowerCase())) {
+          // Fastify will collect multiple Set-Cookie headers into an array
+          reply.header(key, value);
+        }
+      });
+
+      // Forward body
+      const text = await response.text();
+      reply.send(text || null);
     } catch (error) {
       console.error("Authentication Error:", error);
       reply.status(500).send({
@@ -60,6 +105,7 @@ server.route({
   },
 });
 
+// tRPC
 server.register(fastifyTRPCPlugin, {
   prefix: "/trpc",
   trpcOptions: {
@@ -76,6 +122,9 @@ const start = async () => {
     const port = process.env["PORT"] ? parseInt(process.env["PORT"], 10) : 3000;
     const host = process.env["HOST"] ?? "0.0.0.0";
     console.log(`Starting server on ${host}:${port} ...`);
+    console.log(
+      `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
+    );
 
     await server.listen({ port, host });
   } catch (err) {

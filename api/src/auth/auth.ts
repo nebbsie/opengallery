@@ -1,13 +1,18 @@
 // auth.ts
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { sql } from "drizzle-orm";
+import { authSchema } from "../db/auth-schema.js";
 import { db } from "../db/index.js";
-import { authSchema, user } from "../db/auth-schema.js";
-import { sql, eq } from "drizzle-orm";
 
-const trustedOrigins = process.env["TRUSTED_ORIGIN"]
-  ? [process.env["TRUSTED_ORIGIN"]]
-  : ["http://localhost:4200"];
+const rawOrigins = process.env["TRUSTED_ORIGINS"];
+
+const parsedOrigins = rawOrigins
+  ? rawOrigins
+      .split(",")
+      .map((o) => o.trim())
+      .filter(Boolean)
+  : ["*"];
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema: authSchema }),
@@ -43,6 +48,6 @@ export const auth = betterAuth({
   },
 
   telemetry: { enabled: false },
-  trustedOrigins,
+  trustedOrigins: parsedOrigins,
   emailAndPassword: { enabled: true },
 });
