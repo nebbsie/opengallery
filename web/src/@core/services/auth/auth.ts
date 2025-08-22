@@ -6,6 +6,7 @@ interface UserRecord {
   id: string;
   name: string;
   email: string;
+  type: 'user' | 'admin';
   image?: string;
 }
 type User = UserRecord | null;

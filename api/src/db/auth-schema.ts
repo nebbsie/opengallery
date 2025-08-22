@@ -1,4 +1,6 @@
-import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, pgEnum, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+
+export const userTypeEnum = pgEnum("user_type", ["user", "admin"]);
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -8,6 +10,7 @@ export const user = pgTable("user", {
     .$defaultFn(() => false)
     .notNull(),
   image: text("image"),
+  type: userTypeEnum("type").notNull().default("user"),
   createdAt: timestamp("created_at")
     .$defaultFn(() => /* @__PURE__ */ new Date())
     .notNull(),

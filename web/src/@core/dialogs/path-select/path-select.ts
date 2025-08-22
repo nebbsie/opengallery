@@ -1,27 +1,14 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  signal,
-  Output,
-  EventEmitter,
-  inject,
-} from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, signal, inject } from '@angular/core';
 import { injectTrpc, RouterOutputs } from '@core/services/trpc';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 import { CacheKey } from '@core/services/cache-key.types';
 import { ErrorAlert } from '@core/components/error/error';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideHouse,
-  lucideRefreshCcw,
-  lucideFolder,
-  lucideFile,
-  lucideCornerRightUp,
-} from '@ng-icons/lucide';
+import { lucideRefreshCcw, lucideFolder, lucideFile, lucideCornerRightUp } from '@ng-icons/lucide';
 import { BrnDialogRef } from '@spartan-ng/brain/dialog';
-import { HlmDialogFooter } from '@spartan-ng/helm/dialog';
+import { HlmDialogFooter, HlmDialogTitle } from '@spartan-ng/helm/dialog';
+import { HlmAlertDialogHeader } from '@spartan-ng/helm/alert-dialog';
 
 type LsResult = RouterOutputs['directory']['ls'];
 type Entry = LsResult['entries'][number];
@@ -29,35 +16,39 @@ type Entry = LsResult['entries'][number];
 @Component({
   selector: 'app-path-select',
   standalone: true,
-  providers: [
-    provideIcons({ lucideHouse, lucideRefreshCcw, lucideFolder, lucideFile, lucideCornerRightUp }),
-  ],
-  imports: [ErrorAlert, HlmButton, NgIcon, HlmDialogFooter],
+  providers: [provideIcons({ lucideRefreshCcw, lucideFolder, lucideFile, lucideCornerRightUp })],
+  imports: [ErrorAlert, HlmButton, NgIcon, HlmDialogFooter, HlmAlertDialogHeader, HlmDialogTitle],
+  host: {
+    class:
+      'box-border flex h-[80dvh] max-h-[80dvh] w-[80vw] max-w-full flex-col overflow-hidden sm:h-[80vh] sm:w-[420px] sm:max-h-[400px]',
+  },
   template: `
-    <div class="mb-3 flex w-[400px] items-center gap-2">
-      <div class="text-foreground min-w-0 flex-1 truncate text-sm" [title]="currentPath()">
-        @for (crumb of breadcrumbs(); track crumb.path; let last = $last) {
-          <button
-            type="button"
-            class="text-foreground hover:underline"
-            (click)="jumpTo(crumb.path)"
-          >
-            {{ crumb.label }}
-          </button>
-          @if (!last) {
-            <span class="text-foreground px-1">/</span>
+    <hlm-alert-dialog-header>
+      <h3 hlmDialogTitle>File Browser</h3>
+    </hlm-alert-dialog-header>
+
+    <!-- Header / breadcrumbs -->
+    <div class="my-3 flex items-center gap-2">
+      <div
+        class="text-foreground min-w-0 flex-1 overflow-x-auto overflow-y-hidden text-base whitespace-nowrap sm:text-sm"
+      >
+        <div class="inline-flex min-w-0 items-center">
+          @for (crumb of breadcrumbs(); track crumb.path; let last = $last) {
+            <button
+              type="button"
+              class="text-foreground hover:underline"
+              (click)="jumpTo(crumb.path)"
+            >
+              {{ crumb.label }}
+            </button>
+            @if (!last) {
+              <span class="text-foreground px-1">/</span>
+            }
           }
-        }
+        </div>
       </div>
 
-      <button
-        class="text-foreground"
-        type="button"
-        hlmBtn
-        variant="ghost"
-        size="icon"
-        (click)="folders.refetch()"
-      >
+      <button type="button" hlmBtn variant="ghost" size="icon" (click)="folders.refetch()">
         <ng-icon name="lucideRefreshCcw" [class.animate-spin]="folders.isFetching()" />
       </button>
     </div>
@@ -66,46 +57,42 @@ type Entry = LsResult['entries'][number];
       <app-error-alert [error]="folders.error()" />
     }
 
-    <div class="text-foreground mb-6 overflow-hidden rounded-md border">
-      <div
-        class="bg-muted/50 text-foreground grid grid-cols-[24px_minmax(0,1fr)] gap-3 p-2 text-xs font-medium"
-      >
-        <span></span><span>Name</span>
-      </div>
+    <div class="text-foreground flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
+      <div class="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <div
+          class="bg-muted text-foreground sticky top-0 z-10 grid grid-cols-[24px_minmax(0,1fr)] gap-3 p-2 text-xs font-medium"
+        >
+          <span>Name</span>
+        </div>
 
-      <!-- Fixed-height scroll window -->
-      <div class="relative h-72 min-w-0 divide-y overflow-auto">
         @if (canGoUp()) {
-          <div class="bg-background sticky top-0 z-10">
-            <button
-              type="button"
-              class="hover:bg-accent/60 grid w-full min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-3 px-3 py-2 text-left text-sm"
-              (click)="goUp()"
-            >
-              <ng-icon name="lucideCornerRightUp" class="h-6 w-6" />
-              <span class="truncate">...</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            class="hover:bg-accent/60 grid w-full min-w-0 cursor-pointer grid-cols-[24px_minmax(0,1fr)] items-center gap-3 px-3 py-3 text-left text-base sm:text-sm"
+            (click)="goUp()"
+          >
+            <ng-icon name="lucideCornerRightUp" class="h-6 w-6" />
+            <span class="truncate">...</span>
+          </button>
         }
 
         @for (e of data(); track e.path) {
           <button
             type="button"
-            class="hover:bg-accent/60 grid w-full min-w-0 grid-cols-[24px_minmax(0,1fr)] items-center gap-3 px-3 py-2 text-left text-sm"
+            class="hover:bg-accent/60 grid w-full min-w-0 cursor-pointer grid-cols-[24px_minmax(0,1fr)] items-center gap-3 px-3 py-3 text-left text-base sm:text-sm"
             (click)="open(e)"
           >
             <ng-icon
               class="h-6 w-6"
               [name]="e.kind === 'dir' ? 'lucideFolder' : 'lucideFile'"
             ></ng-icon>
-            <!-- mid-word ellipsis -->
             <span class="min-w-0 truncate">{{ e.name }}</span>
           </button>
         }
       </div>
     </div>
 
-    <hlm-dialog-footer>
+    <hlm-dialog-footer class="mt-3 px-0 pb-[env(safe-area-inset-bottom)]">
       <button hlmBtn variant="ghost" (click)="_dialogRef.close()">Cancel</button>
       <button hlmBtn (click)="selectCurrent()">Select this folder</button>
     </hlm-dialog-footer>
@@ -127,8 +114,6 @@ export class PathSelect {
       keepPreviousData: true,
       staleTime: Infinity,
       gcTime: 1000 * 60 * 60 * 24 * 7,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
     };
   });
 
@@ -164,7 +149,6 @@ export class PathSelect {
   jumpTo(path: string) {
     this.currentPath.set(path || '/');
   }
-
   selectCurrent() {
     this._dialogRef.close(this.currentPath());
   }

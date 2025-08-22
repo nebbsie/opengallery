@@ -1,4 +1,4 @@
-import { NgOptimizedImage } from '@angular/common';
+import { NgOptimizedImage, UpperCasePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Logo } from '@core/components/logo/logo';
@@ -14,11 +14,13 @@ import {
   lucideSearch,
   lucideSettings,
   lucideUpload,
+  lucideCrown,
 } from '@ng-icons/lucide';
 import { BrnPopover, BrnPopoverContent, BrnPopoverTrigger } from '@spartan-ng/brain/popover';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmPopoverContent } from '@spartan-ng/helm/popover';
+import { HlmBadge } from '@spartan-ng/helm/badge';
 
 @Component({
   selector: 'app-nav',
@@ -30,6 +32,7 @@ import { HlmPopoverContent } from '@spartan-ng/helm/popover';
       lucideSettings,
       lucideSearch,
       lucideMenu,
+      lucideCrown,
     }),
   ],
   imports: [
@@ -84,16 +87,18 @@ import { HlmPopoverContent } from '@spartan-ng/helm/popover';
             <ng-icon class="text-foreground" hlm name="lucideMoon" />
           </button>
 
-          <a
-            class="text-foreground"
-            hlmBtn
-            variant="ghost"
-            size="icon"
-            routerLink="/settings"
-            (click)="ctx.close()"
-          >
-            <ng-icon class="text-foreground" hlm name="lucideSettings" />
-          </a>
+          @if (type() === 'admin') {
+            <a
+              class="text-foreground"
+              hlmBtn
+              variant="ghost"
+              size="icon"
+              routerLink="/settings"
+              (click)="ctx.close()"
+            >
+              <ng-icon class="text-foreground" hlm name="lucideSettings" />
+            </a>
+          }
         </div>
 
         <div class="flex flex-col items-center justify-center gap-2">
@@ -104,7 +109,17 @@ import { HlmPopoverContent } from '@spartan-ng/helm/popover';
             [height]="64"
             alt="Profile image"
           />
-          <p class="text-muted-foreground text-sm">{{ email() }}</p>
+          <p class="text-muted-foreground flex items-center gap-2 text-sm">
+            {{ email() }}
+
+            @if (type() === 'admin') {
+              <span
+                class="flex items-center rounded-full bg-blue-500 p-1 text-white dark:bg-blue-600"
+              >
+                <ng-icon name="lucideCrown" />
+              </span>
+            }
+          </p>
         </div>
 
         <button (click)="logOut()" hlmBtn variant="outline" size="sm">
@@ -124,6 +139,7 @@ export class Nav {
 
   avatarUrl = computed(() => this.auth.user()?.image ?? 'profile_placeholder.png');
   email = computed(() => this.auth.user()?.email);
+  type = computed(() => this.auth.user()?.type);
 
   logOut() {
     this.auth.signOut();
