@@ -67,13 +67,13 @@ export async function scan(rootDir: string) {
   walk(rootDir);
 
   for (const folder of folders) {
-    // Get all  of the files in this folder.
+    // Get all the files in this folder.
     const files = byFolder.get(folder) ?? [];
 
-    // Get all of the files already in the database for this folder.
+    // Get all the files already in the database for this folder.
     const alreadySavedFiles = await trpc.files.getFilesInDir.mutate(folder);
 
-    const alreadySavedPaths = new Set(alreadySavedFiles.map((f) => f.path));
+    const alreadySavedPaths = new Set(alreadySavedFiles.map((f: { path: string }) => f.path));
 
     logger.info(
       `Processing folder: ${folder} (${files.length} files) (already saved: ${alreadySavedFiles.length})`,
@@ -88,7 +88,7 @@ export async function scan(rootDir: string) {
     // If no files to add but there are files in the DB for this folder, remove them.
     if (files.length === 0) {
       logger.info(`Removing orphaned files for folder: ${folder}`);
-      await trpc.files.removeFilesById.mutate(alreadySavedFiles.map((f) => f.id));
+      await trpc.files.removeFilesById.mutate(alreadySavedFiles.map((f: { id: string }) => f.id));
       continue;
     }
 
