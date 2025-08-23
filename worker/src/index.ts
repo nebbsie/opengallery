@@ -1,5 +1,10 @@
+import "dotenv/config";
+import { trpc } from "./trpc/trpc.js";
+
 async function main() {
-  console.log("Worker booting...");
+  const res = await trpc.mediaSourcesSettings.get.query();
+
+  console.log("Worker booting...", res);
 }
 
 main();

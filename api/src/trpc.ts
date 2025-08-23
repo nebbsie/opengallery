@@ -13,6 +13,15 @@ const isAuthenticated = (required: boolean) =>
       return req.next();
     }
 
+    console.log(req.ctx.req.headers.authorization);
+
+    if (
+      req.ctx.req.headers.authorization ===
+      `Bearer ${process.env["WORKER_TOKEN"]}`
+    ) {
+      return req.next();
+    }
+
     const session = await auth.api.getSession({
       headers: toHeaders(req.ctx.req.headers),
     });

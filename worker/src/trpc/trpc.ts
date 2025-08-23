@@ -1,17 +1,19 @@
+import type { AppRouter } from "@opengallery/types";
 import { createTRPCProxyClient, httpBatchLink } from "@trpc/client";
 import superjson from "superjson";
-import type { AppRouter } from "@opengallery/types";
 
-const trpc = createTRPCProxyClient<AppRouter>({
+const API_URL = process.env["API_URL"];
+
+export const trpc = createTRPCProxyClient<AppRouter>({
   links: [
     httpBatchLink({
-      url: "http://localhost:3000/trpc",
+      url: `${API_URL}/trpc`,
       transformer: superjson,
       async headers() {
-        return {};
+        return {
+          authorization: `Bearer ${process.env["WORKER_TOKEN"]}`,
+        };
       },
     }),
   ],
 });
-
-export { trpc };

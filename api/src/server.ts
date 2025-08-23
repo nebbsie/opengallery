@@ -1,3 +1,4 @@
+import "dotenv/config";
 import cors from "@fastify/cors";
 import {
   fastifyTRPCPlugin,
@@ -10,9 +11,6 @@ import { appRouter, type AppRouter } from "./router.js";
 
 const server: FastifyInstance = Fastify();
 
-// TRUSTED_ORIGINS examples:
-//   "*"                          -> allow any origin (reflected), with credentials
-//   "http://a.com,http://b.com"  -> allowlist
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 const allowAll = !rawOrigins || rawOrigins.trim() === "*";
 const parsedOrigins = rawOrigins
@@ -23,7 +21,6 @@ const parsedOrigins = rawOrigins
   : [];
 
 await server.register(cors, {
-  // Reflect any Origin when allowAll. Otherwise allow only those in parsedOrigins.
   origin: allowAll
     ? (_origin, cb) => cb(null, true)
     : (origin, cb) => cb(null, !!origin && parsedOrigins.includes(origin)),
@@ -35,7 +32,6 @@ await server.register(cors, {
 
 server.get("/health", async () => ({ status: "ok" }));
 
-// Authentication passthrough with CORS-safe header forwarding
 server.route({
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   url: "/api/auth/*",

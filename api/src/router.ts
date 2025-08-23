@@ -1,4 +1,4 @@
-import { router } from "./trpc.js";
+import { router, t } from "./trpc.js";
 import { healthRouter } from "./routers/health.router.js";
 import { mediaSourcesSettingsRouter } from "./routers/media-sources-settings.router.js";
 import { directoryRouter } from "./routers/directory.router.js";

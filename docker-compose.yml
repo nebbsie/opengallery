@@ -22,6 +22,7 @@ services:
       NODE_ENV: production
       PORT: 3219
       DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
+      WORKER_TOKEN: ${WORKER_TOKEN:-changeme}
     depends_on:
       db:
         condition: service_healthy
@@ -41,18 +42,18 @@ services:
       api:
         condition: service_started
 
-  # worker:
-  #   image: ghcr.io/nebbsie/opengallery-worker:latest
-  #   restart: unless-stopped
-  #   environment:
-  #     NODE_ENV: production
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
-  #     migrations:
-  #       condition: service_completed_successfully
-
-  # # migrations service removed; api runs migrations on startup
+  worker:
+    image: ghcr.io/nebbsie/opengallery-worker:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      WORKER_TOKEN: ${WORKER_TOKEN:-changeme}
+      API_URL: http://api:3219
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
 
 volumes:
   pgdata:
