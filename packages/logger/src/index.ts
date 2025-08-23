@@ -1,114 +1,86 @@
-import { existsSync, mkdirSync } from "fs";
-import { dirname } from "path";
-import pino, {
-  DestinationStream,
-  LoggerOptions,
-  Logger as PinoLogger,
-} from "pino";
-
-export interface LoggerConfig {
-  level?: string;
-  name?: string;
-  prettyPrint?: boolean;
-  redact?: string[];
-  logFile?: string | undefined;
-}
+import { accessSync, constants, existsSync, mkdirSync } from "fs";
+import pino, { LoggerOptions, multistream, Logger as PinoLogger } from "pino";
 
 const isProd = process.env.NODE_ENV === "production";
-const isDev = !isProd;
+
+export interface LoggerConfig {
+  name?: string; // only override allowed
+}
 
 export class Logger {
   private logger: PinoLogger;
 
-  constructor(config: LoggerConfig = {}) {
-    const {
-      level = process.env.LOG_LEVEL || "info",
-      name = process.env.SERVICE_NAME || "opengallery",
-      prettyPrint = isDev,
-      redact = ["password", "token", "secret", "key"],
-      logFile = process.env.LOG_FILE,
-    } = config;
+  constructor(config: LoggerConfig) {
+    const name = config.name;
+
+    if (!name) {
+      throw new Error("Logger name is required");
+    }
 
     const base: LoggerOptions = {
-      level,
       name,
-      redact: { paths: redact, remove: true },
+      level: process.env.LOG_LEVEL || "info",
     };
 
-    let dest: DestinationStream | undefined;
+    const streams: { stream: NodeJS.WritableStream }[] = [
+      { stream: process.stdout },
+    ];
 
-    if (isDev && prettyPrint) {
-      base.transport = {
-        target: "pino-pretty",
-        options: {
-          colorize: true,
-          translateTime: "SYS:standard",
-          ignore: "pid,hostname",
-          singleLine: false,
-        },
-      };
+    if (isProd) {
+      const logDir = `/var/log/opengallery`;
+      const filePath = `${logDir}/${name}.log`;
+
+      if (!existsSync(logDir)) {
+        mkdirSync(logDir, { recursive: true });
+      }
+
+      try {
+        accessSync(logDir, constants.W_OK);
+      } catch {
+        throw new Error(`Log directory not writable: ${logDir}`);
+      }
+
+      const fileStream = pino.destination({
+        dest: filePath,
+        append: true,
+        sync: false,
+      });
+      // Workaround: SonicBoom (returned by pino.destination) does not have 'writable' property required by NodeJS.WritableStream type.
+      // Cast to 'any' to satisfy the type checker.
+      streams.push({ stream: fileStream as any });
     }
 
-    if (isProd && logFile) {
-      const dir = dirname(logFile);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      // write directly to file stream in prod
-      dest = pino.destination({ dest: logFile, append: true, sync: false });
-    }
-
-    this.logger = dest ? pino(base, dest) : pino(base);
+    this.logger = pino(base, multistream(streams));
   }
 
-  info(message: string, data?: Record<string, any>): void {
-    this.logger.info(data || {}, message);
+  info(msg: string, data?: Record<string, any>) {
+    this.logger.info(data || {}, msg);
   }
-  error(message: string, error?: Error | Record<string, any>): void {
-    if (error instanceof Error) {
-      this.logger.error({ err: error, stack: error.stack }, message);
-    } else {
-      this.logger.error(error || {}, message);
-    }
+  error(msg: string, err?: Error | Record<string, any>) {
+    if (err instanceof Error) this.logger.error({ err, stack: err.stack }, msg);
+    else this.logger.error(err || {}, msg);
   }
-  warn(message: string, data?: Record<string, any>): void {
-    this.logger.warn(data || {}, message);
+  warn(msg: string, data?: Record<string, any>) {
+    this.logger.warn(data || {}, msg);
   }
-  debug(message: string, data?: Record<string, any>): void {
-    this.logger.debug(data || {}, message);
+  debug(msg: string, data?: Record<string, any>) {
+    this.logger.debug(data || {}, msg);
   }
-  trace(message: string, data?: Record<string, any>): void {
-    this.logger.trace(data || {}, message);
+  trace(msg: string, data?: Record<string, any>) {
+    this.logger.trace(data || {}, msg);
   }
-  fatal(message: string, error?: Error | Record<string, any>): void {
-    if (error instanceof Error) {
-      this.logger.fatal({ err: error, stack: error.stack }, message);
-    } else {
-      this.logger.fatal(error || {}, message);
-    }
+  fatal(msg: string, err?: Error | Record<string, any>) {
+    if (err instanceof Error) this.logger.fatal({ err, stack: err.stack }, msg);
+    else this.logger.fatal(err || {}, msg);
   }
 
   child(bindings: Record<string, any>): Logger {
-    const child = new Logger();
-    child.logger = this.logger.child(bindings);
-    return child;
+    const l = new Logger({ name: this.logger.bindings().name as string });
+    l.logger = this.logger.child(bindings);
+    return l;
   }
 
   getPinoLogger(): PinoLogger {
     return this.logger;
   }
 }
-
-export const logger = new Logger();
-
-export const info = (message: string, data?: Record<string, any>) =>
-  logger.info(message, data);
-export const error = (message: string, e?: Error | Record<string, any>) =>
-  logger.error(message, e);
-export const warn = (message: string, data?: Record<string, any>) =>
-  logger.warn(message, data);
-export const debug = (message: string, data?: Record<string, any>) =>
-  logger.debug(message, data);
-export const trace = (message: string, data?: Record<string, any>) =>
-  logger.trace(message, data);
-export const fatal = (message: string, e?: Error | Record<string, any>) =>
-  logger.fatal(message, e);
-export const child = (bindings: Record<string, any>) => logger.child(bindings);

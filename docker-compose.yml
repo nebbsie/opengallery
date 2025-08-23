@@ -21,25 +21,15 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3219
-      DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-opengallery}
       WORKER_TOKEN: ${WORKER_TOKEN:-changeme}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "${API_PORT:-3219}:3219"
-
-  web:
-    image: ghcr.io/nebbsie/opengallery-web:latest
-    restart: unless-stopped
-    ports:
-      - "${WEB_PORT:-4321}:4321"
-    environment:
-      NODE_ENV: production
-      PORT: 4321
-    depends_on:
-      api:
-        condition: service_started
+      - "3219:3219"
+    volumes:
+      - /var/log/opengallery:/var/log/opengallery
 
   worker:
     image: ghcr.io/nebbsie/opengallery-worker:latest
@@ -51,6 +41,20 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      api:
+        condition: service_started
+    volumes:
+      - /var/log/opengallery:/var/log/opengallery
+
+  web:
+    image: ghcr.io/nebbsie/opengallery-web:latest
+    restart: unless-stopped
+    ports:
+      - "4321:4321"
+    environment:
+      NODE_ENV: production
+      PORT: 4321
+    depends_on:
       api:
         condition: service_started
 

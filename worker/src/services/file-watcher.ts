@@ -109,8 +109,6 @@ export class FileWatcherService {
   async updateWatchers() {
     const currentPaths = await trpc.mediaSourcesSettings.get.query();
 
-    this.logger.info(`${currentPaths.paths}`);
-
     const currentPathIds = new Set(currentPaths.paths.map((p: any) => p.id));
     const existingPathIds = new Set(this.watchers.keys());
 
