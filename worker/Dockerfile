@@ -47,6 +47,6 @@ COPY packages/logger/package.json ./packages/logger/package.json
 RUN npm install --omit=dev ./packages/logger
 # ensure linked workspace exists (tiny types pkg)
 COPY packages/types ./packages/types
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/main.js"]
 
 

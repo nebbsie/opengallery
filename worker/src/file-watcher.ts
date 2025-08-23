@@ -1,7 +1,7 @@
 import { Logger } from '@opengallery/logger';
 import chokidar from 'chokidar';
-import { trpc } from './trpc.js';
 import { scan } from './scanner.js';
+import { trpc } from './trpc.js';
 
 interface WatchedPath {
   id: string;
@@ -42,9 +42,12 @@ export class FileWatcherService {
     }
 
     this.logger.info(`Adding watcher for path: ${path} (ID: ${id})`);
-    // Do initial scan.
-
-    await scan(path);
+    // Do initial scan, but don't crash if path is missing or unreadable.
+    try {
+      await scan(path);
+    } catch (error) {
+      this.logger.warn(`Initial scan failed for ${path}, continuing with watcher setup`);
+    }
 
     // Setup watcher.
     try {

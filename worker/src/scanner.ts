@@ -1,8 +1,8 @@
-import { readdirSync, statSync } from 'node:fs';
-import { join, extname } from 'node:path';
-import { trpc } from './trpc.js';
 import { lookup as mimeLookup } from 'mime-types';
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { extname, join } from 'node:path';
 import { logger } from './logger.js';
+import { trpc } from './trpc.js';
 
 type MediaType = 'image' | 'video';
 
@@ -25,12 +25,23 @@ type FileRec = {
 };
 
 export async function scan(rootDir: string) {
+  if (!existsSync(rootDir)) {
+    logger.warn(`Scan skipped, path not found: ${rootDir}`);
+    return { folders: [], totalFiles: 0, byFolder: new Map<string, FileRec[]>() };
+  }
+
   const folders: string[] = [];
   const byFolder = new Map<string, FileRec[]>();
 
   function walk(dir: string) {
     folders.push(dir);
-    const entries = readdirSync(dir, { withFileTypes: true });
+    let entries: import('node:fs').Dirent<string>[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true, encoding: 'utf8' });
+    } catch (error) {
+      logger.warn(`Failed to read directory during scan, skipping: ${dir}`);
+      return;
+    }
 
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
@@ -47,7 +58,13 @@ export async function scan(rootDir: string) {
       const type = bucket(ext);
       if (!type) continue;
 
-      const stat = statSync(fullPath);
+      let stat;
+      try {
+        stat = statSync(fullPath);
+      } catch (error) {
+        logger.warn(`Failed to stat file, skipping: ${fullPath}`);
+        continue;
+      }
       const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
 
       const rec: FileRec = {
