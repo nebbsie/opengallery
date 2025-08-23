@@ -15,6 +15,7 @@ RUN apk add --no-cache libc6-compat
 # Copy root and API workspace manifests
 COPY package.json package-lock.json ./
 COPY api/package.json ./api/package.json
+COPY packages/logger/package.json ./packages/logger/package.json
 
 # Install only production deps for the API workspace
 RUN npm ci --omit=dev --workspace ./api
@@ -28,6 +29,7 @@ WORKDIR /app
 ENV NODE_ENV=development
 COPY package.json package-lock.json ./
 COPY api/package.json ./api/package.json
+COPY packages/logger/package.json ./packages/logger/package.json
 RUN npm ci --workspace ./api
 
 # Copy API source
@@ -37,6 +39,10 @@ COPY api/src ./api/src
 COPY api/drizzle ./api/drizzle
 # Also copy migrations to repo root for the migrations image which runs at /app
 COPY api/drizzle ./drizzle
+# Copy logger package source and build
+COPY packages/logger/tsconfig.json ./packages/logger/tsconfig.json
+COPY packages/logger/src ./packages/logger/src
+RUN npm --prefix ./packages/logger run build
 
 # Build TypeScript for API package (prefix avoids workspace detection issues)
 RUN npm --prefix ./api run build
@@ -56,6 +62,9 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY api/package.json ./package.json
 # Copy compiled API dist
 COPY --from=builder /app/api/dist ./dist
+# Copy compiled logger dist and package.json for reference (node_modules symlink target)
+COPY --from=builder /app/packages/logger/dist ./packages/logger/dist
+COPY packages/logger/package.json ./packages/logger/package.json
 # Copy drizzle config and migrations directory to runtime image root
 COPY --from=builder /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=builder /app/drizzle ./drizzle

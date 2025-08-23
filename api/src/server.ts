@@ -1,13 +1,14 @@
-import "dotenv/config";
 import cors from "@fastify/cors";
 import {
   fastifyTRPCPlugin,
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
+import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 import { auth } from "./auth/auth.js";
 import { createContext } from "./context.js";
 import { appRouter, type AppRouter } from "./router.js";
+import { logger } from "./logger.js";
 
 const server: FastifyInstance = Fastify();
 
@@ -35,7 +36,7 @@ server.get("/health", async () => ({ status: "ok" }));
 server.route({
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   url: "/api/auth/*",
-  async handler(request, reply) {
+  handler: async function (request, reply) {
     try {
       // Preflight is handled by @fastify/cors already, but this keeps route unified.
       if (request.method === "OPTIONS") {
@@ -92,7 +93,7 @@ server.route({
       const text = await response.text();
       reply.send(text || null);
     } catch (error) {
-      console.error("Authentication Error:", error);
+      logger.error("Authentication Error:", error as Error);
       reply.status(500).send({
         error: "Internal authentication error",
         code: "AUTH_FAILURE",
@@ -108,7 +109,7 @@ server.register(fastifyTRPCPlugin, {
     router: appRouter,
     createContext,
     onError({ path, error }) {
-      console.error(`Error in tRPC handler on path '${path}':`, error);
+      logger.error(`Error in tRPC handler on path '${path}':`, error);
     },
   } satisfies FastifyTRPCPluginOptions<AppRouter>["trpcOptions"],
 });
@@ -117,14 +118,14 @@ const start = async () => {
   try {
     const port = process.env["PORT"] ? parseInt(process.env["PORT"], 10) : 3000;
     const host = process.env["HOST"] ?? "0.0.0.0";
-    console.log(`Starting server on ${host}:${port} ...`);
-    console.log(
+    logger.info(`Starting server on ${host}:${port} ...`);
+    logger.info(
       `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
     );
 
     await server.listen({ port, host });
   } catch (err) {
-    server.log.error(err);
+    logger.error("Failed to start server:", err as Error);
     process.exit(1);
   }
 };

@@ -28,8 +28,6 @@ services:
         condition: service_healthy
     ports:
       - "${API_PORT:-3219}:3219"
-    volumes:
-      - /mnt/storage:/storage
 
   web:
     image: ghcr.io/nebbsie/opengallery-web:latest
@@ -37,6 +35,7 @@ services:
     ports:
       - "${WEB_PORT:-4321}:4321"
     environment:
+      NODE_ENV: production
       PORT: 4321
     depends_on:
       api:

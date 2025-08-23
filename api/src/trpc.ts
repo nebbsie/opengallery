@@ -2,6 +2,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { auth } from "./auth/auth.js";
 import type { Context } from "./context.js";
+import { logger } from "./logger.js";
 
 export const t = initTRPC.context<Context>().create({
   transformer: superjson,
@@ -12,8 +13,6 @@ const isAuthenticated = (required: boolean) =>
     if (!required) {
       return req.next();
     }
-
-    console.log(req.ctx.req.headers.authorization);
 
     if (
       req.ctx.req.headers.authorization ===
@@ -51,7 +50,7 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
   const result = await next();
 
   const end = Date.now();
-  console.log(`[TRPC] ${path} took ${end - start}ms to execute`);
+  logger.info(`[TRPC] ${path} took ${end - start}ms to execute`);
 
   return result;
 });
