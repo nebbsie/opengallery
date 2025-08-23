@@ -1,11 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
-import { HlmAlert, HlmAlertDescription, HlmAlertIcon, HlmAlertTitle } from '@spartan-ng/helm/alert';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { HlmIcon } from '@spartan-ng/helm/icon';
-import { lucideCircleAlert } from '@ng-icons/lucide';
-import { TRPCClientError } from '@trpc/client';
-import { AppRouter } from '../../../../../api/src';
 import { JsonPipe } from '@angular/common';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCircleAlert } from '@ng-icons/lucide';
+import { AppRouter } from '@opengallery/types';
+import { HlmAlert, HlmAlertDescription, HlmAlertIcon, HlmAlertTitle } from '@spartan-ng/helm/alert';
+import { HlmIcon } from '@spartan-ng/helm/icon';
+import { TRPCClientError } from '@trpc/client';
 
 @Component({
   selector: 'app-error-alert',

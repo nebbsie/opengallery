@@ -1,0 +1,14 @@
+{
+  "name": "opengallery-monorepo",
+  "private": true,
+  "workspaces": [
+    "api",
+    "web",
+    "worker",
+    "packages/*"
+  ]
+}
+
+
+
+

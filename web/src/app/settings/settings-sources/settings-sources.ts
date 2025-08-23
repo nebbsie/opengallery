@@ -8,6 +8,7 @@ import {
 } from '@angular/core';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ErrorAlert } from '@core/components/error/error';
+import { Confirm } from '@core/dialogs/confirm/confirm';
 import { PathSelect } from '@core/dialogs/path-select/path-select';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc, RouterOutputs } from '@core/services/trpc';
@@ -20,7 +21,6 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
-import { Confirm } from '@core/dialogs/confirm/confirm';
 
 type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
 
@@ -123,34 +123,40 @@ export class SettingsSources {
       // This will be replaced with the actual path once the mutation succeeds.
       // We use a temporary ID to avoid conflicts with existing paths.
       const tempId = `temp-${Date.now()}`;
-      this.queryClient.setQueryData<MediaSourceSettings>([CacheKey.MediaSourcesSettings], (old) =>
-        old
-          ? {
-              ...old,
-              paths: [
-                ...old.paths,
-                {
-                  id: tempId,
-                  path,
-                  createdAt: new Date(),
-                  updatedAt: new Date(),
-                },
-              ],
-            }
-          : old,
+      this.queryClient.setQueryData<MediaSourceSettings>(
+        [CacheKey.MediaSourcesSettings],
+        (old: MediaSourceSettings | undefined): MediaSourceSettings | undefined =>
+          old
+            ? {
+                ...old,
+                paths: [
+                  ...old.paths,
+                  {
+                    id: tempId,
+                    path,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                  },
+                ],
+              }
+            : old,
       );
 
       return { previous, tempId };
     },
     onSuccess: (created, path, ctx) => {
       // If the mutation succeeds, replace the temporary path with the created path.
-      this.queryClient.setQueryData<MediaSourceSettings>([CacheKey.MediaSourcesSettings], (old) =>
-        old
-          ? {
-              ...old,
-              paths: old.paths.map((p) => (p.id === ctx?.tempId ? created : p)),
-            }
-          : old,
+      this.queryClient.setQueryData<MediaSourceSettings>(
+        [CacheKey.MediaSourcesSettings],
+        (old: MediaSourceSettings | undefined): MediaSourceSettings | undefined =>
+          old
+            ? {
+                ...old,
+                paths: old.paths.map((p: MediaSourceSettings['paths'][number]) =>
+                  p.id === ctx?.tempId ? created : p,
+                ),
+              }
+            : old,
       );
     },
     onError: (error, _, ctx) => {
@@ -174,9 +180,9 @@ export class SettingsSources {
       // Optimistically update the cache to remove the deleted item.
       this.queryClient.setQueryData(
         [CacheKey.MediaSourcesSettings],
-        (old: MediaSourceSettings) => ({
+        (old: MediaSourceSettings): MediaSourceSettings => ({
           ...old,
-          paths: old.paths.filter((p) => p.id !== item),
+          paths: old.paths.filter((p: MediaSourceSettings['paths'][number]) => p.id !== item),
         }),
       );
 
@@ -195,7 +201,7 @@ export class SettingsSources {
       return [];
     }
 
-    return res.paths.map((path) => ({
+    return res.paths.map((path: MediaSourceSettings['paths'][number]) => ({
       id: path.id,
       control: new FormControl<string | null>({ value: path.path, disabled: true }, [
         Validators.required,
@@ -215,7 +221,7 @@ export class SettingsSources {
   }
 
   addPath() {
-    this.dialog.open(PathSelect).closed$.subscribe((path) => {
+    this.dialog.open(PathSelect).closed$.subscribe((path: string | null) => {
       if (path) {
         this.addSource.mutate(path);
       }

@@ -1,0 +1,24 @@
+{
+  "name": "opengallery-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "lint": "echo 'no lint configured'"
+  },
+  "dependencies": {
+    "@opengallery/types": "*",
+    "@trpc/client": "^11.5.0",
+    "@trpc/server": "^11.5.0",
+    "dotenv": "^17.2.1",
+    "superjson": "^2.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2"
+  }
+}

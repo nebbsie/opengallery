@@ -53,6 +53,7 @@
     "postcss": "^8.5.6",
     "rxjs": "~7.8.0",
     "superjson": "^2.2.2",
+    "@opengallery/types": "*",
     "tailwindcss": "^4.1.12",
     "tslib": "^2.3.0"
   },

@@ -3,11 +3,11 @@ import { inject, InjectionToken } from '@angular/core';
 import { BETTER_AUTH_CLIENT, type BetterAuthClient } from '@core/services/auth/better-auth-client';
 import { TrpcCache } from '@core/services/trpc/trpc-cache';
 import { environment } from '@env/environment';
+import type { AppRouter } from '@opengallery/types';
 import { createTRPCProxyClient, TRPCClient, TRPCClientError, TRPCLink } from '@trpc/client';
 import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 import { Observable } from 'rxjs';
 import { deserialize, serialize, SuperJSONResult } from 'superjson';
-import type { AppRouter } from '../../../../../api/src';
 
 const TRPC_CLIENT = new InjectionToken<TRPCClient<AppRouter>>('TRPC_CLIENT');
 

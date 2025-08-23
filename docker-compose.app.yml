@@ -7,8 +7,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-opengallery}
-    ports:
-      - "${DB_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -27,8 +25,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      migrations:
-        condition: service_completed_successfully
     ports:
       - "${API_PORT:-3219}:3219"
     volumes:
@@ -45,16 +41,18 @@ services:
       api:
         condition: service_started
 
-  migrations:
-    image: ghcr.io/nebbsie/opengallery-api-migrations:latest
-    environment:
-      DATABASE_URL: postgres://postgres:postgres@db:5432/opengallery
-    depends_on:
-      db:
-        condition: service_healthy
-    command: ["sh", "-c", "npm run db:migrate"]
-    working_dir: /app
-    restart: "no"
+  # worker:
+  #   image: ghcr.io/nebbsie/opengallery-worker:latest
+  #   restart: unless-stopped
+  #   environment:
+  #     NODE_ENV: production
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #     migrations:
+  #       condition: service_completed_successfully
+
+  # # migrations service removed; api runs migrations on startup
 
 volumes:
   pgdata:

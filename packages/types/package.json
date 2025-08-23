@@ -1,0 +1,10 @@
+{
+  "name": "@opengallery/types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "main": "index.d.ts",
+  "types": "index.d.ts"
+}

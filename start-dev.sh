@@ -1,1 +1,1 @@
-docker compose up -d --remove-orphans
+docker compose -f docker-compose.infra.yml up -d --remove-orphans
