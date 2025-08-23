@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/main.ts",
     "build": "tsc",
-    "start": "tsx watch src/index.ts"
+    "start": "tsx watch src/main.ts"
   },
   "prettier": {
     "printWidth": 100,

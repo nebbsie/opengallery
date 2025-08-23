@@ -1,6 +1,6 @@
 import { Logger } from '@opengallery/logger';
 import 'dotenv/config';
-import { FileWatcherService } from './services/file-watcher.js';
+import { FileWatcherService } from './file-watcher.js';
 import { logger } from './logger.js';
 
 const PATH_CHECK_INTERVAL = 30 * 1000;
