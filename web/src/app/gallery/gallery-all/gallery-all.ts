@@ -1,32 +1,44 @@
+import { DatePipe, JsonPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
+import { ErrorAlert } from '@core/components/error/error';
+import { CacheKey } from '@core/services/cache-key.types';
+import { injectTrpc } from '@core/services/trpc';
+import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 import { Media } from '../../types/media';
-import { DatePipe } from '@angular/common';
 
 @Component({
   selector: 'app-gallery-all',
-  imports: [DatePipe],
+  imports: [DatePipe, HlmSpinner, ErrorAlert, JsonPipe],
   template: `
-    <div>
-      @for (dateGroup of groupedMedia(); track $index) {
-        <p class="mb-2">{{ dateGroup.key | date: 'EEE, dd MMM yyyy' }}</p>
-        <!--Mon, 18 Aug 2025-->
+    @if (files.isPending()) {
+      <hlm-spinner />
+    }
 
-        <div class="mb-6 flex flex-wrap gap-x-2 gap-y-2">
-          @for (media of dateGroup.value; track $index) {
-            <img [src]="media.location" [alt]="media.id" />
-          }
-        </div>
+    @if (files.isError()) {
+      <app-error-alert [error]="files.error()" />
+    }
+
+    @if (files.isSuccess()) {
+      @for (asset of files.data(); track asset.id) {
+        @if (asset.type === 'image') {
+          <img [src]="'http://localhost:3000/asset/' + asset.id" [alt]="asset.id" />
+        } @else if (asset.type === 'video') {
+          <video [controls]="true" [src]="'http://localhost:3000/asset/' + asset.id"></video>
+        }
       }
-    </div>
-  `,
-  styles: `
-    :host {
-      display: block;
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class GalleryAll {
+  private trpc = injectTrpc();
+
+  files = injectQuery(() => ({
+    queryKey: [CacheKey.GalleryAll],
+    queryFn: async () => this.trpc.files.getAllFiles.query(),
+  }));
+
   dbMedia = signal<Media[]>([
     {
       id: '1',

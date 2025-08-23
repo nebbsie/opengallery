@@ -31,10 +31,12 @@ export const MediaSettingsTable = pgTable("media_settings", {
 
 export const FileTable = pgTable("file", {
   id: id(),
-  path: text("path").notNull(),
-  type: FileTypeEnum("type").notNull(),
-  mime: text("mime").notNull(),
-  size: integer("size").notNull(),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
+  dir: text("dir").notNull(), // Directory path. Not including name of file.
+  path: text("path").notNull(), // Full path including name of file.
+  name: text("name").notNull(), // Name of file only.
+  type: FileTypeEnum("type").notNull(), // "image" | "video"
+  mime: text("mime").notNull(), // MIME type, e.g. "image/jpeg"
+  size: integer("size").notNull(), // Size in bytes
+  createdAt: createdAt(), // When the record was created
+  updatedAt: updatedAt(), // When the record was last updated
 });

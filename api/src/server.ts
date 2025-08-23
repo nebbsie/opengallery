@@ -7,8 +7,14 @@ import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 import { auth } from "./auth/auth.js";
 import { createContext } from "./context.js";
-import { appRouter, type AppRouter } from "./router.js";
+import { db } from "./db/index.js";
+import { FileTable } from "./db/schema.js";
 import { logger } from "./logger.js";
+import { appRouter, type AppRouter } from "./router.js";
+import { eq } from "drizzle-orm";
+import path from "path";
+import fsp from "node:fs/promises";
+import * as fs from "node:fs";
 
 const server: FastifyInstance = Fastify();
 
@@ -32,6 +38,65 @@ await server.register(cors, {
 });
 
 server.get("/health", async () => ({ status: "ok" }));
+
+server.get("/asset/:id", async (req, reply) => {
+  const { id } = req.params as { id: string };
+
+  const [asset] = await db
+    .select()
+    .from(FileTable)
+    .where(eq(FileTable.id, id))
+    .limit(1);
+
+  if (!asset) {
+    return reply.code(404).send({ error: "Asset not found" });
+  }
+
+  const abs = path.resolve(asset.path);
+  console.log("Serving asset:", abs);
+
+  // Stat for size + mtime
+  let stat;
+  try {
+    stat = await fsp.stat(abs);
+    console.log(stat);
+  } catch {
+    return reply.code(404).send({ error: "Missing on disk" });
+  }
+
+  const etag = `${stat.size}-${stat.mtimeMs | 0}`;
+  if (req.headers["if-none-match"] === etag) {
+    return reply.code(304).send();
+  }
+
+  // Basic headers
+  reply
+    .header("Content-Type", asset.mime || "application/octet-stream")
+    .header("Content-Length", String(stat.size))
+    .header("ETag", etag)
+    .header("Last-Modified", stat.mtime.toUTCString())
+    .header("Cache-Control", "public, max-age=31536000, immutable");
+
+  // Range support (important for video)
+  const range = req.headers.range;
+  if (range) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!m) return reply.code(416).send();
+    const start = m[1] ? parseInt(m[1], 10) : 0;
+    const end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
+    if (start > end || end >= stat.size) return reply.code(416).send();
+
+    reply
+      .code(206)
+      .header("Accept-Ranges", "bytes")
+      .header("Content-Range", `bytes ${start}-${end}/${stat.size}`)
+      .header("Content-Length", String(end - start + 1));
+
+    return reply.send(fs.createReadStream(abs, { start, end }));
+  }
+
+  return reply.send(fs.createReadStream(abs));
+});
 
 server.route({
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],

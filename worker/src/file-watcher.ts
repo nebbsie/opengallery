@@ -65,25 +65,25 @@ export class FileWatcherService {
       });
 
       // Setup event listeners
-      watcher
-        .on('add', (filePath) => {
-          this.logger.info(`File added: ${filePath}`);
-        })
-        .on('change', (filePath) => {
-          this.logger.info(`File changed: ${filePath}`);
-        })
-        .on('unlink', (filePath) => {
-          this.logger.info(`File deleted: ${filePath}`);
-        })
-        .on('addDir', (dirPath) => {
-          this.logger.info(`Directory added: ${dirPath}`);
-        })
-        .on('unlinkDir', (dirPath) => {
-          this.logger.info(`Directory deleted: ${dirPath}`);
-        })
-        .on('error', (error) => {
-          this.logger.error(`Watcher error for ${path}:`, error);
-        });
+      // watcher
+      //   .on('add', (filePath) => {
+      //     this.logger.info(`File added: ${filePath}`);
+      //   })
+      //   .on('change', (filePath) => {
+      //     this.logger.info(`File changed: ${filePath}`);
+      //   })
+      //   .on('unlink', (filePath) => {
+      //     this.logger.info(`File deleted: ${filePath}`);
+      //   })
+      //   .on('addDir', (dirPath) => {
+      //     this.logger.info(`Directory added: ${dirPath}`);
+      //   })
+      //   .on('unlinkDir', (dirPath) => {
+      //     this.logger.info(`Directory deleted: ${dirPath}`);
+      //   })
+      //   .on('error', (error) => {
+      //     this.logger.error(`Watcher error for ${path}:`, error);
+      //   });
 
       this.watchers.set(id, { id, path, watcher });
     } catch (error) {
