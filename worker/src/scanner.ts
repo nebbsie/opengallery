@@ -22,6 +22,8 @@ type FileRec = {
   size: number;
   type: MediaType;
   mime: string;
+  fileCreatedAt: Date;
+  encoded: boolean;
 };
 
 export async function scan(rootDir: string) {
@@ -67,12 +69,27 @@ export async function scan(rootDir: string) {
       }
       const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
 
+      //derive a file creation date
+      let fileCreatedAt: Date;
+      try {
+        // if you want EXIF metadata for images:
+        // const tags = await ExifReader.load(fullPath);
+        // fileCreatedAt = tags['DateTimeOriginal']?.description
+        //   ? new Date(tags['DateTimeOriginal'].description)
+        //   : stat.birthtime;
+        fileCreatedAt = stat.birthtime; // fallback for now
+      } catch {
+        fileCreatedAt = stat.birthtime;
+      }
+
       const rec: FileRec = {
         path: fullPath,
         name: entry.name,
         size: stat.size,
         type,
         mime: String(mime),
+        fileCreatedAt,
+        encoded: false, //default to false when first scanned
       };
 
       const arr = byFolder.get(dir) ?? [];
@@ -129,6 +146,8 @@ export async function scan(rootDir: string) {
         mime: f.mime,
         name: f.name,
         size: f.size,
+        fileCreatedAt: f.fileCreatedAt,
+        encoded: f.encoded,
       }));
 
     if (!filesToAdd.length) {

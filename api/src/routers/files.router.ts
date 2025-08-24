@@ -15,6 +15,8 @@ export const filesRouter = router({
           type: z.enum(["image", "video"]),
           mime: z.string(),
           size: z.number(),
+          encoded: z.boolean(),
+          fileCreatedAt: z.date(),
         }),
       ),
     )
