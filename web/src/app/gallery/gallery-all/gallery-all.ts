@@ -1,26 +1,23 @@
-import { DatePipe, JsonPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
-import { Media } from '../../types/media';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { lucideCirclePlay, lucideCirclePause } from '@ng-icons/lucide';
-import { VideoPlayer } from '@core/components/video-player/video-player';
 
 @Component({
   selector: 'app-gallery-all',
   providers: [
     provideIcons({
       lucideCirclePlay,
-      lucideCirclePause
+      lucideCirclePause,
     }),
   ],
-  imports: [DatePipe, HlmSpinner, ErrorAlert, JsonPipe, NgIcon, HlmIcon, VideoPlayer],
+  imports: [HlmSpinner, ErrorAlert, NgIcon, HlmIcon],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -53,7 +50,9 @@ import { VideoPlayer } from '@core/components/video-player/video-player';
                 #video
               ></video>
 
-              <div class="absolute top-2 right-1 dark:bg-black/30 rounded-full py-1 px-2 flex items-center gap-x-2">
+              <div
+                class="absolute top-2 right-1 flex items-center gap-x-2 rounded-full px-2 py-1 dark:bg-black/30"
+              >
                 <p class="font-semibold">0:09</p>
                 <ng-icon
                   hlm
@@ -66,8 +65,6 @@ import { VideoPlayer } from '@core/components/video-player/video-player';
           </div>
         }
       </div>
-
-      <app-video-player source="http://localhost:3000/asset/d07de6ee-d0c9-407e-a889-651e1c408f98"></app-video-player>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
