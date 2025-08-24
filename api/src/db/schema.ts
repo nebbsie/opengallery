@@ -42,7 +42,7 @@ export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
 //Tables
 export const LibraryTable = pgTable("library", {
   id: id(),
-  userId: uuid("uuid")
+  userId: text("uuid")
     .notNull()
     .references(() => UserTable.id),
   createdAt: createdAt(),
@@ -90,14 +90,14 @@ export const AlbumTable = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => ({
-    //DB-level foreign key (self reference)
-    parentFk: foreignKey({
+  (table) => [
+    //DB-level foreign key (self-reference)
+    foreignKey({
       columns: [table.parentId],
       foreignColumns: [table.id],
       name: "album_parent_fk", // custom constraint name
     }),
-  }),
+  ]
 );
 
 // handle the AlbumTable self-reference here
@@ -127,7 +127,7 @@ export const SharedItemTable = pgTable("shared_item", {
   sourceId: uuid("source_id").notNull(),
   shareType: ShareTypeEnum("share_type").notNull(),
   accessLevel: SharedAccessLevelEnum("access_level").notNull(),
-  sharedToUserId: uuid("shared_to_user_id").references(() => UserTable.id),
+  sharedToUserId: text("shared_to_user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -186,7 +186,7 @@ export const GeoLocationTable = pgTable("geo_location", {
 export const MediaPathTable = pgTable("media_path", {
   id: id(),
   path: text("path").notNull(),
-  userId: uuid("user_id").references(() => UserTable.id),
+  userId: text("user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -194,7 +194,7 @@ export const MediaPathTable = pgTable("media_path", {
 export const MediaSettingsTable = pgTable("media_settings", {
   id: id(),
   autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
-  userId: uuid("user_id").references(() => UserTable.id),
+  userId: text("user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -202,7 +202,7 @@ export const MediaSettingsTable = pgTable("media_settings", {
 export const EventLogTable = pgTable("event_log", {
   id: id(),
   type: text("type").notNull(),
-  userId: uuid("user_id").references(() => UserTable.id),
+  userId: text("user_id").references(() => UserTable.id),
   message: text("message").notNull(),
   extra: jsonb("extra"),
   createdAt: createdAt(),
