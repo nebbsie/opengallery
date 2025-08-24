@@ -272,8 +272,8 @@ export const VerificationTable = pgTable("verification", {
 });
 
 export const AuthSchema = {
-  UserTable,
-  SessionTable,
-  AccountTable,
-  VerificationTable,
+  user: UserTable,
+  session: SessionTable,
+  account: AccountTable,
+  verification: VerificationTable,
 };
