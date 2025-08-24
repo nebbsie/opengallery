@@ -109,6 +109,16 @@ export async function scan(rootDir: string) {
       continue;
     }
 
+    // If a file is in the DB but not on disk, remove it from the DB.
+    const pathsOnDisk = new Set(files.map((f) => f.path));
+    const orphanedFiles = alreadySavedFiles.filter(
+      (f: { path: string }) => !pathsOnDisk.has(f.path),
+    );
+    if (orphanedFiles.length > 0) {
+      logger.info(`Removing ${orphanedFiles.length} orphaned files for folder: ${folder}`);
+      await trpc.files.removeFilesById.mutate(orphanedFiles.map((f: { id: string }) => f.id));
+    }
+
     // Filter out files that are already in the database.
     const filesToAdd = files
       .filter((f) => !alreadySavedPaths.has(f.path))

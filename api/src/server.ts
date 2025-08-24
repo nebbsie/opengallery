@@ -55,16 +55,7 @@ server.get("/asset/:id", async (req, reply) => {
   const abs = path.resolve(asset.path);
   console.log("Serving asset:", abs);
 
-  // Stat for size + mtime
-  let stat;
-  try {
-    stat = await fsp.stat(abs);
-    console.log(stat);
-  } catch {
-    return reply.code(404).send({ error: "Missing on disk" });
-  }
-
-  const etag = `${stat.size}-${stat.mtimeMs | 0}`;
+  const etag = `${asset.size}-${asset.createdAt.getTime() | 0}`;
   if (req.headers["if-none-match"] === etag) {
     return reply.code(304).send();
   }
@@ -72,9 +63,9 @@ server.get("/asset/:id", async (req, reply) => {
   // Basic headers
   reply
     .header("Content-Type", asset.mime || "application/octet-stream")
-    .header("Content-Length", String(stat.size))
+    .header("Content-Length", String(asset.size))
     .header("ETag", etag)
-    .header("Last-Modified", stat.mtime.toUTCString())
+    .header("Last-Modified", asset.updatedAt.toUTCString())
     .header("Cache-Control", "public, max-age=31536000, immutable");
 
   // Range support (important for video)
@@ -83,13 +74,13 @@ server.get("/asset/:id", async (req, reply) => {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!m) return reply.code(416).send();
     const start = m[1] ? parseInt(m[1], 10) : 0;
-    const end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
-    if (start > end || end >= stat.size) return reply.code(416).send();
+    const end = m[2] ? parseInt(m[2], 10) : asset.size - 1;
+    if (start > end || end >= asset.size) return reply.code(416).send();
 
     reply
       .code(206)
       .header("Accept-Ranges", "bytes")
-      .header("Content-Range", `bytes ${start}-${end}/${stat.size}`)
+      .header("Content-Range", `bytes ${start}-${end}/${asset.size}`)
       .header("Content-Length", String(end - start + 1));
 
     return reply.send(fs.createReadStream(abs, { start, end }));
