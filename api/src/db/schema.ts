@@ -5,9 +5,11 @@ import {
   text,
   timestamp,
   uuid,
-  integer, jsonb, foreignKey, decimal
+  integer,
+  jsonb,
+  foreignKey,
+  decimal,
 } from "drizzle-orm/pg-core";
-import { user } from "./auth-schema.js";
 import { relations } from "drizzle-orm";
 
 const createdAt = () =>
@@ -20,15 +22,29 @@ const id = () => uuid("id").primaryKey().defaultRandom();
 
 //Enums
 export const FileTypeEnum = pgEnum("file_type", ["image", "video"]);
-export const SharedItemTypeEnum = pgEnum("shared_item_type", ["library", "album", "file"]);
-export const FileVariantTypeEnum = pgEnum("file_variant_type", ["thumb", "optimised", "original"]);
+export const SharedItemTypeEnum = pgEnum("shared_item_type", [
+  "library",
+  "album",
+  "file",
+]);
+export const FileVariantTypeEnum = pgEnum("file_variant_type", [
+  "thumb",
+  "optimised",
+  "original",
+]);
 export const ShareTypeEnum = pgEnum("share_type", ["user", "public"]);
-export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", ["view", "add", "edit"]);
+export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
+  "view",
+  "add",
+  "edit",
+]);
 
 //Tables
 export const LibraryTable = pgTable("library", {
   id: id(),
-  userId: uuid("uuid").notNull().references(() => user.id),
+  userId: uuid("uuid")
+    .notNull()
+    .references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -49,8 +65,12 @@ export const FileTable = pgTable("file", {
 
 export const LibraryFileTable = pgTable("library_file", {
   id: id(),
-  libraryId: uuid("library_id").notNull().references(() => LibraryTable.id),
-  fileId: uuid("file_id").notNull().references(() => FileTable.id),
+  libraryId: uuid("library_id")
+    .notNull()
+    .references(() => LibraryTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
   deletedAt: timestamp("deleted_at").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -64,7 +84,9 @@ export const AlbumTable = pgTable(
     desc: text("desc"),
     cover: uuid("cover").references(() => FileTable.id),
     parentId: uuid("parent_id"),
-    libraryId: uuid("library_id").notNull().references(() => LibraryTable.id),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => LibraryTable.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -75,7 +97,7 @@ export const AlbumTable = pgTable(
       foreignColumns: [table.id],
       name: "album_parent_fk", // custom constraint name
     }),
-  })
+  }),
 );
 
 // handle the AlbumTable self-reference here
@@ -89,8 +111,12 @@ export const AlbumRelations = relations(AlbumTable, ({ one, many }) => ({
 
 export const AlbumFileTable = pgTable("album_file", {
   id: id(),
-  albumId: uuid("album_id").notNull().references(() => AlbumTable.id),
-  fileId: uuid("file_id").notNull().references(() => FileTable.id),
+  albumId: uuid("album_id")
+    .notNull()
+    .references(() => AlbumTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -101,7 +127,7 @@ export const SharedItemTable = pgTable("shared_item", {
   sourceId: uuid("source_id").notNull(),
   shareType: ShareTypeEnum("share_type").notNull(),
   accessLevel: SharedAccessLevelEnum("access_level").notNull(),
-  sharedToUserId: uuid("shared_to_user_id").references(() => user.id),
+  sharedToUserId: uuid("shared_to_user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -109,14 +135,18 @@ export const SharedItemTable = pgTable("shared_item", {
 export const FileVariantTable = pgTable("file_variant", {
   id: id(),
   type: FileVariantTypeEnum("type").notNull(),
-  fileId: uuid("file_id").notNull().references(() => FileTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
 export const ImageMetadataTable = pgTable("image_metadata", {
   id: id(),
-  fileId: uuid("file_id").notNull().references(() => FileTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   blurhash: text("blurhash"),
@@ -126,10 +156,14 @@ export const ImageMetadataTable = pgTable("image_metadata", {
 
 export const VideoMetadataTable = pgTable("video_metadata", {
   id: id(),
-  fileId: uuid("file_id").notNull().references(() => FileTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
-  poster: uuid("poster").notNull().references(() => FileVariantTable.id),
+  poster: uuid("poster")
+    .notNull()
+    .references(() => FileVariantTable.id),
   runtime: integer("runtime").notNull(),
   codec: text("codec"),
   bitrate: integer("bitrate"),
@@ -140,7 +174,9 @@ export const VideoMetadataTable = pgTable("video_metadata", {
 
 export const GeoLocationTable = pgTable("geo_location", {
   id: id(),
-  fileId: uuid("file_id").notNull().references(() => FileTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
   lat: decimal("lat").notNull(),
   lon: decimal("lon").notNull(),
   createdAt: createdAt(),
@@ -150,7 +186,7 @@ export const GeoLocationTable = pgTable("geo_location", {
 export const MediaPathTable = pgTable("media_path", {
   id: id(),
   path: text("path").notNull(),
-  userId: uuid("user_id").references(() => user.id),
+  userId: uuid("user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -158,7 +194,7 @@ export const MediaPathTable = pgTable("media_path", {
 export const MediaSettingsTable = pgTable("media_settings", {
   id: id(),
   autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
-  userId: uuid("user_id").references(() => user.id),
+  userId: uuid("user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -166,8 +202,78 @@ export const MediaSettingsTable = pgTable("media_settings", {
 export const EventLogTable = pgTable("event_log", {
   id: id(),
   type: text("type").notNull(),
-  userId: uuid("user_id").references(() => user.id),
+  userId: uuid("user_id").references(() => UserTable.id),
   message: text("message").notNull(),
   extra: jsonb("extra"),
   createdAt: createdAt(),
 });
+
+export const userTypeEnum = pgEnum("user_type", ["user", "admin"]);
+
+export const UserTable = pgTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  emailVerified: boolean("email_verified")
+    .$defaultFn(() => false)
+    .notNull(),
+  image: text("image"),
+  type: userTypeEnum("type").notNull().default("user"),
+  createdAt: timestamp("created_at")
+    .$defaultFn(() => /* @__PURE__ */ new Date())
+    .notNull(),
+  updatedAt: timestamp("updated_at")
+    .$defaultFn(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+export const SessionTable = pgTable("session", {
+  id: text("id").primaryKey(),
+  expiresAt: timestamp("expires_at").notNull(),
+  token: text("token").notNull().unique(),
+  createdAt: timestamp("created_at").notNull(),
+  updatedAt: timestamp("updated_at").notNull(),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  userId: text("user_id")
+    .notNull()
+    .references(() => UserTable.id, { onDelete: "cascade" }),
+});
+
+export const AccountTable = pgTable("account", {
+  id: text("id").primaryKey(),
+  accountId: text("account_id").notNull(),
+  providerId: text("provider_id").notNull(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => UserTable.id, { onDelete: "cascade" }),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  idToken: text("id_token"),
+  accessTokenExpiresAt: timestamp("access_token_expires_at"),
+  refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+  scope: text("scope"),
+  password: text("password"),
+  createdAt: timestamp("created_at").notNull(),
+  updatedAt: timestamp("updated_at").notNull(),
+});
+
+export const VerificationTable = pgTable("verification", {
+  id: text("id").primaryKey(),
+  identifier: text("identifier").notNull(),
+  value: text("value").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").$defaultFn(
+    () => /* @__PURE__ */ new Date(),
+  ),
+  updatedAt: timestamp("updated_at").$defaultFn(
+    () => /* @__PURE__ */ new Date(),
+  ),
+});
+
+export const AuthSchema = {
+  UserTable,
+  SessionTable,
+  AccountTable,
+  VerificationTable,
+};

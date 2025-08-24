@@ -2,8 +2,8 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { sql } from "drizzle-orm";
-import { authSchema } from "../db/auth-schema.js";
 import { db } from "../db/index.js";
+import { AuthSchema } from "../db/schema.js";
 
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 
@@ -15,7 +15,7 @@ const parsedOrigins = rawOrigins
   : ["*"];
 
 export const auth = betterAuth({
-  database: drizzleAdapter(db, { provider: "pg", schema: authSchema }),
+  database: drizzleAdapter(db, { provider: "pg", schema: AuthSchema }),
 
   // keep role/type server-controlled
   user: {
