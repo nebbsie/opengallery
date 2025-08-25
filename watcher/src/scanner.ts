@@ -172,6 +172,8 @@ export async function scan(rootDir: string) {
     );
   }
 
+  console.log('anil test:', folders);
+
   const total = Array.from(byFolder.values()).reduce((n, a) => n + a.length, 0);
 
   return { folders, totalFiles: total, byFolder };
