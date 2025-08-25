@@ -26,7 +26,7 @@ type FileRec = {
   encoded: boolean;
 };
 
-export async function scan(rootDir: string) {
+export async function scan(rootDir: string, userId: string) {
   if (!existsSync(rootDir)) {
     logger.warn(`Scan skipped, path not found: ${rootDir}`);
     return { folders: [], totalFiles: 0, byFolder: new Map<string, FileRec[]>() };
@@ -158,10 +158,12 @@ export async function scan(rootDir: string) {
     logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
 
     //get Ids of files just created
-    const fileIds = (await trpc.files.create.mutate(filesToAdd)).map((f: { id: string }) => f.id);
+    const fileCreateResult = await trpc.files.create.mutate(filesToAdd);
+
+    const fileIds = fileCreateResult.map((f) => f.id);
 
     //get the default libraryId to associate files with
-    const libraryId = await trpc.library.getDefaultLibraryId.query();
+    const libraryId = await trpc.library.getDefaultLibraryIdForUser.query(userId);
 
     //save all files to library
     await trpc.libraryFile.create.mutate(
@@ -173,12 +175,13 @@ export async function scan(rootDir: string) {
 
     //album links to a library
     //will have to create an album per folder
-    await trpc.album.create.mutate(
-      folders.map((folder) => ({
+    await trpc.album.create.mutate({
+      userId,
+      albums: folders.map((folder) => ({
         name: folder,
         libraryId,
       })),
-    );
+    });
 
     // Get all files and albums
     const allFiles = await trpc.files.getAllFiles.query();

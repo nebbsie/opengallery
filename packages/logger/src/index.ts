@@ -57,7 +57,7 @@ export class Logger {
   info(msg: string, data?: Record<string, any>) {
     this.logger.info(data || {}, msg);
   }
-  error(msg: string, err?: Error | Record<string, any>) {
+  error(msg: string, err?: Error | Record<string, any> | unknown) {
     if (err instanceof Error) this.logger.error({ err, stack: err.stack }, msg);
     else this.logger.error(err || {}, msg);
   }
