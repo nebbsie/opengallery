@@ -53,7 +53,7 @@ Create a `.env` file with the following variables:
 ```env
 # API Configuration
 API_URL=http://localhost:3000
-WORKER_TOKEN=your-worker-token
+WATCHER_TOKEN=your-worker-token
 
 # Logging
 LOG_LEVEL=info

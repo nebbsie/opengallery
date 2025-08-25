@@ -11,6 +11,43 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://postgres:postgres@db:5432/opengallery?sslmode=disable
+    depends_on:
+      - db
+
+  prometheus:
+    image: prom/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-lifecycle"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    depends_on:
+      - postgres-exporter
+
+  redis:
+    image: redis:8.2.1-alpine
+    restart: unless-stopped
+    command: [ "redis-server","--appendonly","yes" ]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [ "CMD","redis-cli","ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
 volumes:
   pgdata:
+  prometheusdata:
   redisdata:

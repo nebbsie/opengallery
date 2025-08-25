@@ -1,7 +1,22 @@
-import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
+// context.ts
+import type { FastifyRequest, FastifyReply } from "fastify";
 
-export function createContext({ req, res }: CreateFastifyContextOptions) {
-  return { req, res };
+export type Context = {
+  req: FastifyRequest;
+  res: FastifyReply;
+  userId: string | null;
+  session: unknown | null;
+};
+
+export type PrivateContext = Context & { userId: string; isInternal: boolean };
+
+// wherever you build context
+export async function createContext({
+  req,
+  res,
+}: {
+  req: FastifyRequest;
+  res: FastifyReply;
+}): Promise<Context> {
+  return { req, res, userId: null, session: null };
 }
-
-export type Context = Awaited<ReturnType<typeof createContext>>;

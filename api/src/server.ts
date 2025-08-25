@@ -13,8 +13,9 @@ import { logger } from "./logger.js";
 import { appRouter, type AppRouter } from "./router.js";
 import { eq } from "drizzle-orm";
 import path from "path";
-import fsp from "node:fs/promises";
 import * as fs from "node:fs";
+import metricsPlugin from "./metrics.js";
+import { TasksQueue } from "./redis.js";
 
 const server: FastifyInstance = Fastify();
 
@@ -36,6 +37,8 @@ await server.register(cors, {
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
   maxAge: 86400,
 });
+
+await server.register(metricsPlugin);
 
 server.get("/health", async () => ({ status: "ok" }));
 

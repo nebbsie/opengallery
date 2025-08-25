@@ -22,7 +22,7 @@ services:
       NODE_ENV: production
       PORT: 3219
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-opengallery}
-      WORKER_TOKEN: ${WORKER_TOKEN:-changeme}
+      WATCHER_TOKEN: ${WATCHER_TOKEN:-changeme}
     depends_on:
       db:
         condition: service_healthy
@@ -31,12 +31,12 @@ services:
     volumes:
       - /var/log/opengallery:/var/log/opengallery
 
-  worker:
-    image: ghcr.io/nebbsie/opengallery-worker:latest
+  watcher:
+    image: ghcr.io/nebbsie/opengallery-watcher:latest
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      WORKER_TOKEN: ${WORKER_TOKEN:-changeme}
+      WATCHER_TOKEN: ${WATCHER_TOKEN:-changeme}
       API_URL: http://api:3219
     depends_on:
       db:
@@ -58,5 +58,30 @@ services:
       api:
         condition: service_started
 
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-opengallery}?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus-prod.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    depends_on:
+      postgres-exporter:
+        condition: service_started
+
 volumes:
   pgdata:
+  prometheusdata:

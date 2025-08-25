@@ -9,7 +9,7 @@ OWNER="nebbsie"
 REGISTRY="ghcr.io"
 API_IMAGE="$REGISTRY/$OWNER/opengallery-api:latest"
 WEB_IMAGE="$REGISTRY/$OWNER/opengallery-web:latest"
-WORKER_IMAGE="$REGISTRY/$OWNER/opengallery-worker:latest"
+WATCHER_IMAGE="$REGISTRY/$OWNER/opengallery-watcher:latest"
 
 echo "Logging into $REGISTRY as $OWNER..."
 echo "${GH_PAT:?GH_PAT env var is required}" | docker login "$REGISTRY" -u "$OWNER" --password-stdin
@@ -27,12 +27,12 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t "$WEB_IMAGE" \
   -f web/Dockerfile --push .
 
-echo "Pushing Worker image → $WORKER_IMAGE"
+echo "Pushing Watcher image → $WATCHER_IMAGE"
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t "$WORKER_IMAGE" \
+  -t "$WATCHER_IMAGE" \
   -f worker/Dockerfile --push .
 
 echo "Done. Images pushed:"
 echo "$API_IMAGE"
 echo "$WEB_IMAGE"
-echo "$WORKER_IMAGE"
+echo "$WATCHER_IMAGE"

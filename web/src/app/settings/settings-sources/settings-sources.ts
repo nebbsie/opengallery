@@ -136,7 +136,7 @@ export class SettingsSources {
                     path,
                     createdAt: new Date(),
                     updatedAt: new Date(),
-                    userId: null,
+                    userId: 'temp-id',
                   },
                 ],
               }

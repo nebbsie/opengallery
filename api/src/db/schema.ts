@@ -9,6 +9,7 @@ import {
   jsonb,
   foreignKey,
   decimal,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -39,7 +40,6 @@ export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
   "edit",
 ]);
 
-//Tables
 export const LibraryTable = pgTable("library", {
   id: id(),
   userId: text("uuid")
@@ -97,7 +97,7 @@ export const AlbumTable = pgTable(
       foreignColumns: [table.id],
       name: "album_parent_fk", // custom constraint name
     }),
-  ]
+  ],
 );
 
 // handle the AlbumTable self-reference here
@@ -183,26 +183,44 @@ export const GeoLocationTable = pgTable("geo_location", {
   updatedAt: updatedAt(),
 });
 
-export const MediaPathTable = pgTable("media_path", {
-  id: id(),
-  path: text("path").notNull(),
-  userId: text("user_id").references(() => UserTable.id),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const MediaPathTable = pgTable(
+  "media_path",
+  {
+    id: id(),
+    path: text("path").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => UserTable.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => {
+    return [uniqueIndex().on(table.userId, table.path)];
+  },
+);
 
-export const MediaSettingsTable = pgTable("media_settings", {
-  id: id(),
-  autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
-  userId: text("user_id").references(() => UserTable.id),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const MediaSettingsTable = pgTable(
+  "media_settings",
+  {
+    id: id(),
+    autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
+    userId: text("user_id")
+      .notNull()
+      .references(() => UserTable.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => {
+    return [uniqueIndex().on(table.userId)];
+  },
+);
 
 export const EventLogTable = pgTable("event_log", {
   id: id(),
   type: text("type").notNull(),
-  userId: text("user_id").references(() => UserTable.id),
+  userId: text("user_id")
+    .notNull()
+    .references(() => UserTable.id),
   message: text("message").notNull(),
   extra: jsonb("extra"),
   createdAt: createdAt(),

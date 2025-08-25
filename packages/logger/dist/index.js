@@ -1,42 +1,47 @@
 import { accessSync, constants, existsSync, mkdirSync } from "fs";
-import pino, { multistream } from "pino";
+import pino from "pino";
 const isProd = process.env.NODE_ENV === "production";
 export class Logger {
     logger;
     constructor(config) {
         const name = config.name;
-        if (!name) {
+        if (!name)
             throw new Error("Logger name is required");
-        }
         const base = {
             name,
             level: process.env.LOG_LEVEL || "info",
         };
-        const streams = [
-            { stream: process.stdout },
+        const targets = [
+            {
+                target: "pino-pretty",
+                level: base.level,
+                options: {
+                    colorize: true,
+                    translateTime: "HH:MM:ss.l",
+                    ignore: "pid,hostname",
+                    singleLine: false,
+                },
+            },
         ];
         if (isProd) {
             const logDir = `/var/log/opengallery`;
             const filePath = `${logDir}/${name}.log`;
-            if (!existsSync(logDir)) {
+            if (!existsSync(logDir))
                 mkdirSync(logDir, { recursive: true });
-            }
             try {
                 accessSync(logDir, constants.W_OK);
             }
             catch {
                 throw new Error(`Log directory not writable: ${logDir}`);
             }
-            const fileStream = pino.destination({
-                dest: filePath,
-                append: true,
-                sync: false,
+            targets.push({
+                target: "pino/file",
+                level: base.level,
+                options: { destination: filePath, append: true },
             });
-            // Workaround: SonicBoom (returned by pino.destination) does not have 'writable' property required by NodeJS.WritableStream type.
-            // Cast to 'any' to satisfy the type checker.
-            streams.push({ stream: fileStream });
         }
-        this.logger = pino(base, multistream(streams));
+        const transport = pino.transport({ targets });
+        this.logger = pino(base, transport);
     }
     info(msg, data) {
         this.logger.info(data || {}, msg);

@@ -3,22 +3,19 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "noPropertyAccessFromIndexSignature": true,
     "target": "ES2022",
     "lib": ["ES2023"],
     "strict": true,
     "exactOptionalPropertyTypes": true,
-    "noPropertyAccessFromIndexSignature": true,
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "rootDir": "src",
     "outDir": "dist",
     "declaration": true,
     "baseUrl": ".",
-    "types": ["node"],
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
+    "types": ["node"]
   },
   "include": ["src"]
 }

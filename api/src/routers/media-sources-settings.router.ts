@@ -1,82 +1,76 @@
 import { privateProcedure, router } from "../trpc.js";
 import { z } from "zod";
-import { ApiResponse } from "../types.js";
 import { MediaPathTable, MediaSettingsTable } from "../db/schema.js";
 import { db } from "../db/index.js";
 import { TRPCError } from "@trpc/server";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 export const mediaSourcesSettingsRouter = router({
-  createSource: privateProcedure.input(z.string()).mutation(async (req) => {
-    const [createdPath] = await db
-      .insert(MediaPathTable)
-      .values({
-        path: req.input,
-      })
-      .returning();
-    return createdPath;
-  }),
-  deleteSource: privateProcedure.input(z.uuid()).mutation(async (req) => {
-    return db.delete(MediaPathTable).where(eq(MediaPathTable.id, req.input));
-  }),
-  updateSource: privateProcedure
-    .input(
-      z.object({
-        id: z.uuid(),
-        path: z.string(),
-      }),
-    )
-    .mutation(async (req) => {
-      return ApiResponse.Ok();
+  createSource: privateProcedure
+    .input(z.string().trim().min(1))
+    .mutation(async ({ input: path, ctx: { userId } }) => {
+      const [createdPath] = await db
+        .insert(MediaPathTable)
+        .values({ path, userId })
+        .returning();
+      return createdPath;
     }),
+
+  deleteSource: privateProcedure
+    .input(z.string().uuid())
+    .mutation(async ({ input: pathId, ctx: { userId } }) => {
+      return db
+        .delete(MediaPathTable)
+        .where(
+          and(eq(MediaPathTable.id, pathId), eq(MediaPathTable.userId, userId)),
+        );
+    }),
+
   updateSettings: privateProcedure
-    .input(
-      z.object({
-        autoImportAlbums: z.boolean(),
-      }),
-    )
-    .mutation(async (req) => {
-      return db.update(MediaSettingsTable).set(req.input).returning();
+    .input(z.object({ autoImportAlbums: z.boolean() }))
+    .mutation(async ({ input: { autoImportAlbums }, ctx: { userId } }) => {
+      await findOrCreateMediaSettings(userId); // ensure row exists
+      return db
+        .update(MediaSettingsTable)
+        .set({ autoImportAlbums })
+        .where(eq(MediaSettingsTable.userId, userId))
+        .returning();
     }),
-  get: privateProcedure.query(async () => {
-    const paths = await db
-      .select()
-      .from(MediaPathTable)
-      .orderBy(asc(MediaPathTable.createdAt));
 
-    const settings = await findOrCreateMediaSettings();
+  get: privateProcedure.query(async ({ ctx: { userId } }) => {
+    const [paths, settings] = await Promise.all([
+      db
+        .select()
+        .from(MediaPathTable)
+        .where(eq(MediaPathTable.userId, userId))
+        .orderBy(asc(MediaPathTable.createdAt)),
 
-    return {
-      paths,
-      autoImportAlbums: settings.autoImportAlbums,
-    };
+      findOrCreateMediaSettings(userId),
+    ]);
+
+    return { paths, autoImportAlbums: settings.autoImportAlbums };
   }),
 });
 
-/**
- * Finds or creates media settings in the database.
- *
- * If settings already exist, it returns them.
- * If not, it creates default settings with autoImportAlbums set to true.
- */
-const findOrCreateMediaSettings = async () => {
-  const [settings] = await db.select().from(MediaSettingsTable).limit(1);
+const findOrCreateMediaSettings = async (userId: string) => {
+  const [settings] = await db
+    .select()
+    .from(MediaSettingsTable)
+    .where(eq(MediaSettingsTable.userId, userId))
+    .limit(1);
 
-  if (settings) {
-    return settings;
-  }
+  if (settings) return settings;
 
-  const [createdSettings] = await db
+  const [created] = await db
     .insert(MediaSettingsTable)
-    .values({ autoImportAlbums: true })
+    .values({ autoImportAlbums: true, userId })
     .returning();
 
-  if (!createdSettings) {
+  if (!created) {
     throw new TRPCError({
-      code: "NOT_FOUND",
-      message: "Media settings not found.",
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Failed to create media settings",
     });
   }
-
-  return createdSettings;
+  return created;
 };
