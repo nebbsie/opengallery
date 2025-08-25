@@ -20,7 +20,7 @@ export const filesRouter = router({
         }),
       ),
     )
-    .mutation(({ ctx, input }) => db.insert(FileTable).values(input)),
+    .mutation(({ ctx, input }) => db.insert(FileTable).values(input).returning({id: FileTable.id})),
 
   getFilesInDir: privateProcedure
     .input(z.string())
