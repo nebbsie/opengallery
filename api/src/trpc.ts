@@ -9,6 +9,7 @@ export type Context = {
   res: FastifyReply;
   userId: string | null;
   isInternal: boolean;
+  session: any | null;
 };
 
 export type PrivateContext = Context & { userId: string; isInternal: false };
@@ -21,7 +22,7 @@ export async function createContext({
   req: FastifyRequest;
   res: FastifyReply;
 }): Promise<Context> {
-  return { req, res, userId: null, isInternal: false };
+  return { req, res, userId: null, isInternal: false, session: null };
 }
 
 export const t = initTRPC.context<Context>().create({ transformer: superjson });
@@ -35,13 +36,12 @@ export function toHeaders(h: import("http").IncomingHttpHeaders): Headers {
   return headers;
 }
 
-// Auth + identity
 const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
   const authz = ctx.req.headers.authorization;
   const bearer = authz?.startsWith("Bearer ") ? authz.slice(7) : undefined;
   const isInternal =
-    Boolean(process.env["INTERNAL_CODE"]) &&
-    bearer === process.env["INTERNAL_CODE"];
+    Boolean(process.env["INTERNAL_TOKEN"]) &&
+    bearer === process.env["INTERNAL_TOKEN"];
 
   let session: any = null;
   let userId: string | null = null;
@@ -60,14 +60,34 @@ const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, isInternal, userId, session } });
 });
 
-const AuthenticatedMiddleware = t.middleware(async ({ ctx, next }) => {
+// Accept internal OR authenticated user.
+// If internal: userId is null. If external: userId is non-null.
+type PrivateOrInternalContext = PrivateContext | InternalContext;
+
+const PrivateOrInternalMiddleware = t.middleware(({ ctx, next }) => {
+  if (ctx.isInternal) {
+    return next({
+      ctx: { ...ctx, isInternal: true, userId: null } as InternalContext,
+    });
+  }
+  if (!ctx.userId) {
+    throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+  return next({
+    ctx: { ...ctx, isInternal: false, userId: ctx.userId } as PrivateContext,
+  });
+});
+
+// Strict external-only middleware (must be a real user)
+const AuthenticatedMiddleware = t.middleware(({ ctx, next }) => {
   if (ctx.isInternal || !ctx.userId) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
   return next({ ctx: ctx as PrivateContext });
 });
 
-const InternalMiddleware = t.middleware(async ({ ctx, next }) => {
+// Internal-only middleware
+const InternalMiddleware = t.middleware(({ ctx, next }) => {
   if (!ctx.isInternal) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
@@ -96,11 +116,20 @@ export const publicProcedure = t.procedure
   .use(TimingMiddleware)
   .use(AuthMiddleware);
 
+// Use when internal OR authenticated user is allowed.
+// Handlers receive ctx as PrivateContext | InternalContext.
 export const privateProcedure = t.procedure
+  .use(TimingMiddleware)
+  .use(AuthMiddleware)
+  .use(PrivateOrInternalMiddleware);
+
+// Use when a real user is required (no internal).
+export const strictPrivateProcedure = t.procedure
   .use(TimingMiddleware)
   .use(AuthMiddleware)
   .use(AuthenticatedMiddleware);
 
+// Internal-only endpoints.
 export const internalProcedure = t.procedure
   .use(TimingMiddleware)
   .use(AuthMiddleware)

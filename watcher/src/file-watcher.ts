@@ -25,17 +25,20 @@ export class FileWatcherService {
     }
 
     // Get initial paths all users
-    const initialPaths = await trpc.watcher.mediaSourcesSettings.get.query();
+    const usersPaths = await trpc.mediaSourcesSettings.getAll.query();
 
     // Setup watchers for all users, existing paths
-    for (const pathData of initialPaths.paths) {
-      await this.addWatcher(pathData.id, pathData.path);
+    for (const userPath of usersPaths) {
+      const paths = userPath.paths;
+      for (const path of paths) {
+        await this.addWatcher(path.id, path.path, path.userId);
+      }
     }
 
     this.isInitialized = true;
   }
 
-  async addWatcher(id: string, path: string) {
+  async addWatcher(id: string, path: string, userId: string) {
     if (this.watchers.has(id)) {
       this.logger.info(`Watcher for path ${id} already exists, removing old one`);
 
@@ -43,16 +46,12 @@ export class FileWatcherService {
     }
 
     this.logger.info(`Adding watcher for path: ${path} (ID: ${id})`);
-    // await trpc.eventLog.log.mutate({
-    //   type: 'watch',
-    //   message: `Adding watcher for path: ${path} (ID: ${id})`,
-    // });
 
     // Do initial scan, but don't crash if path is missing or unreadable.
     try {
-      await scan(path);
-    } catch (error) {
-      this.logger.warn(`Initial scan failed for ${path}, continuing with watcher setup`);
+      await scan(path, userId);
+    } catch (error: unknown) {
+      this.logger.error(`Initial scan failed for ${path} because: ${error}`);
     }
 
     // Setup watcher.
@@ -119,22 +118,23 @@ export class FileWatcherService {
   }
 
   async updateWatchers() {
-    const currentPaths = await trpc.watcher.mediaSourcesSettings.get.query();
+    const usersPaths = await trpc.mediaSourcesSettings.getAll.query();
+    const allPaths = usersPaths.flatMap((u) => u.paths);
 
-    const currentPathIds = new Set(currentPaths.paths.map((p: any) => p.id));
+    const currentPathIds = new Set(allPaths.map((p) => p.id));
     const existingPathIds = new Set(this.watchers.keys());
 
-    // Remove watchers for paths that no longer exist
+    // remove stale watchers
     for (const id of existingPathIds) {
       if (!currentPathIds.has(id)) {
         await this.removeWatcher(id);
       }
     }
 
-    // Add watchers for new paths
-    for (const pathData of currentPaths.paths) {
-      if (!existingPathIds.has(pathData.id)) {
-        await this.addWatcher(pathData.id, pathData.path);
+    // add new watchers
+    for (const p of allPaths) {
+      if (!this.watchers.has(p.id)) {
+        await this.addWatcher(p.id, p.path, p.userId);
       }
     }
   }

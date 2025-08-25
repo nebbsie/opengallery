@@ -78,7 +78,7 @@ export class GalleryAll {
 
   files = injectQuery(() => ({
     queryKey: [CacheKey.GalleryAll],
-    queryFn: async () => this.trpc.files.getAllFiles.query(),
+    queryFn: async () => this.trpc.files.getUsersFiles.query(),
   }));
 
   onVideoHover(video: HTMLVideoElement) {
