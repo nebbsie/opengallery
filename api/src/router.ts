@@ -13,7 +13,7 @@ export const appRouter = router({
   directory: directoryRouter,
   files: filesRouter,
   library: libraryRouter,
-  libraryFile: libraryFileRouter
+  libraryFile: libraryFileRouter,
   eventLog: eventLogRouter,
 });
 
