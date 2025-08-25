@@ -17,7 +17,7 @@ export const mediaSourcesSettingsRouter = router({
     }),
 
   deleteSource: privateProcedure
-    .input(z.string().uuid())
+    .input(z.uuid())
     .mutation(async ({ input: pathId, ctx: { userId } }) => {
       return db
         .delete(MediaPathTable)
@@ -29,7 +29,6 @@ export const mediaSourcesSettingsRouter = router({
   updateSettings: privateProcedure
     .input(z.object({ autoImportAlbums: z.boolean() }))
     .mutation(async ({ input: { autoImportAlbums }, ctx: { userId } }) => {
-      await findOrCreateMediaSettings(userId); // ensure row exists
       return db
         .update(MediaSettingsTable)
         .set({ autoImportAlbums })
@@ -38,39 +37,27 @@ export const mediaSourcesSettingsRouter = router({
     }),
 
   get: privateProcedure.query(async ({ ctx: { userId } }) => {
-    const [paths, settings] = await Promise.all([
+    const [paths, [settings]] = await Promise.all([
       db
         .select()
         .from(MediaPathTable)
         .where(eq(MediaPathTable.userId, userId))
         .orderBy(asc(MediaPathTable.createdAt)),
 
-      findOrCreateMediaSettings(userId),
+      db
+        .select()
+        .from(MediaSettingsTable)
+        .where(eq(MediaSettingsTable.userId, userId))
+        .limit(1)
     ]);
+
+    if (!settings) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Failed to get media settings",
+      });
+    }
 
     return { paths, autoImportAlbums: settings.autoImportAlbums };
   }),
 });
-
-const findOrCreateMediaSettings = async (userId: string) => {
-  const [settings] = await db
-    .select()
-    .from(MediaSettingsTable)
-    .where(eq(MediaSettingsTable.userId, userId))
-    .limit(1);
-
-  if (settings) return settings;
-
-  const [created] = await db
-    .insert(MediaSettingsTable)
-    .values({ autoImportAlbums: true, userId })
-    .returning();
-
-  if (!created) {
-    throw new TRPCError({
-      code: "INTERNAL_SERVER_ERROR",
-      message: "Failed to create media settings",
-    });
-  }
-  return created;
-};
