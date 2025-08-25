@@ -170,9 +170,41 @@ export async function scan(rootDir: string) {
         libraryId,
       })),
     );
-  }
 
-  console.log('anil test:', folders);
+    //album links to a library
+    //will have to create an album per folder
+    await trpc.album.create.mutate(
+      folders.map((folder) => ({
+        name: folder,
+        libraryId,
+      })),
+    );
+
+    // Get all files and albums
+    const allFiles = await trpc.files.getAllFiles.query();
+    const albums = await trpc.album.get.query();
+
+    console.log('allFiles:', allFiles);
+    console.log('albums:', albums);
+
+    // Build a lookup table: album name → albumId
+    const albumMap = new Map(albums.map((a) => [a.name, a.id]));
+
+    // Map files to albumId
+    const albumFilesToInsert = allFiles
+      .map((file) => {
+        const albumId = albumMap.get(file.dir); // match file.dir to album.name
+        if (!albumId) return null; // skip if no matching album
+        return { fileId: file.id, albumId };
+      })
+      //filer Boolean skips nulls (no matching album found)
+      .filter(Boolean) as { fileId: string; albumId: string }[];
+
+    // create album files link
+    if (albumFilesToInsert.length > 0) {
+      await trpc.albumFile.create.mutate(albumFilesToInsert);
+    }
+  }
 
   const total = Array.from(byFolder.values()).reduce((n, a) => n + a.length, 0);
 

@@ -7,6 +7,8 @@ import { libraryFileRouter } from "./routers/library-file.router.js";
 import { libraryRouter } from "./routers/library.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
 import { watcherRouter } from "./routers/watcher/watcher.router.js";
+import { albumRouter } from "./routers/album.router.js";
+import { albumFileRouter } from "./routers/album-file.router.js";
 
 export const appRouter = router({
   health: healthRouter,
@@ -17,6 +19,8 @@ export const appRouter = router({
   libraryFile: libraryFileRouter,
   eventLog: eventLogRouter,
   watcher: watcherRouter,
+  album: albumRouter,
+  albumFile: albumFileRouter,
 });
 
 export type AppRouter = typeof appRouter;

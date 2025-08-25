@@ -43,10 +43,10 @@ export class FileWatcherService {
     }
 
     this.logger.info(`Adding watcher for path: ${path} (ID: ${id})`);
-    trpc.eventLog.log.mutate({
-      type: 'watch',
-      message: `Adding watcher for path: ${path} (ID: ${id})`,
-    });
+    // await trpc.eventLog.log.mutate({
+    //   type: 'watch',
+    //   message: `Adding watcher for path: ${path} (ID: ${id})`,
+    // });
 
     // Do initial scan, but don't crash if path is missing or unreadable.
     try {
