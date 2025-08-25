@@ -48,7 +48,7 @@ export const mediaSourcesSettingsRouter = router({
         .select()
         .from(MediaSettingsTable)
         .where(eq(MediaSettingsTable.userId, userId))
-        .limit(1)
+        .limit(1),
     ]);
 
     if (!settings) {

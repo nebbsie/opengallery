@@ -6,6 +6,7 @@ import { filesRouter } from "./routers/files.router.js";
 import { libraryFileRouter } from "./routers/library-file.router.js";
 import { libraryRouter } from "./routers/library.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
+import { watcherRouter } from "./routers/watcher/watcher.router.js";
 
 export const appRouter = router({
   health: healthRouter,
@@ -15,6 +16,7 @@ export const appRouter = router({
   library: libraryRouter,
   libraryFile: libraryFileRouter,
   eventLog: eventLogRouter,
+  watcher: watcherRouter,
 });
 
 export type AppRouter = typeof appRouter;

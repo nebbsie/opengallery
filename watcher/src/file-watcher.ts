@@ -24,10 +24,10 @@ export class FileWatcherService {
       return;
     }
 
-    // Get initial paths
-    const initialPaths = await trpc.mediaSourcesSettings.get.query();
+    // Get initial paths all users
+    const initialPaths = await trpc.watcher.mediaSourcesSettings.get.query();
 
-    // Setup watchers for existing paths
+    // Setup watchers for all users, existing paths
     for (const pathData of initialPaths.paths) {
       await this.addWatcher(pathData.id, pathData.path);
     }
@@ -119,7 +119,7 @@ export class FileWatcherService {
   }
 
   async updateWatchers() {
-    const currentPaths = await trpc.mediaSourcesSettings.get.query();
+    const currentPaths = await trpc.watcher.mediaSourcesSettings.get.query();
 
     const currentPathIds = new Set(currentPaths.paths.map((p: any) => p.id));
     const existingPathIds = new Set(this.watchers.keys());
