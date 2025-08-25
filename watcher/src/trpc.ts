@@ -11,7 +11,7 @@ export const trpc = createTRPCProxyClient<AppRouter>({
       transformer: superjson,
       async headers() {
         return {
-          authorization: `Bearer ${process.env['WATCHER_TOKEN']}`,
+          authorization: `Bearer ${process.env['INTERNAL_TOKEN']}`,
         };
       },
     }),

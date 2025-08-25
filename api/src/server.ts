@@ -6,7 +6,7 @@ import {
 import "dotenv/config";
 import Fastify, { type FastifyInstance } from "fastify";
 import { auth } from "./auth/auth.js";
-import { createContext } from "./context.js";
+import { createContext } from "./trpc.js";
 import { db } from "./db/index.js";
 import { FileTable } from "./db/schema.js";
 import { logger } from "./logger.js";
@@ -15,7 +15,6 @@ import { eq } from "drizzle-orm";
 import path from "path";
 import * as fs from "node:fs";
 import metricsPlugin from "./metrics.js";
-import { TasksQueue } from "./redis.js";
 
 const server: FastifyInstance = Fastify();
 
