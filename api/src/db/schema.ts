@@ -42,7 +42,7 @@ export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
 
 export const LibraryTable = pgTable("library", {
   id: id(),
-  userId: text("uuid")
+  userId: text("user_id")
     .notNull()
     .references(() => UserTable.id),
   createdAt: createdAt(),
@@ -71,7 +71,7 @@ export const LibraryFileTable = pgTable("library_file", {
   fileId: uuid("file_id")
     .notNull()
     .references(() => FileTable.id),
-  deletedAt: timestamp("deleted_at").notNull(),
+  deletedAt: timestamp("deleted_at"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -190,7 +190,7 @@ export const MediaPathTable = pgTable(
     path: text("path").notNull(),
     userId: text("user_id")
       .notNull()
-      .references(() => UserTable.id),
+      .references(() => UserTable.id).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -206,7 +206,7 @@ export const MediaSettingsTable = pgTable(
     autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
     userId: text("user_id")
       .notNull()
-      .references(() => UserTable.id),
+      .references(() => UserTable.id).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -220,7 +220,7 @@ export const EventLogTable = pgTable("event_log", {
   type: text("type").notNull(),
   userId: text("user_id")
     .notNull()
-    .references(() => UserTable.id),
+    .references(() => UserTable.id).notNull(),
   message: text("message").notNull(),
   extra: jsonb("extra"),
   createdAt: createdAt(),

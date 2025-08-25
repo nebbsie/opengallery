@@ -157,7 +157,19 @@ export async function scan(rootDir: string) {
 
     logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
 
-    await trpc.files.create.mutate(filesToAdd);
+    //get Ids of files just created
+    const fileIds = (await trpc.files.create.mutate(filesToAdd)).map((f: { id: string }) => f.id);
+
+    //get the default libraryId to associate files with
+    const [libraryId] = (await trpc.library.getDefaultLibraryId.query()).map(l => l.id);
+
+    //save all files to library
+    if(libraryId) {
+      await trpc.libraryFile.create.mutate(fileIds.map((fileId) => ({
+        fileId,
+        libraryId,
+      })));
+    }
   }
 
   const total = Array.from(byFolder.values()).reduce((n, a) => n + a.length, 0);
