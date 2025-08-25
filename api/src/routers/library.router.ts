@@ -1,12 +1,25 @@
 import { privateProcedure, router } from "../trpc.js";
 import { z } from "zod";
 import { db } from "../db/index.js";
-import { LibraryTable } from "../db/schema.js";
+import { LibraryTable, MediaSettingsTable } from "../db/schema.js";
+import { TRPCError } from "@trpc/server";
+import { eq } from "drizzle-orm";
 
 export const libraryRouter = router({
   create: privateProcedure
-    .mutation(({ ctx }) => db.insert(LibraryTable).values({userId: 'nEs49evY5imDVIaqxbYBeQkCAZkjkPQu'})),
+    .mutation(({ ctx: {userId} }) => db.insert(LibraryTable).values({userId})),
 
   getDefaultLibraryId: privateProcedure
-    .query(() => db.select({id: LibraryTable.id}).from(LibraryTable).orderBy(LibraryTable.createdAt).limit(1)),
+    .query(async ({ctx:{userId}}) => {
+      const [library] = await db.select({id: LibraryTable.id}).from(LibraryTable).where(eq(LibraryTable.userId, userId)).orderBy(LibraryTable.createdAt).limit(1)
+
+      if (!library) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to create media settings",
+        });
+      }
+
+      return library.id;
+    }),
 });

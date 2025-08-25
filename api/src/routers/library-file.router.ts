@@ -10,8 +10,15 @@ export const libraryFileRouter = router({
         z.object({
           fileId: z.string(),
           libraryId: z.string(),
-        })
-      )
+        }),
+      ),
     )
-    .mutation(({ ctx, input }) => db.insert(LibraryFileTable).values(input)),
+    .mutation(({ ctx: { userId }, input }) =>
+      db.insert(LibraryFileTable).values(
+        input.map((inp) => ({
+          ...inp,
+          userId,
+        })),
+      ),
+    ),
 });

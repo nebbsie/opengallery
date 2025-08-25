@@ -3,7 +3,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { AuthSchema } from "../db/schema.js";
+import { AuthSchema, LibraryTable, MediaSettingsTable } from "../db/schema.js";
 
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 
@@ -42,6 +42,14 @@ export const auth = betterAuth({
             WHERE "id" = ${u.id} AND NOT EXISTS (SELECT 1 FROM "user" WHERE "type" = 'admin')
           `);
           });
+
+          //create default library
+          await db.insert(LibraryTable).values({userId: u.id});
+
+          //create media settings
+          await db
+            .insert(MediaSettingsTable)
+            .values({ autoImportAlbums: true, userId: u.id });
         },
       },
     },
