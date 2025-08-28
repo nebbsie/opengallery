@@ -10,8 +10,11 @@ import {
   foreignKey,
   decimal,
   uniqueIndex,
+  varchar,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+import { string } from "zod";
 
 const createdAt = () =>
   timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -29,9 +32,8 @@ export const SharedItemTypeEnum = pgEnum("shared_item_type", [
   "file",
 ]);
 export const FileVariantTypeEnum = pgEnum("file_variant_type", [
-  "thumb",
+  "thumbnail",
   "optimised",
-  "original",
 ]);
 export const ShareTypeEnum = pgEnum("share_type", ["user", "public"]);
 export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
@@ -49,19 +51,20 @@ export const LibraryTable = pgTable("library", {
   updatedAt: updatedAt(),
 });
 
-export const FileTable = pgTable("file", {
-  id: id(),
-  dir: text("dir").notNull(),
-  path: text("path").notNull(),
-  name: text("name").notNull(),
-  type: FileTypeEnum("type").notNull(),
-  mime: text("mime").notNull(),
-  size: integer("size").notNull(),
-  fileCreatedAt: timestamp("file_created_at").notNull(),
-  encoded: boolean("encoded").notNull(),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const FileTable = pgTable(
+  "file",
+  {
+    id: id(),
+    dir: text("dir").notNull(),
+    name: text("name").notNull(),
+    type: FileTypeEnum("type").notNull(),
+    mime: text("mime").notNull(),
+    size: integer("size").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)],
+);
 
 export const LibraryFileTable = pgTable("library_file", {
   id: id(),
@@ -132,15 +135,27 @@ export const SharedItemTable = pgTable("shared_item", {
   updatedAt: updatedAt(),
 });
 
-export const FileVariantTable = pgTable("file_variant", {
-  id: id(),
-  type: FileVariantTypeEnum("type").notNull(),
-  fileId: uuid("file_id")
-    .notNull()
-    .references(() => FileTable.id),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const FileVariantTable = pgTable(
+  "file_variant",
+  {
+    id: id(),
+    type: FileVariantTypeEnum("type").notNull(),
+    originalFileId: uuid("original_file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => ({
+    uniqFileType: uniqueIndex("file_variant_fileid_type_idx").on(
+      t.originalFileId,
+      t.type,
+    ),
+  }),
+);
 
 export const ImageMetadataTable = pgTable("image_metadata", {
   id: id(),
@@ -190,7 +205,8 @@ export const MediaPathTable = pgTable(
     path: text("path").notNull(),
     userId: text("user_id")
       .notNull()
-      .references(() => UserTable.id).notNull(),
+      .references(() => UserTable.id)
+      .notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -206,7 +222,8 @@ export const MediaSettingsTable = pgTable(
     autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
     userId: text("user_id")
       .notNull()
-      .references(() => UserTable.id).notNull(),
+      .references(() => UserTable.id)
+      .notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -215,12 +232,20 @@ export const MediaSettingsTable = pgTable(
   },
 );
 
+export const SystemSettingsTable = pgTable("system_settings", {
+  id: id(),
+  uploadPath: text("upload_path").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 export const EventLogTable = pgTable("event_log", {
   id: id(),
   type: text("type").notNull(),
   userId: text("user_id")
     .notNull()
-    .references(() => UserTable.id).notNull(),
+    .references(() => UserTable.id)
+    .notNull(),
   message: text("message").notNull(),
   extra: jsonb("extra"),
   createdAt: createdAt(),

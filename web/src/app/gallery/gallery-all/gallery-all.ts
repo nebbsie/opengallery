@@ -8,6 +8,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { lucideCirclePlay, lucideCirclePause } from '@ng-icons/lucide';
+import { NgOptimizedImage } from '@angular/common';
 
 @Component({
   selector: 'app-gallery-all',
@@ -17,7 +18,7 @@ import { lucideCirclePlay, lucideCirclePause } from '@ng-icons/lucide';
       lucideCirclePause,
     }),
   ],
-  imports: [HlmSpinner, ErrorAlert, NgIcon, HlmIcon],
+  imports: [HlmSpinner, ErrorAlert, NgIcon, HlmIcon, NgOptimizedImage],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -32,7 +33,7 @@ import { lucideCirclePlay, lucideCirclePause } from '@ng-icons/lucide';
           <div class="relative aspect-square overflow-hidden rounded-lg bg-black">
             @if (asset.type === 'image') {
               <img
-                [src]="apiUrl + '/asset/' + asset.id"
+                [src]="apiUrl + '/asset/' + asset.id + '/thumbnail'"
                 [alt]="asset.id"
                 loading="lazy"
                 decoding="async"
@@ -74,12 +75,12 @@ export class GalleryAll {
 
   private readonly trpc = injectTrpc();
 
-  videoHoverPlaying = signal<boolean>(false);
-
   files = injectQuery(() => ({
     queryKey: [CacheKey.GalleryAll],
-    queryFn: async () => this.trpc.files.getUsersFiles.query(),
+    queryFn: async () => this.trpc.files.getUsersFiles.query('all'),
   }));
+
+  videoHoverPlaying = signal<boolean>(false);
 
   onVideoHover(video: HTMLVideoElement) {
     video.play();

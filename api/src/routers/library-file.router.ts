@@ -14,11 +14,14 @@ export const libraryFileRouter = router({
       ),
     )
     .mutation(({ ctx: { userId }, input }) =>
-      db.insert(LibraryFileTable).values(
-        input.map((inp) => ({
-          ...inp,
-          userId,
-        })),
-      ),
+      db
+        .insert(LibraryFileTable)
+        .values(
+          input.map((inp) => ({
+            ...inp,
+            userId,
+          })),
+        )
+        .returning(),
     ),
 });

@@ -1,9 +1,15 @@
 // auth.ts
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { AuthSchema, LibraryTable, MediaSettingsTable } from "../db/schema.js";
+import {
+  AuthSchema,
+  LibraryTable,
+  MediaSettingsTable,
+  SystemSettingsTable,
+  UserTable,
+} from "../db/schema.js";
 
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 
@@ -43,13 +49,30 @@ export const auth = betterAuth({
           `);
           });
 
-          //create default library
-          await db.insert(LibraryTable).values({userId: u.id});
+          await db.insert(LibraryTable).values({ userId: u.id });
 
-          //create media settings
-          await db
-            .insert(MediaSettingsTable)
-            .values({ autoImportAlbums: true, userId: u.id });
+          const [user] = await db
+            .select()
+            .from(UserTable)
+            .where(eq(UserTable.id, u.id))
+            .limit(1);
+
+          if (user?.type === "admin") {
+            if (!process.env["DEFAULT_UPLOAD_PATH"]) {
+              throw new Error(
+                "DEFAULT_UPLOAD_PATH is not set in environment variables",
+              );
+            }
+
+            await db
+              .insert(SystemSettingsTable)
+              .values({ uploadPath: `${process.env["DEFAULT_UPLOAD_PATH"]}` });
+          }
+
+          await db.insert(MediaSettingsTable).values({
+            autoImportAlbums: true,
+            userId: u.id,
+          });
         },
       },
     },

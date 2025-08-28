@@ -5,9 +5,9 @@ import { TrpcCache } from '@core/services/trpc/trpc-cache';
 import { environment } from '@env/environment';
 import type { AppRouter } from '@opengallery/types';
 import { createTRPCProxyClient, TRPCClient, TRPCClientError, TRPCLink } from '@trpc/client';
-import { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 import { Observable } from 'rxjs';
 import { deserialize, serialize, SuperJSONResult } from 'superjson';
+import type { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
 
 const TRPC_CLIENT = new InjectionToken<TRPCClient<AppRouter>>('TRPC_CLIENT');
 
@@ -176,5 +176,5 @@ export function injectTrpc() {
   return inject(TRPC_CLIENT);
 }
 
-export type RouterOutputs = inferRouterOutputs<AppRouter>;
 export type RouterInputs = inferRouterInputs<AppRouter>;
+export type RouterOutputs = inferRouterOutputs<AppRouter>;

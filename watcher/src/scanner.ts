@@ -2,7 +2,7 @@ import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { logger } from './logger.js';
-import { trpc } from './trpc.js';
+import { type RouterInputs, trpc } from './trpc.js';
 
 type MediaType = 'image' | 'video';
 
@@ -10,30 +10,28 @@ const imageExt = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']);
 const videoExt = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv']);
 const allowed = new Set([...imageExt, ...videoExt]);
 
-function bucket(ext: string): MediaType | null {
+function getMediaType(ext: string): MediaType | null {
   if (imageExt.has(ext)) return 'image';
   if (videoExt.has(ext)) return 'video';
   return null;
 }
 
-type FileRec = {
-  path: string;
-  name: string;
-  size: number;
-  type: MediaType;
-  mime: string;
-  fileCreatedAt: Date;
-  encoded: boolean;
-};
+function getFullPath(file: TempFile) {
+  return join(file.dir, file.name);
+}
+
+type CreateFilesInput = RouterInputs['files']['create'];
+
+type TempFile = CreateFilesInput[0];
 
 export async function scan(rootDir: string, userId: string) {
   if (!existsSync(rootDir)) {
     logger.warn(`Scan skipped, path not found: ${rootDir}`);
-    return { folders: [], totalFiles: 0, byFolder: new Map<string, FileRec[]>() };
+    return { folders: [], totalFiles: 0, byFolder: new Map<string, TempFile[]>() };
   }
 
   const folders: string[] = [];
-  const byFolder = new Map<string, FileRec[]>();
+  const byFolder = new Map<string, TempFile[]>();
 
   function walk(dir: string) {
     folders.push(dir);
@@ -46,54 +44,47 @@ export async function scan(rootDir: string, userId: string) {
     }
 
     for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
+      const path = join(dir, entry.name);
 
+      // If directory, recurse.
       if (entry.isDirectory()) {
-        walk(fullPath);
+        walk(path);
         continue;
       }
-      if (!entry.isFile()) continue;
+
+      // If not a file, skip.
+      if (!entry.isFile()) {
+        continue;
+      }
 
       const ext = extname(entry.name).slice(1).toLowerCase();
-      if (!allowed.has(ext)) continue;
-
-      const type = bucket(ext);
-      if (!type) continue;
-
-      let stat;
-      try {
-        stat = statSync(fullPath);
-      } catch (error) {
-        logger.warn(`Failed to stat file, skipping: ${fullPath}`);
+      if (!allowed.has(ext)) {
         continue;
       }
-      const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
 
-      //derive a file creation date
-      let fileCreatedAt: Date;
-      try {
-        // if you want EXIF metadata for images:
-        // const tags = await ExifReader.load(fullPath);
-        // fileCreatedAt = tags['DateTimeOriginal']?.description
-        //   ? new Date(tags['DateTimeOriginal'].description)
-        //   : stat.birthtime;
-        fileCreatedAt = stat.birthtime; // fallback for now
-      } catch {
-        fileCreatedAt = stat.birthtime;
+      const type = getMediaType(ext);
+      if (!type) {
+        continue;
       }
 
-      const rec: FileRec = {
-        path: fullPath,
-        name: entry.name,
-        size: stat.size,
-        type,
-        mime: String(mime),
-        fileCreatedAt,
-        encoded: false, //default to false when first scanned
-      };
+      let stats: import('node:fs').Stats;
+      try {
+        stats = statSync(path);
+      } catch (error) {
+        logger.warn(`Failed to stat file during scan, skipping: ${path}`);
+        continue;
+      }
 
-      const arr = byFolder.get(dir) ?? [];
-      arr.push(rec);
+      const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
+
+      const arr: TempFile[] = byFolder.get(dir) ?? [];
+      arr.push({
+        name: entry.name,
+        dir: entry.parentPath,
+        mime,
+        size: stats.size,
+        type,
+      });
       byFolder.set(dir, arr);
     }
   }
@@ -106,8 +97,7 @@ export async function scan(rootDir: string, userId: string) {
 
     // Get all the files already in the database for this folder.
     const alreadySavedFiles = await trpc.files.getFilesInDir.mutate(folder);
-
-    const alreadySavedPaths = new Set(alreadySavedFiles.map((f: { path: string }) => f.path));
+    const alreadySavedPaths = new Set(alreadySavedFiles.map(getFullPath));
 
     logger.info(
       `Processing folder: ${folder} (${files.length} files) (already saved: ${alreadySavedFiles.length})`,
@@ -127,27 +117,22 @@ export async function scan(rootDir: string, userId: string) {
     }
 
     // If a file is in the DB but not on disk, remove it from the DB.
-    const pathsOnDisk = new Set(files.map((f) => f.path));
-    const orphanedFiles = alreadySavedFiles.filter(
-      (f: { path: string }) => !pathsOnDisk.has(f.path),
-    );
+    const pathsOnDisk = new Set(files.map(getFullPath));
+    const orphanedFiles = alreadySavedFiles.filter((f) => !pathsOnDisk.has(getFullPath(f)));
     if (orphanedFiles.length > 0) {
       logger.info(`Removing ${orphanedFiles.length} orphaned files for folder: ${folder}`);
       await trpc.files.removeFilesById.mutate(orphanedFiles.map((f: { id: string }) => f.id));
     }
 
     // Filter out files that are already in the database.
-    const filesToAdd = files
-      .filter((f) => !alreadySavedPaths.has(f.path))
+    const filesToAdd: CreateFilesInput = files
+      .filter((f) => !alreadySavedPaths.has(getFullPath(f)))
       .map((f) => ({
-        path: f.path,
         dir: folder,
         type: f.type,
         mime: f.mime,
         name: f.name,
         size: f.size,
-        fileCreatedAt: f.fileCreatedAt,
-        encoded: f.encoded,
       }));
 
     if (!filesToAdd.length) {
@@ -157,56 +142,19 @@ export async function scan(rootDir: string, userId: string) {
 
     logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
 
-    //get Ids of files just created
+    // Actually add all new files that aren't already in the DB.
     const fileCreateResult = await trpc.files.create.mutate(filesToAdd);
 
-    const fileIds = fileCreateResult.map((f) => f.id);
-
-    //get the default libraryId to associate files with
+    // Get the user's default library.
     const libraryId = await trpc.library.getDefaultLibraryIdForUser.query(userId);
 
-    //save all files to library
+    // Link each new file to the library.
     await trpc.libraryFile.create.mutate(
-      fileIds.map((fileId) => ({
-        fileId,
+      fileCreateResult.map(({ id }) => ({
+        fileId: id,
         libraryId,
       })),
     );
-
-    //album links to a library
-    //will have to create an album per folder
-    await trpc.album.create.mutate({
-      userId,
-      albums: folders.map((folder) => ({
-        name: folder,
-        libraryId,
-      })),
-    });
-
-    // Get all files and albums
-    const allFiles = await trpc.files.getAllFiles.query();
-    const albums = await trpc.album.get.query();
-
-    console.log('allFiles:', allFiles);
-    console.log('albums:', albums);
-
-    // Build a lookup table: album name → albumId
-    const albumMap = new Map(albums.map((a) => [a.name, a.id]));
-
-    // Map files to albumId
-    const albumFilesToInsert = allFiles
-      .map((file) => {
-        const albumId = albumMap.get(file.dir); // match file.dir to album.name
-        if (!albumId) return null; // skip if no matching album
-        return { fileId: file.id, albumId };
-      })
-      //filer Boolean skips nulls (no matching album found)
-      .filter(Boolean) as { fileId: string; albumId: string }[];
-
-    // create album files link
-    if (albumFilesToInsert.length > 0) {
-      await trpc.albumFile.create.mutate(albumFilesToInsert);
-    }
   }
 
   const total = Array.from(byFolder.values()).reduce((n, a) => n + a.length, 0);

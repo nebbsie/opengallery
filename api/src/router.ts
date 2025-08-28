@@ -1,4 +1,4 @@
-import { router, t } from "./trpc.js";
+import { router } from "./trpc.js";
 import { healthRouter } from "./routers/health.router.js";
 import { mediaSourcesSettingsRouter } from "./routers/media-sources-settings.router.js";
 import { directoryRouter } from "./routers/directory.router.js";
@@ -8,6 +8,7 @@ import { libraryRouter } from "./routers/library.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
 import { albumRouter } from "./routers/album.router.js";
 import { albumFileRouter } from "./routers/album-file.router.js";
+import { settingsRouter } from "./routers/settings.router.js";
 
 export const appRouter = router({
   health: healthRouter,
@@ -19,6 +20,7 @@ export const appRouter = router({
   eventLog: eventLogRouter,
   album: albumRouter,
   albumFile: albumFileRouter,
+  settings: settingsRouter,
 });
 
 export type AppRouter = typeof appRouter;

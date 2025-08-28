@@ -8,10 +8,10 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { auth } from "./auth/auth.js";
 import { createContext } from "./trpc.js";
 import { db } from "./db/index.js";
-import { FileTable } from "./db/schema.js";
+import { FileTable, FileVariantTable } from "./db/schema.js";
 import { logger } from "./logger.js";
 import { appRouter, type AppRouter } from "./router.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import path from "path";
 import * as fs from "node:fs";
 import metricsPlugin from "./metrics.js";
@@ -41,48 +41,79 @@ await server.register(metricsPlugin);
 
 server.get("/health", async () => ({ status: "ok" }));
 
-server.get("/asset/:id", async (req, reply) => {
-  const { id } = req.params as { id: string };
+server.get("/asset/:id/:variant?", async (req, reply) => {
+  const { id, variant } = req.params as { id: string; variant?: string };
 
-  const [asset] = await db
+  const [base] = await db
     .select()
     .from(FileTable)
     .where(eq(FileTable.id, id))
     .limit(1);
+  if (!base) return reply.code(404).send({ error: "Asset not found" });
 
-  if (!asset) {
-    return reply.code(404).send({ error: "Asset not found" });
+  // normalize variant
+  const v =
+    variant?.toLowerCase() === "thumbnail"
+      ? "thumbnail"
+      : variant?.toLowerCase() === "optimised" ||
+          variant?.toLowerCase() === "optimised"
+        ? "optimised"
+        : variant
+          ? "invalid"
+          : null;
+
+  if (v === "invalid") {
+    return reply
+      .code(400)
+      .send({ error: "Variant must be thumbnail | optimised" });
   }
 
-  const abs = path.resolve(asset.path);
-  console.log("Serving asset:", abs);
+  // pick target file row: original or its variant
+  const target =
+    v == null
+      ? base
+      : (
+          await db
+            .select({ file: FileTable })
+            .from(FileVariantTable)
+            .innerJoin(FileTable, eq(FileVariantTable.fileId, FileTable.id))
+            .where(
+              and(
+                eq(FileVariantTable.originalFileId, base.id),
+                eq(FileVariantTable.type, v),
+              ),
+            )
+            .limit(1)
+        )[0]?.file;
 
-  const etag = `${asset.size}-${asset.createdAt.getTime() | 0}`;
-  if (req.headers["if-none-match"] === etag) {
-    return reply.code(304).send();
-  }
+  if (!target)
+    return reply.code(404).send({ error: `Variant not found: ${v}` });
 
-  // Basic headers
+  const abs = path.resolve(path.join(target.dir, target.name));
+  const updatedAt = new Date(target.updatedAt);
+  const etag = `${target.id}-${target.size}-${Math.floor(updatedAt.getTime() / 1000)}`;
+
+  if (req.headers["if-none-match"] === etag) return reply.code(304).send();
+
   reply
-    .header("Content-Type", asset.mime || "application/octet-stream")
-    .header("Content-Length", String(asset.size))
+    .header("Content-Type", target.mime || "application/octet-stream")
+    .header("Content-Length", String(target.size))
     .header("ETag", etag)
-    .header("Last-Modified", asset.updatedAt.toUTCString())
+    .header("Last-Modified", updatedAt.toUTCString())
     .header("Cache-Control", "public, max-age=31536000, immutable");
 
-  // Range support (important for video)
   const range = req.headers.range;
   if (range) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!m) return reply.code(416).send();
     const start = m[1] ? parseInt(m[1], 10) : 0;
-    const end = m[2] ? parseInt(m[2], 10) : asset.size - 1;
-    if (start > end || end >= asset.size) return reply.code(416).send();
+    const end = m[2] ? parseInt(m[2], 10) : target.size - 1;
+    if (start > end || end >= target.size) return reply.code(416).send();
 
     reply
       .code(206)
       .header("Accept-Ranges", "bytes")
-      .header("Content-Range", `bytes ${start}-${end}/${asset.size}`)
+      .header("Content-Range", `bytes ${start}-${end}/${target.size}`)
       .header("Content-Length", String(end - start + 1));
 
     return reply.send(fs.createReadStream(abs, { start, end }));

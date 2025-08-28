@@ -1,9 +1,15 @@
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 import { z } from "zod";
 import { db } from "../db/index.js";
-import { FileTable, LibraryFileTable, LibraryTable } from "../db/schema.js";
+import {
+  FileTable,
+  FileVariantTable,
+  LibraryFileTable,
+  LibraryTable,
+} from "../db/schema.js";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { TasksQueue } from "../redis.js";
 
 export const filesRouter = router({
   create: internalProcedure
@@ -11,19 +17,32 @@ export const filesRouter = router({
       z.array(
         z.object({
           dir: z.string(),
-          path: z.string(),
           name: z.string(),
           type: z.enum(["image", "video"]),
           mime: z.string(),
           size: z.number(),
-          encoded: z.boolean(),
-          fileCreatedAt: z.date(),
         }),
       ),
     )
-    .mutation(({ input }) =>
-      db.insert(FileTable).values(input).returning({ id: FileTable.id }),
-    ),
+    .mutation(async ({ input }) => {
+      const addedFiles = await db.insert(FileTable).values(input).returning();
+
+      type Message = {
+        name: "encode";
+        data: {
+          fileId: string;
+        };
+      };
+
+      const tasks: Message[] = addedFiles.map((f) => ({
+        name: "encode",
+        data: { fileId: f.id },
+      }));
+
+      await TasksQueue.addBulk(tasks);
+
+      return addedFiles;
+    }),
 
   getFilesInDir: privateProcedure
     .input(z.string())
@@ -39,34 +58,131 @@ export const filesRouter = router({
 
   getAllFiles: internalProcedure.query(() => db.select().from(FileTable)),
 
-  // All files owned by the authenticated user (excludes soft-deleted links)
-  getUsersFiles: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) {
-      throw new TRPCError({ code: "UNAUTHORIZED" }); // requires real user
+  saveVariants: internalProcedure
+    .input(
+      z.object({
+        originalFileId: z.string().uuid(),
+        variants: z
+          .array(
+            z.object({
+              type: z.enum(["thumbnail", "optimised"]),
+              fileType: z.enum(["image", "video"]),
+              dir: z.string(),
+              name: z.string(), // e.g. `${base}__thumb.avif`
+              mime: z.string(),
+              size: z.number().int().nonnegative(),
+            }),
+          )
+          .min(1)
+          .max(2),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const { originalFileId, variants } = input;
+
+      return db.transaction(async (tx) => {
+        const result: {
+          originalFileId: string;
+          thumbnail: null | { id: string; dir: string; name: string };
+          optimised: null | { id: string; dir: string; name: string };
+        } = { originalFileId, thumbnail: null, optimised: null };
+
+        for (const v of variants) {
+          const [res] = await tx
+            .insert(FileTable)
+            .values({
+              dir: v.dir,
+              name: v.name,
+              mime: v.mime,
+              size: v.size,
+              type: v.fileType,
+            })
+            .returning({ id: FileTable.id });
+
+          if (!res || !res.id) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Failed to insert variant file",
+            });
+          }
+
+          await tx.insert(FileVariantTable).values({
+            originalFileId,
+            fileId: res.id,
+            type: v.type,
+          });
+
+          result[v.type] = { id: res.id, dir: v.dir, name: v.name };
+        }
+
+        return result;
+      });
+    }),
+
+  getFileById: internalProcedure.input(z.string()).query(async ({ input }) => {
+    const [file] = await db
+      .select()
+      .from(FileTable)
+      .where(eq(FileTable.id, input))
+      .limit(1);
+    if (!file) {
+      throw new TRPCError({
+        code: "NOT_FOUND",
+        message: `Failed to find file by id: ${input}`,
+      });
     }
 
-    const rows = await db
-      .select({
-        file: FileTable, // full file row
-        libraryId: LibraryTable.id, // owning library
-        libraryFileId: LibraryFileTable.id,
-      })
-      .from(LibraryFileTable)
-      .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
-      .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
+    const variants = await db
+      .select()
+      .from(FileVariantTable)
       .where(
         and(
-          eq(LibraryTable.userId, userId),
-          isNull(LibraryFileTable.deletedAt),
+          eq(FileVariantTable.fileId, file.id),
+          inArray(FileVariantTable.type, ["thumbnail", "optimised"]),
         ),
-      )
-      .orderBy(desc(FileTable.fileCreatedAt));
+      );
 
-    // flatten to just file fields plus linkage ids
-    return rows.map((r) => ({
-      ...r.file,
-      libraryId: r.libraryId,
-      libraryFileId: r.libraryFileId,
-    }));
+    const thumbnail = variants.find((v) => v.type === "thumbnail") ?? null;
+    const optimized = variants.find((v) => v.type === "optimised") ?? null;
+
+    return { raw: file, thumbnail, optimized };
   }),
+
+  getUsersFiles: privateProcedure
+    .input(z.enum(["all", "video", "photo"]))
+    .query(async ({ ctx: { userId }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+      const rows = await db
+        .select({
+          file: FileTable,
+          libraryId: LibraryTable.id,
+          libraryFileId: LibraryFileTable.id,
+        })
+        .from(LibraryFileTable)
+        .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
+        .innerJoin(
+          LibraryTable,
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
+        )
+        .where(
+          input === "all"
+            ? and(
+                eq(LibraryTable.userId, userId),
+                isNull(LibraryFileTable.deletedAt),
+              )
+            : and(
+                eq(LibraryTable.userId, userId),
+                isNull(LibraryFileTable.deletedAt),
+                eq(FileTable.type, input === "photo" ? "image" : "video"),
+              ),
+        )
+        .orderBy(desc(FileTable.createdAt));
+
+      return rows.map((r) => ({
+        ...r.file,
+        libraryId: r.libraryId,
+        libraryFileId: r.libraryFileId,
+      }));
+    }),
 });

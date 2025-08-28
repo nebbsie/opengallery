@@ -98,7 +98,7 @@ const InternalMiddleware = t.middleware(({ ctx, next }) => {
 const TimingMiddleware = t.middleware(async ({ next, path }) => {
   const start = Date.now();
 
-  if (t._config.isDev) {
+  if (false) {
     const waitMs = Math.floor(Math.random() * 700) + 100;
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }

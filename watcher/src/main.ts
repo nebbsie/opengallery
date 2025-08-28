@@ -1,4 +1,3 @@
-import { Logger } from '@opengallery/logger';
 import 'dotenv/config';
 import { FileWatcherService } from './file-watcher.js';
 import { logger } from './logger.js';
