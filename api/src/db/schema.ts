@@ -47,6 +47,7 @@ export const LibraryTable = pgTable("library", {
   userId: text("user_id")
     .notNull()
     .references(() => UserTable.id),
+  name: text("name"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -90,6 +91,7 @@ export const AlbumTable = pgTable(
     libraryId: uuid("library_id")
       .notNull()
       .references(() => LibraryTable.id),
+    dir: text("dir").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -92,6 +92,9 @@ export async function scan(rootDir: string, userId: string) {
   walk(rootDir);
 
   for (const folder of folders) {
+    //at this level, we are looping through a specifc users given source paths.
+    console.log('ANIL PRINT FOLDERS:', folders);
+
     // Get all the files in this folder.
     const files = byFolder.get(folder) ?? [];
 
@@ -113,6 +116,16 @@ export async function scan(rootDir: string, userId: string) {
     if (files.length === 0) {
       logger.info(`Removing orphaned files for folder: ${folder}`);
       await trpc.files.removeFilesById.mutate(alreadySavedFiles.map((f: { id: string }) => f.id));
+
+      //here we should really delete them everywhere if not found on disk
+      //albumFile, LibraryFile too due to foreign key constraints in db
+      await trpc.albumFile.removeAlbumFilesById.mutate(
+        alreadySavedFiles.map((f: { id: string }) => f.id),
+      );
+      await trpc.libraryFile.removeLibraryFilesById.mutate(
+        alreadySavedFiles.map((f: { id: string }) => f.id),
+      );
+
       continue;
     }
 
@@ -122,6 +135,15 @@ export async function scan(rootDir: string, userId: string) {
     if (orphanedFiles.length > 0) {
       logger.info(`Removing ${orphanedFiles.length} orphaned files for folder: ${folder}`);
       await trpc.files.removeFilesById.mutate(orphanedFiles.map((f: { id: string }) => f.id));
+
+      //here we should really delete them everywhere if not found on disk
+      //albumFile, LibraryFile too due to foreign key constraints in db
+      await trpc.albumFile.removeAlbumFilesById.mutate(
+        orphanedFiles.map((f: { id: string }) => f.id),
+      );
+      await trpc.libraryFile.removeLibraryFilesById.mutate(
+        orphanedFiles.map((f: { id: string }) => f.id),
+      );
     }
 
     // Filter out files that are already in the database.
@@ -155,6 +177,63 @@ export async function scan(rootDir: string, userId: string) {
         libraryId,
       })),
     );
+
+    const albumNameParts = folder.split('\\');
+    const albumName = albumNameParts[albumNameParts.length - 1]; // last part
+
+    //check if file is linked to an album based on album dir == file dir
+    //if not album, generate one first for this folder dir
+    const [album] = await trpc.album.getAlbumByDir.query(folder);
+
+    if (!album && albumName) {
+      //create an album first for that location
+      await trpc.album.create.mutate({
+        userId: userId,
+        album: {
+          name: albumName,
+          libraryId: libraryId,
+          dir: folder,
+          //need to handle parentAlbumId here somehow based on folder path substring (text right of last /)
+        },
+      });
+
+      logger.info(`Adding new album for folder: ${folder}`);
+    }
+
+    //this may need to be changed to get all users library files(if in future they could have many), not just default library files.
+    //library is what links a file to a user
+    const allFiles = await trpc.libraryFile.getAllLibraryFiles.query(libraryId);
+    const albums = await trpc.album.getAllAlbumsForLibrary.query(libraryId);
+
+    const albumFiles = await trpc.albumFile.getByAlbumIds.query(
+      albums.map((f: { id: string }) => f.id),
+    );
+
+    // Build a lookup table: album name → albumId
+    const albumMap = new Map(albums.map((a) => [a.dir, a.id]));
+
+    // Build lookup: albumId → Set<fileId>
+    const existingLinks = new Map<string, Set<string>>();
+    for (const af of albumFiles) {
+      if (!existingLinks.has(af.albumId)) {
+        existingLinks.set(af.albumId, new Set());
+      }
+      existingLinks.get(af.albumId)!.add(af.fileId);
+    }
+
+    // Collect new links
+    const albumFilesToInsert = allFiles.flatMap((file) => {
+      const albumId = albumMap.get(file.dir);
+      if (!albumId) return [];
+
+      const alreadyLinked = existingLinks.get(albumId)?.has(file.id);
+      return alreadyLinked ? [] : [{ fileId: file.id, albumId }];
+    });
+
+    if (albumFilesToInsert.length > 0) {
+      await trpc.albumFile.create.mutate(albumFilesToInsert);
+      logger.info(`Linking album files for folder: ${folder}`);
+    }
   }
 
   const total = Array.from(byFolder.values()).reduce((n, a) => n + a.length, 0);
