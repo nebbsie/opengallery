@@ -186,14 +186,27 @@ export async function scan(rootDir: string, userId: string) {
     const [album] = await trpc.album.getAlbumByDir.query(folder);
 
     if (!album && albumName) {
-      //create an album first for that location
+      // Determine parent folder path
+      const pathParts = folder.split('\\');
+      const parentPath = pathParts.length > 1 ? pathParts.slice(0, -1).join('\\') : null;
+
+      // Look up parent album ID if it exists
+      let parentAlbumId: string | null = null;
+      if (parentPath) {
+        const [parentAlbum] = await trpc.album.getAlbumByDir.query(parentPath);
+        if (parentAlbum && parentAlbum.id) {
+          parentAlbumId = parentAlbum.id;
+        }
+      }
+
+      // Create the new album
       await trpc.album.create.mutate({
         userId: userId,
         album: {
           name: albumName,
           libraryId: libraryId,
           dir: folder,
-          //need to handle parentAlbumId here somehow based on folder path substring (text right of last /)
+          parentId: parentAlbumId,
         },
       });
 
