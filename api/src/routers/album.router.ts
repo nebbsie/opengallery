@@ -78,6 +78,7 @@ export const albumRouter = router({
           name: z.string(),
           libraryId: z.string(),
           dir: z.string(),
+          parentId: z.string().nullable(),
         }),
       }),
     )
@@ -116,6 +117,7 @@ export const albumRouter = router({
         name: input.album.name,
         libraryId: input.album.libraryId,
         dir: input.album.dir,
+        parentId: input.album.parentId,
       });
     }),
 
