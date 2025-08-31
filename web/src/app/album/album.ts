@@ -5,6 +5,7 @@ import { RouterOutlet } from '@angular/router';
   selector: 'app-album',
   imports: [RouterOutlet],
   template: ` <router-outlet /> `,
+
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Album {}

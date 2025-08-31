@@ -1,15 +1,9 @@
-import { db } from "../db/index.js";
-import { privateProcedure, router } from "../trpc.js";
-import { z } from "zod";
-import {
-  AlbumTable,
-  FileTable,
-  LibraryFileTable,
-  LibraryTable,
-} from "../db/schema.js";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { text, uuid } from "drizzle-orm/pg-core";
+import { z } from "zod";
+import { db } from "../db/index.js";
+import { AlbumTable, LibraryTable } from "../db/schema.js";
+import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
 export const albumRouter = router({
   createMultiAlbums: privateProcedure
@@ -21,9 +15,9 @@ export const albumRouter = router({
             name: z.string(),
             libraryId: z.string(),
             dir: z.string(),
-          }),
+          })
         ),
-      }),
+      })
     )
     .mutation(async ({ ctx: { userId: ctxUserId, isInternal }, input }) => {
       const targetUserId = input.userId;
@@ -44,10 +38,10 @@ export const albumRouter = router({
         .where(inArray(LibraryTable.id, libIds));
 
       const libOwnerById = Object.fromEntries(
-        libs.map((l) => [l.id, l.userId]),
+        libs.map((l) => [l.id, l.userId])
       );
       const invalid = input.albums.filter(
-        (a) => libOwnerById[a.libraryId] !== targetUserId,
+        (a) => libOwnerById[a.libraryId] !== targetUserId
       );
       if (invalid.length > 0) {
         throw new TRPCError({
@@ -57,15 +51,20 @@ export const albumRouter = router({
         });
       }
 
-      // Insert with userId from top-level
-      await db.insert(AlbumTable).values(
-        input.albums.map((a) => ({
-          name: a.name,
-          libraryId: a.libraryId,
-          userId: targetUserId,
-          dir: a.dir,
-        })),
-      );
+      // Insert with userId from top-level, avoid duplicates by (libraryId, dir)
+      await db
+        .insert(AlbumTable)
+        .values(
+          input.albums.map((a) => ({
+            name: a.name,
+            libraryId: a.libraryId,
+            userId: targetUserId,
+            dir: a.dir,
+          }))
+        )
+        .onConflictDoNothing({
+          target: [AlbumTable.libraryId, AlbumTable.dir],
+        });
 
       return { created: input.albums.length };
     }),
@@ -80,7 +79,7 @@ export const albumRouter = router({
           dir: z.string(),
           parentId: z.string().nullable(),
         }),
-      }),
+      })
     )
     .mutation(async ({ ctx: { userId: ctxUserId, isInternal }, input }) => {
       const targetUserId = input.userId;
@@ -100,8 +99,8 @@ export const albumRouter = router({
         .where(
           and(
             eq(LibraryTable.id, input.album.libraryId),
-            eq(LibraryTable.userId, input.userId),
-          ),
+            eq(LibraryTable.userId, input.userId)
+          )
         )
         .limit(1);
 
@@ -112,13 +111,20 @@ export const albumRouter = router({
         });
       }
 
-      // Insert with userId from top-level
-      await db.insert(AlbumTable).values({
-        name: input.album.name,
-        libraryId: input.album.libraryId,
-        dir: input.album.dir,
-        parentId: input.album.parentId,
-      });
+      // Insert with userId from top-level, upsert to set parentId if missing
+      await db
+        .insert(AlbumTable)
+        .values({
+          name: input.album.name,
+          libraryId: input.album.libraryId,
+          dir: input.album.dir,
+          parentId: input.album.parentId,
+        })
+        .onConflictDoUpdate({
+          target: [AlbumTable.libraryId, AlbumTable.dir],
+          set: { parentId: input.album.parentId },
+          where: isNull(AlbumTable.parentId),
+        });
     }),
 
   get: privateProcedure.query(() => db.select().from(AlbumTable)),
@@ -126,7 +132,7 @@ export const albumRouter = router({
   getAlbumByDir: privateProcedure
     .input(z.string())
     .query(({ input: dir }) =>
-      db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1),
+      db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1)
     ),
 
   getAllAlbumsForLibrary: privateProcedure
@@ -146,7 +152,7 @@ export const albumRouter = router({
         })
         .from(AlbumTable)
         .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-        .where(eq(AlbumTable.libraryId, libraryId)),
+        .where(eq(AlbumTable.libraryId, libraryId))
     ),
 
   getUsersAlbums: privateProcedure.query(async ({ ctx: { userId } }) => {
@@ -161,8 +167,30 @@ export const albumRouter = router({
       .where(eq(LibraryTable.userId, userId))
       .orderBy(desc(AlbumTable.createdAt));
 
+    console.log(rows);
+
     return rows.map((r) => ({
       ...r.album,
     }));
   }),
+
+  setParentByDir: internalProcedure
+    .input(
+      z.object({
+        libraryId: z.string(),
+        dir: z.string(),
+        parentId: z.string().nullable(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      await db
+        .update(AlbumTable)
+        .set({ parentId: input.parentId })
+        .where(
+          and(
+            eq(AlbumTable.libraryId, input.libraryId),
+            eq(AlbumTable.dir, input.dir)
+          )
+        );
+    }),
 });

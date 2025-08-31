@@ -12,6 +12,7 @@ import {
   HlmBreadcrumbList,
   HlmBreadcrumbSeparator,
 } from '@spartan-ng/helm/breadcrumb';
+import { HlmButton } from '@spartan-ng/helm/button';
 
 interface AlbumNode {
   id: string;
@@ -33,8 +34,8 @@ interface AlbumNode {
     HlmBreadcrumb,
     HlmBreadcrumbList,
     HlmBreadcrumbItem,
-    HlmBreadcrumbLink,
     HlmBreadcrumbSeparator,
+    HlmButton,
   ],
   template: `
     @if (albums.isPending()) {
@@ -45,13 +46,9 @@ interface AlbumNode {
       <app-error-alert [error]="albums.error()" />
     }
     @if (albums.isSuccess()) {
-      <div class="mb-4">
-        @if (currentParentId) {
-          <button class="rounded bg-gray-200 px-3 py-1 hover:bg-gray-300" (click)="goBack()">
-            ← Back
-          </button>
-        }
-      </div>
+      @if (currentParentId) {
+        <button hlmBtn variant="ghost" class="mb-4" (click)="goBack()">← Back</button>
+      }
 
       @if (breadcrumb.length) {
         <nav hlmBreadcrumb class="mb-2">
@@ -70,14 +67,14 @@ interface AlbumNode {
 
       <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
         @for (album of displayedAlbums; track album.id) {
-          <div class="flex w-full cursor-pointer flex-col" (click)="openAlbum(album.id)">
+          <a class="flex w-full cursor-pointer flex-col" (click)="openAlbum(album.id)">
             <img
               [src]="album.cover || 'https://placehold.co/200x200'"
               alt="Album cover"
               class="mb-2 h-full w-full rounded-lg object-cover"
             />
             <p>{{ album.name }}</p>
-          </div>
+          </a>
         }
       </div>
     }

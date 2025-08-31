@@ -41,7 +41,6 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
     </a>
 
     <a
-      class="mb-1"
       hlmBtn
       routerLink="/gallery/videos"
       routerLinkActive="active"
@@ -52,6 +51,8 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       <ng-icon hlm size="sm" name="lucideFilm" />
       Videos
     </a>
+
+    <hr class="my-2" />
 
     <div class="flex items-center justify-between">
       <p class="font-medium">Albums</p>
@@ -72,6 +73,8 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       <ng-icon hlm size="sm" name="lucideImages" />
       Holidays
     </a>
+
+    <hr class="my-2" />
   `,
 
   changeDetection: ChangeDetectionStrategy.OnPush,
