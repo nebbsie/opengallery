@@ -1,20 +1,17 @@
+import { relations } from "drizzle-orm";
 import {
   boolean,
+  decimal,
+  foreignKey,
+  integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
   timestamp,
-  uuid,
-  integer,
-  jsonb,
-  foreignKey,
-  decimal,
   uniqueIndex,
-  varchar,
-  index,
+  uuid,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
-import { string } from "zod";
 
 const createdAt = () =>
   timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -64,7 +61,7 @@ export const FileTable = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)],
+  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)]
 );
 
 export const LibraryFileTable = pgTable("library_file", {
@@ -102,7 +99,8 @@ export const AlbumTable = pgTable(
       foreignColumns: [table.id],
       name: "album_parent_fk", // custom constraint name
     }),
-  ],
+    uniqueIndex("album_library_dir_uidx").on(table.libraryId, table.dir),
+  ]
 );
 
 // handle the AlbumTable self-reference here
@@ -154,9 +152,9 @@ export const FileVariantTable = pgTable(
   (t) => ({
     uniqFileType: uniqueIndex("file_variant_fileid_type_idx").on(
       t.originalFileId,
-      t.type,
+      t.type
     ),
-  }),
+  })
 );
 
 export const ImageMetadataTable = pgTable("image_metadata", {
@@ -214,7 +212,7 @@ export const MediaPathTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId, table.path)];
-  },
+  }
 );
 
 export const MediaSettingsTable = pgTable(
@@ -231,7 +229,7 @@ export const MediaSettingsTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId)];
-  },
+  }
 );
 
 export const SystemSettingsTable = pgTable("system_settings", {
@@ -309,10 +307,10 @@ export const VerificationTable = pgTable("verification", {
   value: text("value").notNull(),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").$defaultFn(
-    () => /* @__PURE__ */ new Date(),
+    () => /* @__PURE__ */ new Date()
   ),
   updatedAt: timestamp("updated_at").$defaultFn(
-    () => /* @__PURE__ */ new Date(),
+    () => /* @__PURE__ */ new Date()
   ),
 });
 

@@ -1,6 +1,6 @@
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { extname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { logger } from './logger.js';
 import { type RouterInputs, trpc } from './trpc.js';
 
@@ -24,7 +24,7 @@ type CreateFilesInput = RouterInputs['files']['create'];
 
 type TempFile = CreateFilesInput[0];
 
-export async function scan(rootDir: string, userId: string) {
+export async function scan(rootDir: string, userId: string, options?: { skipAlbumFor?: string }) {
   if (!existsSync(rootDir)) {
     logger.warn(`Scan skipped, path not found: ${rootDir}`);
     return { folders: [], totalFiles: 0, byFolder: new Map<string, TempFile[]>() };
@@ -32,6 +32,8 @@ export async function scan(rootDir: string, userId: string) {
 
   const folders: string[] = [];
   const byFolder = new Map<string, TempFile[]>();
+
+  const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
 
   function walk(dir: string) {
     folders.push(dir);
@@ -90,6 +92,34 @@ export async function scan(rootDir: string, userId: string) {
   }
 
   walk(rootDir);
+
+  // Helper to ensure an album (and its parent chain) exists for a directory
+  async function ensureAlbumForDir(dir: string, libraryId: string): Promise<string | null> {
+    if (!dir || dir === skipAlbumFor) return null;
+
+    const [existing] = await trpc.album.getAlbumByDir.query(dir);
+    if (existing && existing.id) return existing.id;
+
+    const albumName = basename(dir);
+    if (!albumName) return null;
+
+    const parentDir = dirname(dir);
+    const parentId =
+      parentDir && parentDir !== dir ? await ensureAlbumForDir(parentDir, libraryId) : null;
+
+    await trpc.album.create.mutate({
+      userId,
+      album: {
+        name: albumName,
+        libraryId,
+        dir,
+        parentId,
+      },
+    });
+
+    const [created] = await trpc.album.getAlbumByDir.query(dir);
+    return created?.id ?? null;
+  }
 
   for (const folder of folders) {
     //at this level, we are looping through a specifc users given source paths.
@@ -178,39 +208,19 @@ export async function scan(rootDir: string, userId: string) {
       })),
     );
 
-    const albumNameParts = folder.split('\\');
-    const albumName = albumNameParts[albumNameParts.length - 1]; // last part
+    const albumName = basename(folder);
 
     //check if file is linked to an album based on album dir == file dir
     //if not album, generate one first for this folder dir
     const [album] = await trpc.album.getAlbumByDir.query(folder);
 
-    if (!album && albumName) {
-      // Determine parent folder path
-      const pathParts = folder.split('\\');
-      const parentPath = pathParts.length > 1 ? pathParts.slice(0, -1).join('\\') : null;
-
-      // Look up parent album ID if it exists
-      let parentAlbumId: string | null = null;
-      if (parentPath) {
-        const [parentAlbum] = await trpc.album.getAlbumByDir.query(parentPath);
-        if (parentAlbum && parentAlbum.id) {
-          parentAlbumId = parentAlbum.id;
-        }
+    const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
+    // Ensure album exists for this folder (this will also ensure parents exist)
+    if (folder !== skipAlbumFor) {
+      const ensuredAlbumId = await ensureAlbumForDir(folder, libraryId);
+      if (ensuredAlbumId) {
+        logger.info(`Album ensured for folder: ${folder}`);
       }
-
-      // Create the new album
-      await trpc.album.create.mutate({
-        userId: userId,
-        album: {
-          name: albumName,
-          libraryId: libraryId,
-          dir: folder,
-          parentId: parentAlbumId,
-        },
-      });
-
-      logger.info(`Adding new album for folder: ${folder}`);
     }
 
     //this may need to be changed to get all users library files(if in future they could have many), not just default library files.
