@@ -9,6 +9,7 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { NgOptimizedImage } from '@angular/common';
 import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
+import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 
 @Component({
   selector: 'app-gallery-videos',
@@ -18,7 +19,7 @@ import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
       lucideCirclePause,
     }),
   ],
-  imports: [ErrorAlert, HlmIcon, HlmSpinner, NgIcon],
+  imports: [ErrorAlert, HlmSpinner, AssetThumbnail],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -30,63 +31,18 @@ import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
     @if (files.isSuccess()) {
       <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
         @for (asset of files.data(); track asset.id) {
-          <div class="relative aspect-square overflow-hidden rounded-lg bg-black">
-            @if (asset.type === 'video') {
-              <video
-                [src]="apiUrl + '/asset/' + asset.id"
-                preload="metadata"
-                muted
-                playsInline
-                class="absolute inset-0 h-full w-full object-cover"
-                (mouseenter)="onVideoHover(video)"
-                (mouseleave)="onVideoHoverOut(video)"
-                #video
-              ></video>
-
-              <div
-                class="absolute top-2 right-1 flex items-center gap-x-2 rounded-full px-2 py-1 dark:bg-black/30"
-              >
-                <p class="font-semibold">0:09</p>
-                <ng-icon
-                  hlm
-                  [name]="videoHoverPlaying() ? 'lucideCirclePause' : 'lucideCirclePlay'"
-                  color="white"
-                  class="!block h-6 w-6 drop-shadow-md"
-                ></ng-icon>
-              </div>
-            }
-          </div>
+          <app-asset-thumbnail [asset]="asset" />
         }
       </div>
-    }
-  `,
-  styles: `
-    :host {
-      display: block;
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class GalleryVideos {
-  protected readonly apiUrl = environment.api.url;
-
   private readonly trpc = injectTrpc();
 
   files = injectQuery(() => ({
     queryKey: [CacheKey.GalleryVideos],
     queryFn: async () => this.trpc.files.getUsersFiles.query('video'),
   }));
-
-  videoHoverPlaying = signal<boolean>(false);
-
-  onVideoHover(video: HTMLVideoElement) {
-    video.play();
-    this.videoHoverPlaying.set(true);
-  }
-
-  onVideoHoverOut(video: HTMLVideoElement) {
-    video.pause();
-    video.currentTime = 0; // Reset to beginning
-    this.videoHoverPlaying.set(false);
-  }
 }

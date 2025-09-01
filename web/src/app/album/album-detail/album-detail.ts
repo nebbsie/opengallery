@@ -6,11 +6,10 @@ import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
-import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 
 @Component({
   selector: 'app-album-detail',
-  imports: [HlmSpinner, ErrorAlert, JsonPipe, AlbumToolbar],
+  imports: [HlmSpinner, ErrorAlert, JsonPipe],
   template: `
     @if (response.isPending()) {
       <hlm-spinner />
@@ -18,12 +17,7 @@ import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
       <app-error-alert [error]="response.error()" />
     } @else {
       @let data = response.data()!;
-      <app-album-toolbar
-        [encodedRoot]="data.tree.encodedRoot"
-        [segments]="data.tree.relSegments"
-        [albumName]="data.album.name"
-      />
-      <p>{{ data.album }}</p>
+      <p>{{ data.album | json }}</p>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -36,10 +30,4 @@ export class AlbumDetail {
     queryKey: [CacheKey.AlbumSingle, this.id()],
     queryFn: () => this.trpc.album.getAlbumInfo.query(this.id()),
   }));
-
-  constructor() {
-    effect(() => {
-      console.log(this.response.data());
-    });
-  }
 }
