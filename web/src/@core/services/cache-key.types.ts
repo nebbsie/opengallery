@@ -5,4 +5,5 @@ export const CacheKey = {
   GalleryPhotos: 'gallery-photos',
   GalleryVideos: 'gallery-videos',
   AlbumsAll: 'albums-all',
+  AlbumSingle: 'albums-single',
 };
