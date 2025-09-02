@@ -21,7 +21,7 @@ import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
     }
 
     @if (albums.isSuccess()) {
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+      <div class="mt-10 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
         @for (album of displayedAlbums(); track album.id) {
           <a class="flex w-full cursor-pointer flex-col" [routerLink]="'/albums/' + album.id">
             <img
