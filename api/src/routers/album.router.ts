@@ -270,8 +270,18 @@ export const albumRouter = router({
       )
       SELECT * FROM chain
     `;
-      const lineageRes = await db.execute(lineageQ);
-      const lineage = lineageRes.rows.reverse(); // root -> current
+      const lineageRes = await db.execute<{
+        id: string;
+        parent_id: string | null;
+        name: string;
+        dir: string;
+      }>(lineageQ);
+      const lineage: {
+        id: string;
+        parent_id: string | null;
+        name: string;
+        dir: string;
+      }[] = lineageRes.rows.reverse(); // root -> current
 
       // relative segments from filesystem view
       const rel = stripPrefix(normalize(albumRow.dir), rootPath);
@@ -284,6 +294,21 @@ export const albumRouter = router({
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .where(eq(AlbumFileTable.albumId, albumId))
         .orderBy(desc(FileTable.createdAt));
+
+      //children albums of current
+      const childrenAlbums = await db
+        .select({
+          albumId: AlbumTable.id,
+          name: AlbumTable.name,
+          dir: AlbumTable.dir,
+          parentId: AlbumTable.parentId,
+          cover: AlbumTable.cover,
+          libraryId: AlbumTable.libraryId,
+          libraryUserId: LibraryTable.userId,
+        })
+        .from(AlbumTable)
+        .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
+        .where(eq(AlbumTable.parentId, albumId));
 
       return {
         album: {
@@ -299,6 +324,7 @@ export const albumRouter = router({
           encodedRoot, // base64url(rootPath) for /root/:encodedRoot
           relSegments, // ['nested','dir', ...]
           ancestors: lineage, // [{ id, parent_id, name, dir }, ...] root->current
+          childrenAlbums,
         },
       };
     }),
