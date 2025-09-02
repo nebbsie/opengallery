@@ -69,7 +69,7 @@ export class FileWatcherService {
 
     // Do initial scan, but don't crash if path is missing or unreadable.
     try {
-      await scan(path, userId, { skipAlbumFor: path });
+      await scan(path, userId); //, { skipAlbumFor: path });
     } catch (error: unknown) {
       this.logger.error(`Initial scan failed for ${path} because: ${error}`);
     }
