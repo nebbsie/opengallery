@@ -161,24 +161,33 @@ export const albumRouter = router({
         .where(eq(AlbumTable.libraryId, libraryId)),
     ),
 
-  getUsersAlbums: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+  getUsersAlbums: privateProcedure
+    .input(z.enum(["folder", "album"]))
+    .query(async ({ ctx: { userId }, input: view }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-    const rows = await db
-      .select({
-        album: AlbumTable,
-      })
-      .from(AlbumTable)
-      .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-      .where(and(eq(LibraryTable.userId, userId), isNull(AlbumTable.parentId)))
-      .orderBy(desc(AlbumTable.createdAt));
+      console.log("trpc input:", view);
 
-    console.log(rows);
+      const rows = await db
+        .select({
+          album: AlbumTable,
+        })
+        .from(AlbumTable)
+        .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
+        .where(
+          and(
+            eq(LibraryTable.userId, userId),
+            ...(view === "folder" ? [isNull(AlbumTable.parentId)] : []),
+          ),
+        )
+        .orderBy(desc(AlbumTable.createdAt));
 
-    return rows.map((r) => ({
-      ...r.album,
-    }));
-  }),
+      console.log(rows);
+
+      return rows.map((r) => ({
+        ...r.album,
+      }));
+    }),
 
   // Fetch a single album by id, ensuring it belongs to the current user
   getAlbumById: privateProcedure
