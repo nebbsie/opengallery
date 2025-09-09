@@ -2,7 +2,7 @@
   "name": "opengallery-monorepo",
   "private": true,
   "scripts": {
-    "start": "concurrently \"npm run start --prefix api\" \"npm run start --prefix web\" \"npm run start --prefix watcher\" \"npm run start --prefix worker\"",
+    "start": "concurrently \"npm run start --prefix api\" \"npm run start --prefix web\" \"npm run start --prefix worker\"",
     "build": "npm run build --prefix packages/logger",
     "build:all": "npm run build --prefix packages/logger && npm run build --prefix api && npm run build --prefix watcher && npm run build --prefix worker"
   },
@@ -10,7 +10,6 @@
     "api",
     "web",
     "watcher",
-    "worker",
     "packages/*"
   ],
   "dependencies": {

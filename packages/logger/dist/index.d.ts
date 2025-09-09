@@ -1,16 +1,14 @@
-import { Logger as PinoLogger } from "pino";
 export interface LoggerConfig {
-    name?: string;
+    name: string;
+    addToDb?: (type: "error" | "info" | "warn" | "debug", value: string, service: string) => Promise<void>;
 }
 export declare class Logger {
-    private logger;
+    private config;
+    private readonly logger;
     constructor(config: LoggerConfig);
-    info(msg: string, data?: Record<string, any>): void;
-    error(msg: string, err?: Error | Record<string, any> | unknown): void;
-    warn(msg: string, data?: Record<string, any>): void;
-    debug(msg: string, data?: Record<string, any>): void;
-    trace(msg: string, data?: Record<string, any>): void;
-    fatal(msg: string, err?: Error | Record<string, any>): void;
-    child(bindings: Record<string, any>): Logger;
-    getPinoLogger(): PinoLogger;
+    private saveToDb;
+    info(msg: string, data?: Record<string, any>): Promise<void>;
+    error(msg: string, err?: Error | Record<string, any> | unknown): Promise<void>;
+    debug(msg: string, data?: Record<string, any>): Promise<void>;
+    warn(msg: string, data?: Record<string, any>): Promise<void>;
 }

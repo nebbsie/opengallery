@@ -1,8 +1,8 @@
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { logger } from './logger.js';
-import { type RouterInputs, trpc } from './trpc.js';
+import { logger } from '../utils/logger.js';
+import { type RouterInputs, trpc } from '../utils/trpc.js';
 
 type MediaType = 'image' | 'video';
 
@@ -123,7 +123,6 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
   for (const folder of folders) {
     //at this level, we are looping through a specifc users given source paths.
-    console.log('ANIL PRINT FOLDERS:', folders);
 
     // Get all the files in this folder.
     const files = byFolder.get(folder) ?? [];
@@ -131,10 +130,6 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     // Get all the files already in the database for this folder.
     const alreadySavedFiles = await trpc.files.getFilesInDir.mutate(folder);
     const alreadySavedPaths = new Set(alreadySavedFiles.map(getFullPath));
-
-    logger.info(
-      `Processing folder: ${folder} (${files.length} files) (already saved: ${alreadySavedFiles.length})`,
-    );
 
     // If no files to add and no files in the DB for this folder, skip.
     if (files.length === 0 && alreadySavedFiles.length === 0) {
@@ -188,7 +183,6 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       }));
 
     if (!filesToAdd.length) {
-      logger.info(`No new files to add for folder: ${folder}`);
       continue;
     }
 

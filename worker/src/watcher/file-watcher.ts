@@ -4,7 +4,7 @@ import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
 import { scan } from './scanner.js';
-import { trpc } from './trpc.js';
+import { trpc } from '../utils/trpc.js';
 
 interface WatchedPath {
   id: string;
@@ -60,12 +60,8 @@ export class FileWatcherService {
 
   async addWatcher(id: string, path: string, userId: string) {
     if (this.watchers.has(id)) {
-      this.logger.info(`Watcher for path ${id} already exists, removing old one`);
-
       await this.removeWatcher(id);
     }
-
-    this.logger.info(`Adding watcher for path: ${path} (ID: ${id})`);
 
     // Do initial scan, but don't crash if path is missing or unreadable.
     try {

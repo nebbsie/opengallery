@@ -39,8 +39,6 @@ import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class GalleryAll {
-  protected readonly apiUrl = environment.api.url;
-
   private readonly trpc = injectTrpc();
 
   files = injectQuery(() => ({

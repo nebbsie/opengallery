@@ -1,5 +1,4 @@
-// encode.ts
-import { type RouterOutputs, trpc } from './trpc.js';
+import { type RouterOutputs, trpc } from '../utils/trpc.js';
 import sharp from 'sharp';
 import { promises as fs } from 'node:fs';
 import { basename, extname, join } from 'node:path';
@@ -10,6 +9,8 @@ type File = RouterOutputs['files']['getFileById']['raw'];
 export async function encode(fileId: string) {
   const fileResult = await trpc.files.getFileById.query(fileId);
   if (fileResult.optimized || fileResult.thumbnail) return;
+
+  console.log('encoding file: ', fileId);
 
   const file: File = fileResult.raw;
   if (file.type !== 'image' || file.mime === 'image/svg+xml') return;

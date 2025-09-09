@@ -15,6 +15,10 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./settings-sources/settings-sources').then((c) => c.SettingsSources),
       },
+      {
+        path: 'logs',
+        loadComponent: () => import('./settings-logs/settings-logs').then((c) => c.SettingsLogs),
+      },
     ],
   },
 ];

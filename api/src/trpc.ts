@@ -60,10 +60,6 @@ const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, isInternal, userId, session } });
 });
 
-// Accept internal OR authenticated user.
-// If internal: userId is null. If external: userId is non-null.
-type PrivateOrInternalContext = PrivateContext | InternalContext;
-
 const PrivateOrInternalMiddleware = t.middleware(({ ctx, next }) => {
   if (ctx.isInternal) {
     return next({
@@ -105,7 +101,7 @@ const TimingMiddleware = t.middleware(async ({ next, path }) => {
 
   const result = await next();
   const end = Date.now();
-  logger.info(`[TRPC] ${path} took ${end - start}ms`);
+  logger.debug(`[TRPC] ${path} took ${end - start}ms`);
   return result;
 });
 
@@ -116,7 +112,7 @@ export const publicProcedure = t.procedure
   .use(TimingMiddleware)
   .use(AuthMiddleware);
 
-// Use when internal OR authenticated user is allowed.
+// Use when an internal OR authenticated user is allowed.
 // Handlers receive ctx as PrivateContext | InternalContext.
 export const privateProcedure = t.procedure
   .use(TimingMiddleware)

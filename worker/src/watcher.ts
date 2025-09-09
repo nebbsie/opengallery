@@ -1,14 +1,11 @@
-import 'dotenv/config';
-import { FileWatcherService } from './file-watcher.js';
-import { logger } from './logger.js';
+import { logger } from './utils/logger.js';
+import { FileWatcherService } from './watcher/file-watcher.js';
 
 const PATH_CHECK_INTERVAL = 30 * 1000;
 
 const fileWatcherService = new FileWatcherService(logger);
 
-async function main() {
-  logger.info('OpenGallery worker starting...');
-
+export async function runWatcher() {
   try {
     await fileWatcherService.initialize();
 
@@ -19,9 +16,6 @@ async function main() {
         logger.error('Error updating watchers:', error as Error);
       }
     }, PATH_CHECK_INTERVAL);
-
-    const activeWatchers = fileWatcherService.getActiveWatchers();
-    logger.info(`Active watchers: ${activeWatchers.length}`);
   } catch (error) {
     logger.error('Failed to start worker:', error as Error);
     process.exit(1);
@@ -40,5 +34,3 @@ process.on('SIGTERM', async () => {
   await fileWatcherService.shutdown();
   process.exit(0);
 });
-
-main();

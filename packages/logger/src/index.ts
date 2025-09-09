@@ -4,14 +4,19 @@ import pino, { LoggerOptions, Logger as PinoLogger } from "pino";
 const isProd = process.env.NODE_ENV === "production";
 
 export interface LoggerConfig {
-  name?: string;
+  name: string;
+  addToDb?: (
+    type: "error" | "info" | "warn" | "debug",
+    value: string,
+    service: string,
+  ) => Promise<void>;
 }
 
 export class Logger {
-  private logger: PinoLogger;
+  private readonly logger: PinoLogger;
 
-  constructor(config: LoggerConfig) {
-    const name = config.name;
+  constructor(private config: LoggerConfig) {
+    const { name } = config;
     if (!name) throw new Error("Logger name is required");
 
     const base: LoggerOptions = {
@@ -54,34 +59,48 @@ export class Logger {
     this.logger = pino(base, transport);
   }
 
-  info(msg: string, data?: Record<string, any>) {
+  private async saveToDb(
+    type: "error" | "info" | "warn" | "debug",
+    msg: string,
+    data?: Record<string, any>,
+  ) {
+    const line =
+      data && Object.keys(data).length > 0
+        ? `${msg} ${JSON.stringify(data)}`
+        : msg;
+
+    if (!this.config.addToDb) return;
+    await this.config.addToDb(type, line, this.config.name);
+  }
+
+  async info(msg: string, data?: Record<string, any>) {
     this.logger.info(data || {}, msg);
+    await this.saveToDb("info", msg, data);
   }
-  error(msg: string, err?: Error | Record<string, any> | unknown) {
-    if (err instanceof Error) this.logger.error({ err, stack: err.stack }, msg);
-    else this.logger.error(err || {}, msg);
+
+  async error(msg: string, err?: Error | Record<string, any> | unknown) {
+    if (err instanceof Error) {
+      this.logger.error({ err, stack: err.stack }, msg);
+      await this.saveToDb("error", msg, {
+        error: err.message,
+        stack: err.stack,
+      });
+    } else if (err && typeof err === "object") {
+      this.logger.error(err, msg);
+      await this.saveToDb("error", msg, err as Record<string, any>);
+    } else {
+      this.logger.error({}, msg);
+      await this.saveToDb("error", msg);
+    }
   }
-  warn(msg: string, data?: Record<string, any>) {
-    this.logger.warn(data || {}, msg);
-  }
-  debug(msg: string, data?: Record<string, any>) {
+
+  async debug(msg: string, data?: Record<string, any>) {
     this.logger.debug(data || {}, msg);
-  }
-  trace(msg: string, data?: Record<string, any>) {
-    this.logger.trace(data || {}, msg);
-  }
-  fatal(msg: string, err?: Error | Record<string, any>) {
-    if (err instanceof Error) this.logger.fatal({ err, stack: err.stack }, msg);
-    else this.logger.fatal(err || {}, msg);
+    await this.saveToDb("debug", msg, data);
   }
 
-  child(bindings: Record<string, any>): Logger {
-    const l = new Logger({ name: this.logger.bindings().name as string });
-    l.logger = this.logger.child(bindings);
-    return l;
-  }
-
-  getPinoLogger(): PinoLogger {
-    return this.logger;
+  async warn(msg: string, data?: Record<string, any>) {
+    this.logger.warn(data || {}, msg);
+    await this.saveToDb("warn", msg, data);
   }
 }

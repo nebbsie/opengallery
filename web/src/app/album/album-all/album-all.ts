@@ -5,11 +5,10 @@ import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
-import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 
 @Component({
   selector: 'app-album-all',
-  imports: [ErrorAlert, HlmSpinner, RouterLink, AlbumToolbar],
+  imports: [ErrorAlert, HlmSpinner, RouterLink],
 
   template: `
     @if (albums.isPending()) {

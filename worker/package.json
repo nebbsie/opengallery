@@ -1,5 +1,5 @@
 {
-  "name": "worker",
+  "name": "watcher",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
@@ -12,15 +12,19 @@
     "singleQuote": true
   },
   "dependencies": {
+    "@opengallery/logger": "*",
+    "@opengallery/types": "*",
     "@trpc/client": "^11.5.0",
-    "@trpc/server": "^11.5.0",
-    "bullmq": "^5.58.1",
-    "dotenv": "^17.2.1",
+    "bullmq": "^5.58.5",
+    "chokidar": "^3.5.3",
+    "dotenv": "^16.3.1",
+    "mime-types": "^3.0.1",
     "sharp": "^0.34.3",
     "superjson": "^2.2.2",
-    "tsx": "^4.20.5"
+    "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/mime-types": "^3.0.1",
     "@types/node": "^20.10.0",
     "tsx": "^4.6.0",
     "typescript": "^5.3.0"
