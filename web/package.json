@@ -22,6 +22,10 @@
         }
       }
     ],
+    "tailwindFunctions": [
+      "hlm",
+      "cva"
+    ],
     "plugins": [
       "prettier-plugin-tailwindcss"
     ]

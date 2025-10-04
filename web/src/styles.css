@@ -51,6 +51,7 @@
 }
 
 @theme {
+  --text-tiny: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -77,16 +78,21 @@
     @apply border-border;
   }
 
-  p {
+  p,
+  span,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5 {
     @apply text-foreground;
   }
 }
 
 html,
 body {
-  overscroll-behavior: none; /** Stops the scroll bouncing */
+  overscroll-behavior-y: none; /** Stop vertical bounce; keep horizontal swipe navigation */
 }
-
 
 /*Custom Video Player Styles - Required because tailwind alone can not change all the needed styles*/
 
@@ -106,8 +112,8 @@ input.custom-video-player-slider::-webkit-slider-runnable-track {
   appearance: none;
   background: transparent; /* gradient controls color */
   height: 4px;
-  border: none;            /* remove borders */
-  box-shadow: none;        /* remove inner/outer shadows */
+  border: none; /* remove borders */
+  box-shadow: none; /* remove inner/outer shadows */
   border-radius: 1px;
 }
 
@@ -124,13 +130,13 @@ input.custom-video-player-slider::-webkit-slider-thumb {
   box-shadow: none; /* remove hover/focus shadow */
 
   /* compensate for the browser offset */
-  margin-right: -4px;  /* half the thumb width */
+  margin-right: -4px; /* half the thumb width */
 }
 
 input.custom-video-player-slider-volume::-webkit-slider-thumb {
   margin-top: -4px; /* center thumb */
   /* compensate for the browser offset */
-  margin-right: 0;  /* half the thumb width */
+  margin-right: 0; /* half the thumb width */
 }
 
 /* Firefox */
@@ -138,8 +144,8 @@ input.custom-video-player-slider::-moz-range-track {
   appearance: none;
   background: transparent; /* gradient controls color */
   height: 4px;
-  border: none;            /* remove borders */
-  box-shadow: none;        /* remove inner/outer shadows */
+  border: none; /* remove borders */
+  box-shadow: none; /* remove inner/outer shadows */
   border-radius: 1px;
 }
 

@@ -1,14 +1,17 @@
 import { ChangeDetectionStrategy, Component, output } from '@angular/core';
+import { RouterLink, RouterLinkActive } from '@angular/router';
+import { CacheKey } from '@core/services/cache-key.types';
+import { injectTrpc } from '@core/services/trpc';
+import { NgIcon } from '@ng-icons/core';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { NgIcon } from '@ng-icons/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-side-nav-default',
   imports: [HlmButton, HlmIcon, NgIcon, RouterLink, RouterLinkActive],
   host: {
-    class: 'flex flex-col w-full ',
+    class: 'flex flex-col w-full',
   },
   template: `
     <p class="mb-2 font-medium">Gallery</p>
@@ -61,18 +64,23 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
       >
     </div>
 
-    <a class="mb-1" hlmBtn variant="menu">
-      <ng-icon hlm size="sm" name="lucideImages" />
-      Birthdays
-    </a>
-    <a class="mb-1" hlmBtn variant="menu">
-      <ng-icon hlm size="sm" name="lucideImages" />
-      Christmas
-    </a>
-    <a class="mb-1" hlmBtn variant="menu">
-      <ng-icon hlm size="sm" name="lucideImages" />
-      Holidays
-    </a>
+    @if (albums.isSuccess()) {
+      @for (album of albums.data().slice(0, 3); track album.id) {
+        <a
+          class="mb-1"
+          hlmBtn
+          variant="menu"
+          routerLinkActive="active"
+          #rlaAlbum="routerLinkActive"
+          [variant]="rlaAlbum.isActive ? 'menu_active' : 'menu'"
+          [routerLink]="'/albums/' + album.id"
+          (click)="handleClicked()"
+        >
+          <ng-icon hlm size="sm" name="lucideImages" />
+          {{ album.name }}
+        </a>
+      }
+    }
 
     <hr class="my-2" />
   `,
@@ -81,6 +89,13 @@ import { RouterLink, RouterLinkActive } from '@angular/router';
 })
 export class SideNavDefault {
   clicked = output<void>();
+
+  private readonly trpc = injectTrpc();
+
+  albums = injectQuery(() => ({
+    queryKey: [CacheKey.AlbumsAll, 'with-children'],
+    queryFn: async () => this.trpc.album.getAllUserAlbums.query(),
+  }));
 
   handleClicked() {
     this.clicked.emit();

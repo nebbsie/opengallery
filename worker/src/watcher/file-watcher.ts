@@ -63,7 +63,7 @@ export class FileWatcherService {
       await this.removeWatcher(id);
     }
 
-    // Do initial scan, but don't crash if path is missing or unreadable.
+    // Do an initial scan, but don't crash if a path is missing or unreadable.
     try {
       await scan(path, userId, { skipAlbumFor: path });
     } catch (error: unknown) {
@@ -79,13 +79,7 @@ export class FileWatcherService {
           stabilityThreshold: 2000,
           pollInterval: 100,
         },
-        ignored: [
-          /(^|[\/\\])\../, // Hidden files
-          /\.DS_Store$/, // macOS
-          /Thumbs\.db$/, // Windows
-          /\.tmp$/, // Temporary files
-          /\.log$/, // Log files
-        ],
+        ignored: [/(^|[\/\\])\../, /\.DS_Store$/, /Thumbs\.db$/, /\.tmp$/, /\.log$/],
       });
 
       // Setup event listeners
@@ -153,13 +147,6 @@ export class FileWatcherService {
         await this.addWatcher(p.id, p.path, p.userId);
       }
     }
-  }
-
-  getActiveWatchers() {
-    return Array.from(this.watchers.values()).map((w) => ({
-      id: w.id,
-      path: w.path,
-    }));
   }
 
   async shutdown() {

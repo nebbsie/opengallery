@@ -1,15 +1,15 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 import { CacheKey } from '@core/services/cache-key.types';
-import { environment } from '@env/environment';
 import { injectTrpc } from '@core/services/trpc';
 import { ErrorAlert } from '@core/components/error/error';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
+import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 
 @Component({
   selector: 'app-gallery-photos',
-  imports: [ErrorAlert, HlmSpinner, AssetThumbnail],
+  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, ThumbnailGrid],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -18,23 +18,22 @@ import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail
     @if (files.isError()) {
       <app-error-alert [error]="files.error()" />
     }
+
     @if (files.isSuccess()) {
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+      <app-thumbnail-grid>
         @for (asset of files.data(); track asset.id) {
           <app-asset-thumbnail [asset]="asset" />
         }
-      </div>
+      </app-thumbnail-grid>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class GalleryPhotos {
-  protected readonly apiUrl = environment.api.url;
-
   private readonly trpc = injectTrpc();
 
   files = injectQuery(() => ({
     queryKey: [CacheKey.GalleryPhotos],
-    queryFn: async () => this.trpc.files.getUsersFiles.query('photo'),
+    queryFn: async () => this.trpc.files.getUsersFiles.query('image'),
   }));
 }

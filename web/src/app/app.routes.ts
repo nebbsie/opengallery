@@ -34,6 +34,12 @@ export const routes: Routes = [
     loadChildren: () => import('./settings/settings.routes').then((r) => r.routes),
   },
   {
+    path: 'asset/:id',
+    title: 'Asset - Open Gallery',
+    canActivate: [AuthGuard],
+    loadChildren: () => import('./asset/asset.routes').then((r) => r.routes),
+  },
+  {
     path: '**',
     redirectTo: 'login',
     pathMatch: 'full',

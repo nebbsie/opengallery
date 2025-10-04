@@ -21,9 +21,9 @@ export const albumRouter = router({
             name: z.string(),
             libraryId: z.string(),
             dir: z.string(),
-          }),
+          })
         ),
-      }),
+      })
     )
     .mutation(async ({ ctx: { userId: ctxUserId, isInternal }, input }) => {
       const targetUserId = input.userId;
@@ -44,10 +44,10 @@ export const albumRouter = router({
         .where(inArray(LibraryTable.id, libIds));
 
       const libOwnerById = Object.fromEntries(
-        libs.map((l) => [l.id, l.userId]),
+        libs.map((l) => [l.id, l.userId])
       );
       const invalid = input.albums.filter(
-        (a) => libOwnerById[a.libraryId] !== targetUserId,
+        (a) => libOwnerById[a.libraryId] !== targetUserId
       );
       if (invalid.length > 0) {
         throw new TRPCError({
@@ -66,7 +66,7 @@ export const albumRouter = router({
             libraryId: a.libraryId,
             userId: targetUserId,
             dir: a.dir,
-          })),
+          }))
         )
         .onConflictDoNothing({
           target: [AlbumTable.libraryId, AlbumTable.dir],
@@ -85,7 +85,7 @@ export const albumRouter = router({
           dir: z.string(),
           parentId: z.string().nullable(),
         }),
-      }),
+      })
     )
     .mutation(async ({ ctx: { userId: ctxUserId, isInternal }, input }) => {
       const targetUserId = input.userId;
@@ -105,8 +105,8 @@ export const albumRouter = router({
         .where(
           and(
             eq(LibraryTable.id, input.album.libraryId),
-            eq(LibraryTable.userId, input.userId),
-          ),
+            eq(LibraryTable.userId, input.userId)
+          )
         )
         .limit(1);
 
@@ -138,7 +138,7 @@ export const albumRouter = router({
   getAlbumByDir: privateProcedure
     .input(z.string())
     .query(({ input: dir }) =>
-      db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1),
+      db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1)
     ),
 
   getAllAlbumsForLibrary: privateProcedure
@@ -158,11 +158,13 @@ export const albumRouter = router({
         })
         .from(AlbumTable)
         .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-        .where(eq(AlbumTable.libraryId, libraryId)),
+        .where(eq(AlbumTable.libraryId, libraryId))
     ),
 
   getUsersAlbums: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+    if (!userId) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
 
     const rows = await db
       .select({
@@ -173,7 +175,25 @@ export const albumRouter = router({
       .where(and(eq(LibraryTable.userId, userId), isNull(AlbumTable.parentId)))
       .orderBy(desc(AlbumTable.createdAt));
 
-    console.log(rows);
+    return rows.map((r) => ({
+      ...r.album,
+    }));
+  }),
+
+  // Fetch all albums for the current user, including child albums
+  getAllUserAlbums: privateProcedure.query(async ({ ctx: { userId } }) => {
+    if (!userId) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+
+    const rows = await db
+      .select({
+        album: AlbumTable,
+      })
+      .from(AlbumTable)
+      .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
+      .where(eq(LibraryTable.userId, userId))
+      .orderBy(desc(AlbumTable.createdAt));
 
     return rows.map((r) => ({
       ...r.album,
@@ -184,7 +204,9 @@ export const albumRouter = router({
   getAlbumById: privateProcedure
     .input(z.string())
     .query(async ({ ctx: { userId }, input: albumId }) => {
-      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
 
       const [row] = await db
         .select({ album: AlbumTable, libraryUserId: LibraryTable.userId })
@@ -273,6 +295,14 @@ export const albumRouter = router({
       const lineageRes = await db.execute(lineageQ);
       const lineage = lineageRes.rows.reverse(); // root -> current
 
+      // ensure array of simple POJOs with camelCase keys
+      const ancestors = lineage.map((l) => ({
+        id: l["id"] as string,
+        name: l["name"] as string,
+        parentId: l["parent_id"] as string,
+        dir: l["dir"] as string,
+      }));
+
       // relative segments from filesystem view
       const rel = stripPrefix(normalize(albumRow.dir), rootPath);
       const relSegments = rel.split("/").filter(Boolean);
@@ -285,6 +315,26 @@ export const albumRouter = router({
         .where(eq(AlbumFileTable.albumId, albumId))
         .orderBy(desc(FileTable.createdAt));
 
+      // child albums
+      const children = await db
+        .select({
+          id: AlbumTable.id,
+          name: AlbumTable.name,
+          desc: AlbumTable.desc,
+          cover: AlbumTable.cover,
+          parentId: AlbumTable.parentId,
+          libraryId: AlbumTable.libraryId,
+          dir: AlbumTable.dir,
+          createdAt: AlbumTable.createdAt,
+          updatedAt: AlbumTable.updatedAt,
+        })
+        .from(AlbumTable)
+        .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
+        .where(
+          and(eq(AlbumTable.parentId, albumId), eq(LibraryTable.userId, userId))
+        )
+        .orderBy(desc(AlbumTable.createdAt));
+
       return {
         album: {
           id: albumRow.albumId,
@@ -294,11 +344,12 @@ export const albumRouter = router({
           libraryId: albumRow.libraryId,
         },
         files: files.map((r) => r.file),
+        children,
         tree: {
           rootPath, // absolute media root path
           encodedRoot, // base64url(rootPath) for /root/:encodedRoot
           relSegments, // ['nested','dir', ...]
-          ancestors: lineage, // [{ id, parent_id, name, dir }, ...] root->current
+          ancestors, // [{ id, parentId, name, dir }, ...] root->current
         },
       };
     }),
@@ -309,7 +360,7 @@ export const albumRouter = router({
         libraryId: z.string(),
         dir: z.string(),
         parentId: z.string().nullable(),
-      }),
+      })
     )
     .mutation(async ({ input }) => {
       await db
@@ -318,8 +369,8 @@ export const albumRouter = router({
         .where(
           and(
             eq(AlbumTable.libraryId, input.libraryId),
-            eq(AlbumTable.dir, input.dir),
-          ),
+            eq(AlbumTable.dir, input.dir)
+          )
         );
     }),
 });

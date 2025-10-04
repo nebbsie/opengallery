@@ -1,5 +1,5 @@
 import { accessSync, constants, existsSync, mkdirSync } from "fs";
-import pino, { LoggerOptions, Logger as PinoLogger } from "pino";
+import pino, { Logger as PinoLogger, LoggerOptions } from "pino";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -73,34 +73,33 @@ export class Logger {
     await this.config.addToDb(type, line, this.config.name);
   }
 
-  async info(msg: string, data?: Record<string, any>) {
+  info(msg: string, data?: Record<string, any>) {
     this.logger.info(data || {}, msg);
-    await this.saveToDb("info", msg, data);
+    this.saveToDb("info", msg, data);
   }
 
-  async error(msg: string, err?: Error | Record<string, any> | unknown) {
+  error(msg: string, err?: Error | Record<string, any> | unknown) {
     if (err instanceof Error) {
       this.logger.error({ err, stack: err.stack }, msg);
-      await this.saveToDb("error", msg, {
+      this.saveToDb("error", msg, {
         error: err.message,
         stack: err.stack,
       });
     } else if (err && typeof err === "object") {
       this.logger.error(err, msg);
-      await this.saveToDb("error", msg, err as Record<string, any>);
+      this.saveToDb("error", msg, err as Record<string, any>);
     } else {
       this.logger.error({}, msg);
-      await this.saveToDb("error", msg);
+      this.saveToDb("error", msg);
     }
   }
 
-  async debug(msg: string, data?: Record<string, any>) {
+  debug(msg: string, data?: Record<string, any>) {
     this.logger.debug(data || {}, msg);
-    await this.saveToDb("debug", msg, data);
   }
 
-  async warn(msg: string, data?: Record<string, any>) {
+  warn(msg: string, data?: Record<string, any>) {
     this.logger.warn(data || {}, msg);
-    await this.saveToDb("warn", msg, data);
+    this.saveToDb("warn", msg, data);
   }
 }

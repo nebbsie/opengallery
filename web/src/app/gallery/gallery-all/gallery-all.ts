@@ -1,15 +1,13 @@
-import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { environment } from '@env/environment';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { HlmIcon } from '@spartan-ng/helm/icon';
-import { lucideCirclePlay, lucideCirclePause } from '@ng-icons/lucide';
-import { NgOptimizedImage } from '@angular/common';
+import { provideIcons } from '@ng-icons/core';
+import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
+import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 
 @Component({
   selector: 'app-gallery-all',
@@ -19,7 +17,7 @@ import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail
       lucideCirclePause,
     }),
   ],
-  imports: [HlmSpinner, ErrorAlert, AssetThumbnail],
+  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, ThumbnailGrid],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -28,12 +26,13 @@ import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail
     @if (files.isError()) {
       <app-error-alert [error]="files.error()" />
     }
+
     @if (files.isSuccess()) {
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
+      <app-thumbnail-grid>
         @for (asset of files.data(); track asset.id) {
-          <app-asset-thumbnail [asset]="asset" />
+          <app-asset-thumbnail from="/" [asset]="asset" />
         }
-      </div>
+      </app-thumbnail-grid>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -20,7 +20,6 @@ import { lucideRefreshCw } from '@ng-icons/lucide';
   template: `
     <div class="mb-1 flex justify-between">
       <h1 class="text-foreground sticky mb-2 block text-lg font-bold">Logs</h1>
-
       <button class="text-foreground" (click)="refresh()" hlmBtn variant="ghost" size="icon">
         <ng-icon hlm size="sm" name="lucideRefreshCw" />
       </button>
@@ -30,8 +29,8 @@ import { lucideRefreshCw } from '@ng-icons/lucide';
       <hlm-spinner />
     }
 
-    @if (logsResult.isError()) {
-      <app-error-alert [error]="logsResult.error()" />
+    @if (logsResult.isError() && logsResult.error(); as error) {
+      <app-error-alert [error]="error" />
     }
 
     @if (logsResult.isSuccess()) {
@@ -46,7 +45,7 @@ import { lucideRefreshCw } from '@ng-icons/lucide';
             [class.text-red-600]="log.type === 'error'"
             [class.text-blue-600]="log.type === 'debug'"
           >
-            <div class="flex shrink-0 items-center gap-1">
+            <div class="flex shrink-0 items-center gap-1 text-xs">
               <span class="text-gray-500">[{{ log.createdAt | date: 'dd-MM-yy HH:mm:ss' }}]</span>
               <span class="font-bold uppercase"> [{{ log.service }}] </span>
             </div>
@@ -67,6 +66,7 @@ export class SettingsLogs {
   logsResult = injectQuery(() => ({
     queryKey: [CacheKey.Logs],
     queryFn: async () => this.trpc.log.get.query(),
+    refetchInterval: 5_000,
   }));
 
   refresh(): void {

@@ -4,17 +4,17 @@ import {
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
 import "dotenv/config";
+import { and, eq } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
+import * as fs from "node:fs";
+import path from "path";
 import { auth } from "./auth/auth.js";
-import { createContext } from "./trpc.js";
 import { db } from "./db/index.js";
 import { FileTable, FileVariantTable } from "./db/schema.js";
 import { logger } from "./logger.js";
-import { appRouter, type AppRouter } from "./router.js";
-import { and, eq } from "drizzle-orm";
-import path from "path";
-import * as fs from "node:fs";
 import metricsPlugin from "./metrics.js";
+import { appRouter, type AppRouter } from "./router.js";
+import { createContext } from "./trpc.js";
 
 const server: FastifyInstance = Fastify();
 
@@ -207,7 +207,7 @@ const start = async () => {
   try {
     const port = process.env["PORT"] ? parseInt(process.env["PORT"], 10) : 3000;
     const host = process.env["HOST"] ?? "0.0.0.0";
-    logger.info(`Starting server on ${host}:${port} ...`);
+    logger.info(`Starting server on ${host}:${port}...`);
     logger.info(
       `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
     );

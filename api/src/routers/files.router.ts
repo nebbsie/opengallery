@@ -1,15 +1,19 @@
-import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { TRPCError } from "@trpc/server";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
+  AlbumFileTable,
+  AlbumTable,
   FileTable,
   FileVariantTable,
+  GeoLocationTable,
+  ImageMetadataTable,
   LibraryFileTable,
   LibraryTable,
 } from "../db/schema.js";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { TRPCError } from "@trpc/server";
 import { TasksQueue } from "../redis.js";
+import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
 export const filesRouter = router({
   create: internalProcedure
@@ -21,8 +25,8 @@ export const filesRouter = router({
           type: z.enum(["image", "video"]),
           mime: z.string(),
           size: z.number(),
-        }),
-      ),
+        })
+      )
     )
     .mutation(async ({ input }) => {
       const addedFiles = await db.insert(FileTable).values(input).returning();
@@ -47,16 +51,194 @@ export const filesRouter = router({
   getFilesInDir: privateProcedure
     .input(z.string())
     .mutation(({ input }) =>
-      db.select().from(FileTable).where(eq(FileTable.dir, input)),
+      db.select().from(FileTable).where(eq(FileTable.dir, input))
     ),
 
   removeFilesById: internalProcedure
     .input(z.array(z.string()))
     .mutation(({ input }) =>
-      db.delete(FileTable).where(inArray(FileTable.id, input)),
+      db.delete(FileTable).where(inArray(FileTable.id, input))
     ),
 
   getAllFiles: internalProcedure.query(() => db.select().from(FileTable)),
+
+  viewFile: privateProcedure
+    .input(
+      z.object({
+        fileId: z.string(),
+        albumId: z.string().uuid().optional(),
+      })
+    )
+    .query(async ({ input, ctx: { userId } }) => {
+      const { fileId, albumId } = input;
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+
+      // Load the file and ensure it exists and is an image
+      const [file] = await db
+        .select()
+        .from(FileTable)
+        .where(eq(FileTable.id, fileId))
+        .limit(1);
+
+      if (!file) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `File not found: ${fileId}`,
+        });
+      }
+
+      if (file.type !== "image") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "viewFile is only supported for images.",
+        });
+      }
+
+      // Ensure the user has this file in their library and it's not deleted
+      const [link] = await db
+        .select({ libraryFileId: LibraryFileTable.id })
+        .from(LibraryFileTable)
+        .innerJoin(
+          LibraryTable,
+          eq(LibraryTable.id, LibraryFileTable.libraryId)
+        )
+        .where(
+          and(
+            eq(LibraryFileTable.fileId, file.id),
+            eq(LibraryTable.userId, userId),
+            isNull(LibraryFileTable.deletedAt)
+          )
+        )
+        .limit(1);
+
+      if (!link) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this file.",
+        });
+      }
+
+      // If albumId provided, ensure album belongs to user and file is in album
+      if (albumId) {
+        const [albumRow] = await db
+          .select({ id: AlbumTable.id, libraryUserId: LibraryTable.userId })
+          .from(AlbumTable)
+          .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
+          .where(eq(AlbumTable.id, albumId))
+          .limit(1);
+
+        if (!albumRow) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Album not found",
+          });
+        }
+        if (albumRow.libraryUserId !== userId) {
+          throw new TRPCError({ code: "FORBIDDEN" });
+        }
+
+        const [membership] = await db
+          .select({ id: AlbumFileTable.id })
+          .from(AlbumFileTable)
+          .where(
+            and(
+              eq(AlbumFileTable.albumId, albumId),
+              eq(AlbumFileTable.fileId, file.id)
+            )
+          )
+          .limit(1);
+
+        if (!membership) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Specified file is not part of the provided album",
+          });
+        }
+      }
+
+      // Load image metadata and geo location
+      const [imageMetadata] = await db
+        .select()
+        .from(ImageMetadataTable)
+        .where(eq(ImageMetadataTable.fileId, file.id))
+        .limit(1);
+
+      const [geoLocation] = await db
+        .select()
+        .from(GeoLocationTable)
+        .where(eq(GeoLocationTable.fileId, file.id))
+        .limit(1);
+
+      // Compute prev/next IDs using the same ordering, optionally scoped to an album
+      const orderedImageIds = albumId
+        ? await db
+            .select({ id: FileTable.id })
+            .from(AlbumFileTable)
+            .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+            .leftJoin(
+              ImageMetadataTable,
+              eq(ImageMetadataTable.fileId, FileTable.id)
+            )
+            .where(
+              and(
+                eq(AlbumFileTable.albumId, albumId),
+                eq(FileTable.type, "image")
+              )
+            )
+            .orderBy(
+              desc(
+                sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
+              )
+            )
+        : await db
+            .select({ id: FileTable.id })
+            .from(LibraryFileTable)
+            .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
+            .innerJoin(
+              LibraryTable,
+              eq(LibraryTable.id, LibraryFileTable.libraryId)
+            )
+            .leftJoin(
+              ImageMetadataTable,
+              eq(ImageMetadataTable.fileId, FileTable.id)
+            )
+            .where(
+              and(
+                eq(LibraryTable.userId, userId),
+                isNull(LibraryFileTable.deletedAt),
+                eq(FileTable.type, "image")
+              )
+            )
+            .orderBy(
+              desc(
+                sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
+              )
+            );
+
+      const ids = orderedImageIds.map((r) => r.id);
+      const currentIndex = ids.indexOf(file.id);
+      if (currentIndex === -1) {
+        // Shouldn't happen due to access check, but guard anyway
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "File not found in user's library.",
+        });
+      }
+
+      const prevId = currentIndex > 0 ? ids[currentIndex - 1] : null;
+      const nextId =
+        currentIndex < ids.length - 1 ? ids[currentIndex + 1] : null;
+
+      return {
+        file,
+        imageMetadata: imageMetadata ?? null,
+        geoLocation: geoLocation ?? null,
+        prevId,
+        nextId,
+      };
+    }),
 
   saveVariants: internalProcedure
     .input(
@@ -71,11 +253,11 @@ export const filesRouter = router({
               name: z.string(), // e.g. `${base}__thumb.avif`
               mime: z.string(),
               size: z.number().int().nonnegative(),
-            }),
+            })
           )
           .min(1)
           .max(2),
-      }),
+      })
     )
     .mutation(async ({ input }) => {
       const { originalFileId, variants } = input;
@@ -138,8 +320,8 @@ export const filesRouter = router({
       .where(
         and(
           eq(FileVariantTable.fileId, file.id),
-          inArray(FileVariantTable.type, ["thumbnail", "optimised"]),
-        ),
+          inArray(FileVariantTable.type, ["thumbnail", "optimised"])
+        )
       );
 
     const thumbnail = variants.find((v) => v.type === "thumbnail") ?? null;
@@ -149,40 +331,48 @@ export const filesRouter = router({
   }),
 
   getUsersFiles: privateProcedure
-    .input(z.enum(["all", "video", "photo"]))
+    .input(z.enum(["all", "video", "image"]))
     .query(async ({ ctx: { userId }, input }) => {
-      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
-
-      const rows = await db
-        .select({
-          file: FileTable,
-          libraryId: LibraryTable.id,
-          libraryFileId: LibraryFileTable.id,
-        })
-        .from(LibraryFileTable)
-        .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
-        .innerJoin(
-          LibraryTable,
-          eq(LibraryTable.id, LibraryFileTable.libraryId),
-        )
-        .where(
-          input === "all"
-            ? and(
-                eq(LibraryTable.userId, userId),
-                isNull(LibraryFileTable.deletedAt),
-              )
-            : and(
-                eq(LibraryTable.userId, userId),
-                isNull(LibraryFileTable.deletedAt),
-                eq(FileTable.type, input === "photo" ? "image" : "video"),
-              ),
-        )
-        .orderBy(desc(FileTable.createdAt));
-
-      return rows.map((r) => ({
-        ...r.file,
-        libraryId: r.libraryId,
-        libraryFileId: r.libraryFileId,
-      }));
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+      return getUsersFiles(userId, input);
     }),
 });
+
+const getUsersFiles = async (
+  userId: string,
+  filter: "all" | "video" | "image"
+) => {
+  const rows = await db
+    .select({
+      file: FileTable,
+      libraryId: LibraryTable.id,
+      libraryFileId: LibraryFileTable.id,
+    })
+    .from(LibraryFileTable)
+    .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
+    .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
+    .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+    .where(
+      filter === "all"
+        ? and(
+            eq(LibraryTable.userId, userId),
+            isNull(LibraryFileTable.deletedAt)
+          )
+        : and(
+            eq(LibraryTable.userId, userId),
+            isNull(LibraryFileTable.deletedAt),
+            eq(FileTable.type, filter)
+          )
+    )
+    .orderBy(
+      desc(sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`)
+    );
+
+  return rows.map((r) => ({
+    ...r.file,
+    libraryId: r.libraryId,
+    libraryFileId: r.libraryFileId,
+  }));
+};

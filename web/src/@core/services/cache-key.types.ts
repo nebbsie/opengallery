@@ -7,4 +7,5 @@ export const CacheKey = {
   AlbumsAll: 'albums-all',
   AlbumSingle: 'albums-single',
   Logs: 'logs',
+  AssetSingle: 'asset-single',
 };

@@ -202,11 +202,9 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       })),
     );
 
-    const albumName = basename(folder);
-
     //check if file is linked to an album based on album dir == file dir
     //if not album, generate one first for this folder dir
-    const [album] = await trpc.album.getAlbumByDir.query(folder);
+    await trpc.album.getAlbumByDir.query(folder);
 
     const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
     // Ensure album exists for this folder (this will also ensure parents exist)

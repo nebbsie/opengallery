@@ -53,33 +53,32 @@ export class Logger {
             return;
         await this.config.addToDb(type, line, this.config.name);
     }
-    async info(msg, data) {
+    info(msg, data) {
         this.logger.info(data || {}, msg);
-        await this.saveToDb("info", msg, data);
+        this.saveToDb("info", msg, data);
     }
-    async error(msg, err) {
+    error(msg, err) {
         if (err instanceof Error) {
             this.logger.error({ err, stack: err.stack }, msg);
-            await this.saveToDb("error", msg, {
+            this.saveToDb("error", msg, {
                 error: err.message,
                 stack: err.stack,
             });
         }
         else if (err && typeof err === "object") {
             this.logger.error(err, msg);
-            await this.saveToDb("error", msg, err);
+            this.saveToDb("error", msg, err);
         }
         else {
             this.logger.error({}, msg);
-            await this.saveToDb("error", msg);
+            this.saveToDb("error", msg);
         }
     }
-    async debug(msg, data) {
+    debug(msg, data) {
         this.logger.debug(data || {}, msg);
-        await this.saveToDb("debug", msg, data);
     }
-    async warn(msg, data) {
+    warn(msg, data) {
         this.logger.warn(data || {}, msg);
-        await this.saveToDb("warn", msg, data);
+        this.saveToDb("warn", msg, data);
     }
 }

@@ -7,8 +7,8 @@ export declare class Logger {
     private readonly logger;
     constructor(config: LoggerConfig);
     private saveToDb;
-    info(msg: string, data?: Record<string, any>): Promise<void>;
-    error(msg: string, err?: Error | Record<string, any> | unknown): Promise<void>;
-    debug(msg: string, data?: Record<string, any>): Promise<void>;
-    warn(msg: string, data?: Record<string, any>): Promise<void>;
+    info(msg: string, data?: Record<string, any>): void;
+    error(msg: string, err?: Error | Record<string, any> | unknown): void;
+    debug(msg: string, data?: Record<string, any>): void;
+    warn(msg: string, data?: Record<string, any>): void;
 }
