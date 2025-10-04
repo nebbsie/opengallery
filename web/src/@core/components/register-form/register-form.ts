@@ -15,14 +15,17 @@ import { Logo } from '@core/components/logo/logo';
 import { HlmAlert, HlmAlertDescription, HlmAlertIcon, HlmAlertTitle } from '@spartan-ng/helm/alert';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCircleAlert } from '@ng-icons/lucide';
+import { lucideCircleAlert, lucideInfo } from '@ng-icons/lucide';
 import { Auth } from '@core/services/auth/auth';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { CacheKey } from '@core/services/cache-key.types';
+import { injectTrpc } from '@core/services/trpc';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-register-form',
-  providers: [provideIcons({ lucideCircleAlert })],
+  providers: [provideIcons({ lucideCircleAlert, lucideInfo })],
   imports: [
     HlmCard,
     HlmCardHeader,
@@ -45,83 +48,97 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
     ReactiveFormsModule,
   ],
   template: `
-    <div class="mb-6 flex justify-center">
-      <app-logo />
-    </div>
-    <section class="w-full" hlmCard>
-      <div hlmCardHeader>
-        <h3 hlmCardTitle>Create an account</h3>
-        <p hlmCardDescription>Enter your details below to create your account</p>
+    @if (isFirstUser.isSuccess()) {
+      <div class="mb-6 flex justify-center">
+        <app-logo />
       </div>
-
-      <div hlmCardContent>
-        <form>
-          <div class="flex flex-col gap-6">
-            <div class="grid gap-2">
-              <label hlmLabel for="name">Name</label>
-              <input
-                [formControl]="nameControl"
-                type="text"
-                id="name"
-                placeholder="John Smith"
-                required
-                hlmInput
-              />
-            </div>
-
-            <div class="grid gap-2">
-              <label hlmLabel for="email">Email</label>
-              <input
-                [formControl]="emailControl"
-                type="email"
-                id="email"
-                placeholder="john@smith.com"
-                required
-                hlmInput
-              />
-            </div>
-
-            <div class="grid gap-2">
-              <label hlmLabel for="password">Password</label>
-              <input
-                [formControl]="passwordControl"
-                type="password"
-                id="password"
-                required
-                hlmInput
-              />
-            </div>
-          </div>
-        </form>
-      </div>
-
-      <div hlmCardFooter class="flex-col gap-2">
-        <button [disabled]="form.invalid" hlmBtn type="submit" class="w-full" (click)="register()">
-          @if (loading()) {
-            <hlm-spinner class="size-6" />
-          } @else {
-            Sign Up
-          }
-        </button>
-        <a class="text-sm hover:underline" routerLink="/login">Already have an account? Log in</a>
-      </div>
-
-      @if (error()) {
-        <div hlmCardContent>
-          <div hlmAlert variant="destructive">
-            <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
-            <h4 hlmAlertTitle>Failed to register</h4>
-            <div hlmAlertDescription>
-              <p>Please check your details and try again.</p>
-            </div>
-          </div>
+      <section class="w-full" hlmCard>
+        <div hlmCardHeader>
+          <h3 hlmCardTitle>Create an account</h3>
+          <p hlmCardDescription>Enter your details below to create your account</p>
         </div>
-      }
-    </section>
-  `,
-  styles: `
-    :host {
-      display: block;
+
+        <div hlmCardContent>
+          <form>
+            <div class="flex flex-col gap-6">
+              <div class="grid gap-2">
+                <label hlmLabel for="name">Name</label>
+                <input
+                  [formControl]="nameControl"
+                  type="text"
+                  id="name"
+                  placeholder="John Smith"
+                  required
+                  hlmInput
+                />
+              </div>
+
+              <div class="grid gap-2">
+                <label hlmLabel for="email">Email</label>
+                <input
+                  [formControl]="emailControl"
+                  type="email"
+                  id="email"
+                  placeholder="john@smith.com"
+                  required
+                  hlmInput
+                />
+              </div>
+
+              <div class="grid gap-2">
+                <label hlmLabel for="password">Password</label>
+                <input
+                  [formControl]="passwordControl"
+                  type="password"
+                  id="password"
+                  required
+                  hlmInput
+                />
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <div hlmCardFooter class="flex-col gap-2">
+          <button
+            [disabled]="form.invalid"
+            hlmBtn
+            type="submit"
+            class="w-full"
+            (click)="register()"
+          >
+            @if (loading()) {
+              <hlm-spinner class="size-6" />
+            } @else {
+              Sign Up
+            }
+          </button>
+
+          @if (!isFirstUser.data()) {
+            <a class="text-sm hover:underline" routerLink="/login"
+              >Already have an account? Log in</a
+            >
+          } @else {
+            <div hlmAlert>
+              <ng-icon hlm hlmAlertIcon name="lucideInfo" />
+              <h4 hlmAlertTitle>First-Time Setup</h4>
+              <p hlmAlertDescription>Your first account will automatically become the admin.</p>
+            </div>
+          }
+        </div>
+
+        @if (error()) {
+          <div hlmCardContent>
+            <div hlmAlert variant="destructive">
+              <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
+              <h4 hlmAlertTitle>Failed to register</h4>
+              <div hlmAlertDescription>
+                <p>Please check your details and try again.</p>
+              </div>
+            </div>
+          </div>
+        }
+      </section>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -129,6 +146,12 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
 export class RegisterForm {
   private auth = inject(Auth);
   private router = inject(Router);
+  private trpc = injectTrpc();
+
+  isFirstUser = injectQuery(() => ({
+    queryKey: [CacheKey.IsFirstUser],
+    queryFn: async () => this.trpc.users.isFirstSignup.query(),
+  }));
 
   error = signal(false);
   loading = signal(false);

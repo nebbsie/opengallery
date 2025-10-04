@@ -12,6 +12,7 @@ import { logRouter } from "./routers/log.router.js";
 import { mediaSourcesSettingsRouter } from "./routers/media-sources-settings.router.js";
 import { settingsRouter } from "./routers/settings.router.js";
 import { router } from "./trpc.js";
+import { usersRouter } from "./routers/users.router.js";
 
 export const appRouter = router({
   health: healthRouter,
@@ -27,6 +28,7 @@ export const appRouter = router({
   settings: settingsRouter,
   imageMetadata: imageMetadataRouter,
   geoLocation: geoLocationRouter,
+  users: usersRouter,
 });
 
 export type AppRouter = typeof appRouter;

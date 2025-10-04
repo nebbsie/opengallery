@@ -8,4 +8,6 @@ export const CacheKey = {
   AlbumSingle: 'albums-single',
   Logs: 'logs',
   AssetSingle: 'asset-single',
+  IsFirstUser: 'is-first-user',
+  AllowsUserSelfRegistration: 'allows-user-self-registration',
 };

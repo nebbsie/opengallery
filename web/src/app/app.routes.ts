@@ -1,18 +1,20 @@
 import { Routes } from '@angular/router';
 import { AuthGuard } from '@core/guards/auth-guard';
 import { LoggedOutOnlyGuard } from '@core/guards/logged-out-only-guard';
+import { LoginGuard } from '@core/guards/login-guard';
+import { RegisterGuard } from '@core/guards/register-guard';
 
 export const routes: Routes = [
   {
     path: 'login',
     title: 'Login - Open Gallery',
-    canActivate: [LoggedOutOnlyGuard],
+    canActivate: [LoggedOutOnlyGuard, LoginGuard],
     loadComponent: () => import('./login/login').then((c) => c.Login),
   },
   {
     path: 'register',
     title: 'Register - Open Gallery',
-    canActivate: [LoggedOutOnlyGuard],
+    canActivate: [LoggedOutOnlyGuard, RegisterGuard],
     loadComponent: () => import('./register/register').then((c) => c.Register),
   },
   {

@@ -19,6 +19,9 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { lucideCircleAlert } from '@ng-icons/lucide';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { injectTrpc } from '@core/services/trpc';
+import { CacheKey } from '@core/services/cache-key.types';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-login-form',
@@ -45,72 +48,83 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
     HlmSpinner,
   ],
   template: `
-    <div class="mb-6 flex justify-center">
-      <app-logo />
-    </div>
-    <section class="w-full" hlmCard>
-      <div hlmCardHeader>
-        <h3 hlmCardTitle>Login to your account</h3>
-        <p hlmCardDescription>Enter your email below to login to your account</p>
+    @if (allowsRegistration.isSuccess()) {
+      <div class="mb-6 flex justify-center">
+        <app-logo />
       </div>
-
-      <div hlmCardContent>
-        <form>
-          <div class="flex flex-col gap-6">
-            <div class="grid gap-2">
-              <label hlmLabel for="email">Email</label>
-              <input
-                [formControl]="emailControl"
-                type="email"
-                id="email"
-                placeholder="john@smith.com"
-                required
-                hlmInput
-              />
-            </div>
-
-            <div class="grid gap-2">
-              <div class="flex items-center">
-                <label hlmLabel for="password">Password</label>
-              </div>
-              <input [formControl]="passwordControl" type="password" id="password" hlmInput />
-            </div>
-          </div>
-        </form>
-      </div>
-
-      <div hlmCardFooter class="flex-col gap-2">
-        <button [disabled]="form.invalid" hlmBtn type="submit" class="w-full" (click)="login()">
-          @if (loading()) {
-            <hlm-spinner class="size-6" />
-          } @else {
-            Login
-          }
-        </button>
-        <a class="text-sm hover:underline" routerLink="/register">Need an account? Sign up</a>
-      </div>
-
-      @if (error()) {
-        <div hlmCardContent>
-          <div hlmAlert variant="destructive">
-            <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
-            <h4 hlmAlertTitle>Failed to login</h4>
-            <div hlmAlertDescription>
-              <p>Please check your details and try again.</p>
-            </div>
-          </div>
+      <section class="w-full" hlmCard>
+        <div hlmCardHeader>
+          <h3 hlmCardTitle>Login to your account</h3>
+          <p hlmCardDescription>Enter your email below to login to your account</p>
         </div>
-      }
-    </section>
+
+        <div hlmCardContent>
+          <form>
+            <div class="flex flex-col gap-6">
+              <div class="grid gap-2">
+                <label hlmLabel for="email">Email</label>
+                <input
+                  [formControl]="emailControl"
+                  type="email"
+                  id="email"
+                  placeholder="john@smith.com"
+                  required
+                  hlmInput
+                />
+              </div>
+
+              <div class="grid gap-2">
+                <div class="flex items-center">
+                  <label hlmLabel for="password">Password</label>
+                </div>
+                <input [formControl]="passwordControl" type="password" id="password" hlmInput />
+              </div>
+            </div>
+          </form>
+        </div>
+
+        <div hlmCardFooter class="flex-col gap-2">
+          <button [disabled]="form.invalid" hlmBtn type="submit" class="w-full" (click)="login()">
+            @if (loading()) {
+              <hlm-spinner class="size-6" />
+            } @else {
+              Login
+            }
+          </button>
+
+          @if (allowsRegistration.data()) {
+            <a class="text-sm hover:underline" routerLink="/register">Need an account? Sign up</a>
+          }
+        </div>
+
+        @if (error()) {
+          <div hlmCardContent>
+            <div hlmAlert variant="destructive">
+              <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
+              <h4 hlmAlertTitle>Failed to login</h4>
+              <div hlmAlertDescription>
+                <p>Please check your details and try again.</p>
+              </div>
+            </div>
+          </div>
+        }
+      </section>
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class LoginForm {
   private auth = inject(Auth);
   private router = inject(Router);
+  private trpc = injectTrpc();
 
   error = signal(false);
   loading = signal(false);
+
+  allowsRegistration = injectQuery(() => ({
+    queryKey: [CacheKey.AllowsUserSelfRegistration],
+    queryFn: async () => this.trpc.settings.allowsSelfRegistration.query(),
+  }));
 
   emailControl = new FormControl<null | string>(null, [Validators.email, Validators.required]);
   passwordControl = new FormControl<null | string>(null, [

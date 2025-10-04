@@ -3,17 +3,32 @@ import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
-import { lucideHardDrive, lucideLogs } from '@ng-icons/lucide';
+import { lucideHardDrive, lucideLogs, lucideUsers } from '@ng-icons/lucide';
 
 @Component({
   selector: 'app-side-nav-settings',
   imports: [HlmButton, HlmIcon, NgIcon, RouterLink, RouterLinkActive],
-  providers: [provideIcons({ lucideHardDrive, lucideLogs })],
+  providers: [provideIcons({ lucideHardDrive, lucideLogs, lucideUsers })],
   host: {
     class: 'flex flex-col w-full',
   },
   template: `
     <p class="mb-2 font-medium">Settings</p>
+
+    <a
+      class="mb-1"
+      hlmBtn
+      routerLink="/settings/users"
+      routerLinkActive="active"
+      #rlaUsers="routerLinkActive"
+      [variant]="rlaUsers.isActive ? 'menu_active' : 'menu'"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="handleClicked()"
+    >
+      <ng-icon hlm size="sm" name="lucideUsers" />
+      Users
+    </a>
+
     <a
       class="mb-1"
       hlmBtn

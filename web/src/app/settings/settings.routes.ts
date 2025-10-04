@@ -19,6 +19,10 @@ export const routes: Routes = [
         path: 'logs',
         loadComponent: () => import('./settings-logs/settings-logs').then((c) => c.SettingsLogs),
       },
+      {
+        path: 'users',
+        loadComponent: () => import('./settings-users/settings-users').then((c) => c.SettingsUsers),
+      },
     ],
   },
 ];
