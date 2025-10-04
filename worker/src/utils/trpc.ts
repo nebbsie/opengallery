@@ -1,7 +1,7 @@
 import type { AppRouter } from '@opengallery/types';
 import { createTRPCProxyClient, httpBatchLink } from '@trpc/client';
-import superjson from 'superjson';
 import type { inferRouterInputs, inferRouterOutputs } from '@trpc/server';
+import superjson from 'superjson';
 
 const API_URL = process.env['API_URL'];
 

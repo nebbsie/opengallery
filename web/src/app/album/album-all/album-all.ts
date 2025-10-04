@@ -12,19 +12,19 @@ import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
   selector: 'app-album-all',
   imports: [ErrorAlert, HlmSpinner, AlbumThumbnail, ThumbnailGrid, AlbumToolbar],
   template: `
-    @if (albums.isPending()) {
+    @if (response.isPending()) {
       <hlm-spinner />
     }
 
-    @if (albums.isError() && albums.error(); as error) {
+    @if (response.isError() && response.error(); as error) {
       <app-error-alert [error]="error" />
     }
 
-    @if (albums.isSuccess()) {
+    @if (response.isSuccess()) {
       <app-album-toolbar [items]="[]" />
 
       <app-thumbnail-grid>
-        @for (album of albums.data(); track album.id) {
+        @for (album of response.data(); track album.id) {
           <app-album-thumbnail [album]="album" />
         }
       </app-thumbnail-grid>
@@ -35,7 +35,7 @@ import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 export class AlbumAll {
   private readonly trpc = injectTrpc();
 
-  albums = injectQuery(() => ({
+  response = injectQuery(() => ({
     queryKey: [CacheKey.AlbumsAll],
     queryFn: async () => this.trpc.album.getUsersAlbums.query(),
   }));

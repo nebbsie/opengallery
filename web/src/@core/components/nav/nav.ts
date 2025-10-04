@@ -1,4 +1,4 @@
-import { NgOptimizedImage, UpperCasePipe } from '@angular/common';
+import { NgOptimizedImage } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Logo } from '@core/components/logo/logo';
@@ -8,19 +8,19 @@ import { Sidebar } from '@core/services/sidebar/sidebar';
 import { Theme } from '@core/services/theme/theme';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideCrown,
   lucideLogOut,
   lucideMenu,
   lucideMoon,
   lucideSearch,
   lucideSettings,
+  lucideSun,
   lucideUpload,
-  lucideCrown,
 } from '@ng-icons/lucide';
 import { BrnPopover, BrnPopoverContent, BrnPopoverTrigger } from '@spartan-ng/brain/popover';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmPopoverContent } from '@spartan-ng/helm/popover';
-import { HlmBadge } from '@spartan-ng/helm/badge';
 
 @Component({
   selector: 'app-nav',
@@ -33,6 +33,7 @@ import { HlmBadge } from '@spartan-ng/helm/badge';
       lucideSearch,
       lucideMenu,
       lucideCrown,
+      lucideSun,
     }),
   ],
   imports: [
@@ -78,13 +79,35 @@ import { HlmBadge } from '@spartan-ng/helm/badge';
       <div class="right-4 flex w-80 flex-col gap-4" *brnPopoverContent="let ctx" hlmPopoverContent>
         <div class="flex justify-between">
           <button
-            class="text-foreground"
             hlmBtn
             variant="ghost"
             size="icon"
+            class="relative flex items-center justify-center"
             (click)="toggleTheme()"
           >
-            <ng-icon class="text-foreground" hlm name="lucideMoon" />
+            <ng-icon
+              hlm
+              name="lucideMoon"
+              class="text-foreground absolute transform transition-all duration-200 ease-in-out"
+              [class.opacity-100]="theme.get() === 'light'"
+              [class.opacity-0]="theme.get() === 'dark'"
+              [class.scale-100]="theme.get() === 'light'"
+              [class.scale-75]="theme.get() === 'dark'"
+              [class.rotate-0]="theme.get() === 'light'"
+              [class.rotate-180]="theme.get() === 'dark'"
+            />
+
+            <ng-icon
+              hlm
+              name="lucideSun"
+              class="text-foreground absolute transform transition-all duration-200 ease-in-out"
+              [class.opacity-100]="theme.get() === 'dark'"
+              [class.opacity-0]="theme.get() === 'light'"
+              [class.scale-100]="theme.get() === 'dark'"
+              [class.scale-75]="theme.get() === 'light'"
+              [class.rotate-0]="theme.get() === 'dark'"
+              [class.-rotate-180]="theme.get() === 'light'"
+            />
           </button>
 
           @if (type() === 'admin') {
@@ -133,7 +156,7 @@ import { HlmBadge } from '@spartan-ng/helm/badge';
 })
 export class Nav {
   private readonly auth = inject(Auth);
-  private readonly theme = inject(Theme);
+  protected readonly theme = inject(Theme);
   private readonly sidebar = inject(Sidebar);
   private readonly size = inject(ScreenSize);
 

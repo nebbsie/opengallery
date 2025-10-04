@@ -31,6 +31,10 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       }
 
       @if (data.files.length) {
+        @if (data.children.length !== 0) {
+          <p class="mb-4 text-sm">Items</p>
+        }
+
         <app-thumbnail-grid>
           @for (asset of data.files; track asset.id) {
             <app-asset-thumbnail

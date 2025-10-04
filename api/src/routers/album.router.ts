@@ -175,8 +175,62 @@ export const albumRouter = router({
       .where(and(eq(LibraryTable.userId, userId), isNull(AlbumTable.parentId)))
       .orderBy(desc(AlbumTable.createdAt));
 
+    const albumIds = rows.map((r) => r.album.id);
+
+    if (albumIds.length === 0)
+      return [] as Array<
+        (typeof rows)[number]["album"] & { items: number; cover: string | null }
+      >;
+
+    // Count items per album
+    const itemsRes = await db.execute(
+      sql<{
+        album_id: string;
+        items: number;
+      }>`
+        SELECT af.album_id, COUNT(*)::int AS items
+        FROM ${AlbumFileTable} af
+        WHERE af.album_id IN (${sql.join(albumIds, sql`, `)})
+        GROUP BY af.album_id
+      `
+    );
+    const itemsByAlbum = Object.fromEntries(
+      itemsRes.rows.map((r) => [r["album_id"], Number(r["items"])])
+    ) as Record<string, number>;
+
+    // Compute cover per album: prefer explicit cover, else first image file id
+    const coverRes = await db.execute(
+      sql<{
+        album_id: string;
+        cover: string | null;
+      }>`
+        SELECT a.id AS album_id,
+               COALESCE(
+                 a.cover,
+                 (
+                   SELECT f.id
+                   FROM ${AlbumFileTable} af
+                   JOIN ${FileTable} f ON f.id = af.file_id
+                   WHERE af.album_id = a.id AND f.type = 'image'
+                   ORDER BY f.created_at ASC
+                   LIMIT 1
+                 )
+               ) AS cover
+        FROM ${AlbumTable} a
+        WHERE a.id IN (${sql.join(albumIds, sql`, `)})
+      `
+    );
+    const coverByAlbum = Object.fromEntries(
+      coverRes.rows.map((r) => [
+        r["album_id"],
+        (r["cover"] as string | null) ?? null,
+      ])
+    ) as Record<string, string | null>;
+
     return rows.map((r) => ({
       ...r.album,
+      items: itemsByAlbum[r.album.id] ?? 0,
+      cover: coverByAlbum[r.album.id] ?? r.album.cover ?? null,
     }));
   }),
 
@@ -248,6 +302,7 @@ export const albumRouter = router({
           dir: AlbumTable.dir,
           parentId: AlbumTable.parentId,
           libraryId: AlbumTable.libraryId,
+          albumCover: AlbumTable.cover,
           libraryUserId: LibraryTable.userId,
         })
         .from(AlbumTable)
@@ -335,6 +390,62 @@ export const albumRouter = router({
         )
         .orderBy(desc(AlbumTable.createdAt));
 
+      // Augment children with items count and computed cover
+      const childIds = children.map((c) => c.id);
+      let childrenWithMeta = children as Array<
+        (typeof children)[number] & { items?: number }
+      >;
+      if (childIds.length > 0) {
+        const childItemsRes = await db.execute(
+          sql<{
+            album_id: string;
+            items: number;
+          }>`
+            SELECT af.album_id, COUNT(*)::int AS items
+            FROM ${AlbumFileTable} af
+            WHERE af.album_id IN (${sql.join(childIds, sql`, `)})
+            GROUP BY af.album_id
+          `
+        );
+        const childItemsMap = Object.fromEntries(
+          childItemsRes.rows.map((r) => [r["album_id"], Number(r["items"])])
+        ) as Record<string, number>;
+
+        const childCoverRes = await db.execute(
+          sql<{
+            album_id: string;
+            cover: string | null;
+          }>`
+            SELECT a.id AS album_id,
+                   COALESCE(
+                     a.cover,
+                     (
+                       SELECT f.id
+                       FROM ${AlbumFileTable} af
+                       JOIN ${FileTable} f ON f.id = af.file_id
+                       WHERE af.album_id = a.id AND f.type = 'image'
+                       ORDER BY f.created_at ASC
+                       LIMIT 1
+                     )
+                   ) AS cover
+            FROM ${AlbumTable} a
+            WHERE a.id IN (${sql.join(childIds, sql`, `)})
+          `
+        );
+        const childCoverMap = Object.fromEntries(
+          childCoverRes.rows.map((r) => [
+            r["album_id"],
+            (r["cover"] as string | null) ?? null,
+          ])
+        ) as Record<string, string | null>;
+
+        childrenWithMeta = children.map((c) => ({
+          ...c,
+          items: childItemsMap[c.id] ?? 0,
+          cover: childCoverMap[c.id] ?? c.cover ?? null,
+        }));
+      }
+
       return {
         album: {
           id: albumRow.albumId,
@@ -342,9 +453,10 @@ export const albumRouter = router({
           dir: albumRow.dir,
           parentId: albumRow.parentId,
           libraryId: albumRow.libraryId,
+          items: files.length,
         },
         files: files.map((r) => r.file),
-        children,
+        children: childrenWithMeta,
         tree: {
           rootPath, // absolute media root path
           encodedRoot, // base64url(rootPath) for /root/:encodedRoot

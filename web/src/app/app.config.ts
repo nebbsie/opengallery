@@ -1,23 +1,24 @@
+import { provideHttpClient, withFetch } from '@angular/common/http';
 import {
   ApplicationConfig,
-  provideBrowserGlobalErrorListeners,
-  provideZonelessChangeDetection,
   inject,
   provideAppInitializer,
+  provideBrowserGlobalErrorListeners,
+  provideZonelessChangeDetection,
 } from '@angular/core';
-import { provideRouter, withComponentInputBinding, withInMemoryScrolling } from '@angular/router';
-import { routes } from './app.routes';
 import { provideClientHydration, withEventReplay } from '@angular/platform-browser';
+import { provideRouter, withComponentInputBinding, withInMemoryScrolling } from '@angular/router';
+import { Auth } from '@core/services/auth/auth';
+import { provideBetterAuthClient } from '@core/services/auth/better-auth-client';
+import { Theme } from '@core/services/theme/theme';
 import { provideTrpcClient } from '@core/services/trpc';
-import { provideHttpClient, withFetch } from '@angular/common/http';
+import { environment } from '@env/environment';
 import {
   provideTanStackQuery,
   QueryClient,
   withDevtools,
 } from '@tanstack/angular-query-experimental';
-import { provideBetterAuthClient } from '@core/services/auth/better-auth-client';
-import { environment } from '@env/environment';
-import { Auth } from '@core/services/auth/auth';
+import { routes } from './app.routes';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -41,6 +42,11 @@ export const appConfig: ApplicationConfig = {
     provideBetterAuthClient(environment.api.url),
     provideAppInitializer(() => {
       const timer = performance.now();
+      // Apply theme before app renders (client-only)
+      const theme = inject(Theme);
+      if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+        theme.set(theme.get());
+      }
       inject(Auth).initialize();
       const elapsed = performance.now() - timer;
       console.log(`Auth initialized in ${elapsed.toFixed(2)} ms`);

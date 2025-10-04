@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
@@ -11,6 +11,7 @@ import {
   ImageMetadataTable,
   LibraryFileTable,
   LibraryTable,
+  VideoMetadataTable,
 } from "../db/schema.js";
 import { TasksQueue } from "../redis.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
@@ -56,9 +57,61 @@ export const filesRouter = router({
 
   removeFilesById: internalProcedure
     .input(z.array(z.string()))
-    .mutation(({ input }) =>
-      db.delete(FileTable).where(inArray(FileTable.id, input))
-    ),
+    .mutation(async ({ input }) => {
+      if (!input.length) return [];
+
+      return db.transaction(async (tx) => {
+        // Also delete any variants created for these files
+        const variantRows = await tx
+          .select({ fileId: FileVariantTable.fileId })
+          .from(FileVariantTable)
+          .where(inArray(FileVariantTable.originalFileId, input));
+
+        const variantFileIds = variantRows.map((r) => r.fileId);
+        const idsToDelete = Array.from(new Set([...input, ...variantFileIds]));
+
+        // Remove metadata and relations first to satisfy FKs
+        await tx
+          .update(AlbumTable)
+          .set({ cover: null })
+          .where(inArray(AlbumTable.cover, idsToDelete));
+
+        await tx
+          .delete(VideoMetadataTable)
+          .where(inArray(VideoMetadataTable.fileId, idsToDelete));
+
+        await tx
+          .delete(ImageMetadataTable)
+          .where(inArray(ImageMetadataTable.fileId, idsToDelete));
+
+        await tx
+          .delete(GeoLocationTable)
+          .where(inArray(GeoLocationTable.fileId, idsToDelete));
+
+        await tx
+          .delete(AlbumFileTable)
+          .where(inArray(AlbumFileTable.fileId, idsToDelete));
+
+        await tx
+          .delete(LibraryFileTable)
+          .where(inArray(LibraryFileTable.fileId, idsToDelete));
+
+        await tx
+          .delete(FileVariantTable)
+          .where(
+            or(
+              inArray(FileVariantTable.originalFileId, idsToDelete),
+              inArray(FileVariantTable.fileId, idsToDelete)
+            )
+          );
+
+        // Finally delete the files themselves (originals and variants)
+        return tx
+          .delete(FileTable)
+          .where(inArray(FileTable.id, idsToDelete))
+          .returning({ id: FileTable.id });
+      });
+    }),
 
   getAllFiles: internalProcedure.query(() => db.select().from(FileTable)),
 
