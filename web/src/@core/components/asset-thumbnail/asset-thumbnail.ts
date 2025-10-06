@@ -20,26 +20,19 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   template: `
     @let _asset = asset();
     <a [routerLink]="['/asset', _asset.id]" [queryParams]="{ from: from(), albumId: albumId() }">
-      @if (_asset.type === 'image') {
-        <img
-          class="absolute inset-0 h-full w-full object-cover"
-          [src]="apiUrl + '/asset/' + _asset.id + '/thumbnail'"
-          [alt]="_asset.id"
-          loading="lazy"
-          decoding="async"
-        />
-      } @else if (_asset.type === 'video') {
-        <video
-          #video
-          class="absolute inset-0 h-full w-full object-cover"
-          [src]="apiUrl + '/asset/' + _asset.id"
-          preload="metadata"
-          muted
-          playsInline
-        ></video>
+      <img
+        class="absolute inset-0 h-full w-full object-cover"
+        [src]="apiUrl + '/asset/' + _asset.id + '/thumbnail'"
+        [alt]="_asset.id"
+        loading="lazy"
+        decoding="async"
+      />
 
-        <div class="absolute top-2 right-2">
-          <ng-icon class="size-6 drop-shadow" hlm name="lucideCirclePlay" color="white" />
+      @if (_asset.type === 'video') {
+        <div
+          class="absolute top-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 shadow-md backdrop-blur-sm"
+        >
+          <ng-icon class="h-4 w-4 text-white drop-shadow-md" hlm name="lucideCirclePlay" />
         </div>
       }
     </a>

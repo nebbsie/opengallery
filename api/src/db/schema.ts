@@ -38,6 +38,14 @@ export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
   "edit",
 ]);
 export const LogEnum = pgEnum("log_type", ["error", "info", "warn", "debug"]);
+export const ProcessingStageEnum = pgEnum("processing_stage", [
+  "import",
+  "encode",
+  "metadata",
+  "geolocation",
+  "variants",
+  "ffmpeg",
+]);
 
 export const LibraryTable = pgTable("library", {
   id: id(),
@@ -337,6 +345,20 @@ export const LogTable = pgTable("log", {
   value: text("value").notNull(),
   service: text("service").notNull(),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+});
+
+export const ProcessingIssueTable = pgTable("processing_issue", {
+  id: id(),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
+  stage: ProcessingStageEnum("stage").notNull(),
+  message: text("message").notNull(),
+  extra: jsonb("extra"),
+  attempts: integer("attempts").notNull().default(0),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
 export const AuthSchema = {

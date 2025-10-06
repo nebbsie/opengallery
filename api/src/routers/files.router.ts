@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
@@ -401,16 +401,34 @@ const getUsersFiles = async (
     .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
     .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
     .where(
-      filter === "all"
-        ? and(
-            eq(LibraryTable.userId, userId),
-            isNull(LibraryFileTable.deletedAt)
-          )
-        : and(
-            eq(LibraryTable.userId, userId),
-            isNull(LibraryFileTable.deletedAt),
-            eq(FileTable.type, filter)
-          )
+      and(
+        eq(LibraryTable.userId, userId),
+        isNull(LibraryFileTable.deletedAt),
+        ...(filter === "all" ? [] : [eq(FileTable.type, filter)]),
+        // Only include files that have BOTH thumbnail and optimised variants
+        exists(
+          db
+            .select()
+            .from(FileVariantTable)
+            .where(
+              and(
+                eq(FileVariantTable.originalFileId, FileTable.id),
+                eq(FileVariantTable.type, "thumbnail")
+              )
+            )
+        ),
+        exists(
+          db
+            .select()
+            .from(FileVariantTable)
+            .where(
+              and(
+                eq(FileVariantTable.originalFileId, FileTable.id),
+                eq(FileVariantTable.type, "optimised")
+              )
+            )
+        )
+      )
     )
     .orderBy(
       desc(sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`)

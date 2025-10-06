@@ -3,8 +3,8 @@ import chokidar from 'chokidar';
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
-import { scan } from './scanner.js';
 import { trpc } from '../utils/trpc.js';
+import { scan } from './scanner.js';
 
 interface WatchedPath {
   id: string;
@@ -340,7 +340,7 @@ export class FileWatcherService {
 
     try {
       // Scan the new directory; scanner will also avoid album creation for root
-      await scan(dirPath, userId);
+      await scan(dirPath, userId, { skipAlbumFor: rootPath });
       this.logger.info(`Successfully scanned new directory: ${dirPath}`);
     } catch (error) {
       this.logger.error(`Error processing directory addition ${dirPath}:`, error as Error);

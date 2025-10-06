@@ -10,7 +10,9 @@ import { type RouterOutputs, trpc } from '../utils/trpc.js';
 type File = RouterOutputs['files']['getFileById']['raw'];
 
 async function encodeImage(file: File) {
-  logger.debug(`Encoding image ${file.id} (${file.name})`);
+  logger.info(
+    `[encode:image] start id=${file.id} name="${file.name}" mime=${file.mime} size=${file.size}`,
+  );
 
   // Get upload path from settings
   const settings = await trpc.settings.get.query();
@@ -42,21 +44,36 @@ async function encodeImage(file: File) {
   const thumbPath = join(destDir, thumbName);
   const optPath = join(destDir, optName);
 
-  const thumb = await sharp(input)
-    .rotate()
-    .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
-    .avif({ quality: 45, effort: 4 })
-    .toBuffer({ resolveWithObject: true });
+  let thumb;
+  try {
+    thumb = await sharp(input)
+      .rotate()
+      .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
+      .avif({ quality: 45, effort: 4 })
+      .toBuffer({ resolveWithObject: true });
+  } catch (e) {
+    logger.error(`[encode:image] thumbnail failed for id=${fileId}`, e as Error);
+    throw e;
+  }
 
-  const opt = await sharp(input)
-    .rotate()
-    .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
-    .avif({ quality: 50, effort: 4 })
-    .toBuffer({ resolveWithObject: true });
+  let opt;
+  try {
+    opt = await sharp(input)
+      .rotate()
+      .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
+      .avif({ quality: 50, effort: 4 })
+      .toBuffer({ resolveWithObject: true });
+  } catch (e) {
+    logger.error(`[encode:image] optimise failed for id=${fileId}`, e as Error);
+    throw e;
+  }
 
   writeFileSync(thumbPath, thumb.data);
   writeFileSync(optPath, opt.data);
 
+  logger.debug(
+    `[encode:image] saving variants for id=${fileId} thumbBytes=${thumb.data.length} optBytes=${opt.data.length}`,
+  );
   await trpc.files.saveVariants.mutate({
     originalFileId: fileId, // aligns with procedure definition
     variants: [
@@ -85,6 +102,9 @@ async function encodeImage(file: File) {
   if (width && height) {
     const takenAtFinal =
       takenAt ?? (file.createdAt ? new Date(file.createdAt as unknown as string) : new Date());
+    logger.debug(
+      `[encode:image] saving metadata id=${fileId} width=${width} height=${height} takenAt=${takenAtFinal?.toISOString?.() ?? 'null'}`,
+    );
     await trpc.imageMetadata.save.mutate({
       fileId,
       width,
@@ -96,39 +116,72 @@ async function encodeImage(file: File) {
   // Save geo location if available
   if (lat != null && lon != null) {
     try {
+      logger.debug(`[encode:image] saving geolocation id=${fileId} lat=${lat} lon=${lon}`);
       await trpc.geoLocation.save.mutate({ fileId, lat, lon });
     } catch (e) {
       console.warn('Failed to save geo location for', fileId, e);
     }
   }
+  logger.info(`[encode:image] done id=${file.id}`);
+  try {
+    await trpc.issues.resolveForFile.mutate({ fileId: file.id });
+  } catch {}
 }
 
 export async function encode(fileId: string) {
+  logger.info(`[encode] start fileId=${fileId}`);
   const fileResult = await trpc.files.getFileById.query(fileId);
   if (fileResult.optimized || fileResult.thumbnail) {
+    logger.info(`[encode] already encoded, skipping fileId=${fileId}`);
     return;
   }
 
   const file = fileResult.raw;
   if (file.type === 'image') {
     if (file.mime === 'image/svg+xml') return;
-    await encodeImage(file);
+    try {
+      await encodeImage(file);
+    } catch (e) {
+      logger.error(`[encode] image failed fileId=${fileId}`, e as Error);
+      try {
+        await trpc.issues.record.mutate({
+          fileId,
+          stage: 'encode',
+          message: (e as Error)?.message || 'encode image failed',
+        });
+      } catch {}
+      throw e;
+    }
     return;
   }
 
   if (file.type === 'video') {
-    await encodeVideo(file);
+    try {
+      await encodeVideo(file);
+    } catch (e) {
+      logger.error(`[encode] video failed fileId=${fileId}`, e as Error);
+      try {
+        await trpc.issues.record.mutate({
+          fileId,
+          stage: 'encode',
+          message: (e as Error)?.message || 'encode video failed',
+        });
+      } catch {}
+      throw e;
+    }
     return;
   }
 }
 
 async function runFfmpeg(args: string[], label: string) {
   return new Promise<void>((resolve, reject) => {
+    logger.debug(`[ffmpeg:${label}] spawn ${args.join(' ')}`);
     const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', (d) => (stderr += String(d)));
     child.on('close', (code) => {
       if (code === 0) return resolve();
+      logger.error(`[ffmpeg:${label}] failed code=${code} stderr=${stderr}`);
       reject(new Error(`ffmpeg ${label} failed (code ${code}): ${stderr}`));
     });
     child.on('error', (err) => reject(err));
@@ -136,7 +189,9 @@ async function runFfmpeg(args: string[], label: string) {
 }
 
 async function encodeVideo(file: File) {
-  logger.debug(`Encoding video ${file.id} (${file.name})`);
+  logger.info(
+    `[encode:video] start id=${file.id} name="${file.name}" mime=${file.mime} size=${file.size}`,
+  );
 
   const settings = await trpc.settings.get.query();
   const uploadDir = settings?.uploadPath;
@@ -217,6 +272,9 @@ async function encodeVideo(file: File) {
   const thumbSize = statSync(thumbPath).size;
   const optSize = statSync(optPath).size;
 
+  logger.debug(
+    `[encode:video] saving variants for id=${file.id} thumbBytes=${thumbSize} optBytes=${optSize}`,
+  );
   await trpc.files.saveVariants.mutate({
     originalFileId: file.id,
     variants: [
@@ -243,6 +301,9 @@ async function encodeVideo(file: File) {
   if (width && height) {
     const takenAtFinal =
       takenAt ?? (file.createdAt ? new Date(file.createdAt as unknown as string) : new Date());
+    logger.debug(
+      `[encode:video] saving metadata id=${file.id} width=${width} height=${height} takenAt=${takenAtFinal?.toISOString?.() ?? 'null'}`,
+    );
     await trpc.imageMetadata.save.mutate({
       fileId: file.id,
       width,
@@ -254,9 +315,14 @@ async function encodeVideo(file: File) {
   // Save geo location if available
   if (lat != null && lon != null) {
     try {
+      logger.debug(`[encode:video] saving geolocation id=${file.id} lat=${lat} lon=${lon}`);
       await trpc.geoLocation.save.mutate({ fileId: file.id, lat, lon });
     } catch (e) {
       console.warn('Failed to save geo location for', file.id, e);
     }
   }
+  logger.info(`[encode:video] done id=${file.id}`);
+  try {
+    await trpc.issues.resolveForFile.mutate({ fileId: file.id });
+  } catch {}
 }

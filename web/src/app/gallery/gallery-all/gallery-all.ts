@@ -1,13 +1,15 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
+import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
-import { injectQuery } from '@tanstack/angular-query-experimental';
 import { provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
-import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
-import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
+import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-all',
@@ -17,7 +19,7 @@ import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
       lucideCirclePause,
     }),
   ],
-  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, ThumbnailGrid],
+  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, ThumbnailGrid, RouterLink, HlmButton],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -28,11 +30,20 @@ import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
     }
 
     @if (files.isSuccess()) {
-      <app-thumbnail-grid>
-        @for (asset of files.data(); track asset.id) {
-          <app-asset-thumbnail from="/" [asset]="asset" />
-        }
-      </app-thumbnail-grid>
+      @if (!files.data().length) {
+        <div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
+          <p class="text-muted-foreground text-sm">
+            No assets yet. Add a new source folder to import your library.
+          </p>
+          <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
+        </div>
+      } @else {
+        <app-thumbnail-grid>
+          @for (asset of files.data(); track asset.id) {
+            <app-asset-thumbnail from="/" [asset]="asset" />
+          }
+        </app-thumbnail-grid>
+      }
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
