@@ -1,9 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
-import { type RouterOutputs, trpc } from '../utils/trpc.js';
 import { getExifInfo } from '../utils/exif.js';
+import { getVideoMetadata } from '../utils/ffprobe.js';
 import { logger } from '../utils/logger.js';
+import { type RouterOutputs, trpc } from '../utils/trpc.js';
 
 type File = RouterOutputs['files']['getFileById']['raw'];
 
@@ -108,9 +110,153 @@ export async function encode(fileId: string) {
   }
 
   const file = fileResult.raw;
-  if (file.type !== 'image' || file.mime === 'image/svg+xml') {
+  if (file.type === 'image') {
+    if (file.mime === 'image/svg+xml') return;
+    await encodeImage(file);
     return;
   }
 
-  await encodeImage(file);
+  if (file.type === 'video') {
+    await encodeVideo(file);
+    return;
+  }
+}
+
+async function runFfmpeg(args: string[], label: string) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (d) => (stderr += String(d)));
+    child.on('close', (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(`ffmpeg ${label} failed (code ${code}): ${stderr}`));
+    });
+    child.on('error', (err) => reject(err));
+  });
+}
+
+async function encodeVideo(file: File) {
+  logger.debug(`Encoding video ${file.id} (${file.name})`);
+
+  const settings = await trpc.settings.get.query();
+  const uploadDir = settings?.uploadPath;
+  if (!uploadDir) {
+    throw new Error('uploadPath missing from settings');
+  }
+
+  const inputPath = join(file.dir, file.name);
+  const dt = new Date(file.createdAt || Date.now());
+  const yyyy = String(dt.getUTCFullYear());
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+
+  const destDir = join(uploadDir, 'videos', yyyy, mm, dd, file.id);
+  mkdirSync(destDir, { recursive: true });
+
+  const base = basename(file.name, extname(file.name));
+  const thumbName = `${base}__thumb.jpg`;
+  const optName = `${base}__opt.mp4`;
+  const thumbPath = join(destDir, thumbName);
+  const optPath = join(destDir, optName);
+
+  // Extract metadata (width/height, takenAt, geo) from source video
+  const { width, height, takenAt, lat, lon } = await getVideoMetadata(inputPath);
+
+  // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
+  await runFfmpeg(
+    [
+      '-y',
+      '-i',
+      inputPath,
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '23',
+      '-profile:v',
+      'high',
+      '-level',
+      '4.1',
+      '-pix_fmt',
+      'yuv420p',
+      '-vf',
+      "scale='min(1920,iw)':'-2'",
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
+      '-ac',
+      '2',
+      '-movflags',
+      '+faststart',
+      optPath,
+    ],
+    'optimise',
+  );
+
+  // Poster frame (~1s in), scaled to width 320px
+  await runFfmpeg(
+    [
+      '-y',
+      '-ss',
+      '00:00:01',
+      '-i',
+      inputPath,
+      '-frames:v',
+      '1',
+      '-vf',
+      "scale='320':'-2'",
+      '-q:v',
+      '2',
+      thumbPath,
+    ],
+    'thumbnail',
+  );
+
+  const thumbSize = statSync(thumbPath).size;
+  const optSize = statSync(optPath).size;
+
+  await trpc.files.saveVariants.mutate({
+    originalFileId: file.id,
+    variants: [
+      {
+        type: 'thumbnail',
+        fileType: 'image',
+        dir: destDir,
+        name: thumbName,
+        mime: 'image/jpeg',
+        size: thumbSize,
+      },
+      {
+        type: 'optimised',
+        fileType: 'video',
+        dir: destDir,
+        name: optName,
+        mime: 'video/mp4',
+        size: optSize,
+      },
+    ],
+  });
+
+  // Save video metadata (width, height, takenAt). If no takenAt via tags, fall back to createdAt
+  if (width && height) {
+    const takenAtFinal =
+      takenAt ?? (file.createdAt ? new Date(file.createdAt as unknown as string) : new Date());
+    await trpc.imageMetadata.save.mutate({
+      fileId: file.id,
+      width,
+      height,
+      takenAt: takenAtFinal,
+    });
+  }
+
+  // Save geo location if available
+  if (lat != null && lon != null) {
+    try {
+      await trpc.geoLocation.save.mutate({ fileId: file.id, lat, lon });
+    } catch (e) {
+      console.warn('Failed to save geo location for', file.id, e);
+    }
+  }
 }

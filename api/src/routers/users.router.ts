@@ -11,6 +11,7 @@ import {
   MediaPathTable,
   MediaSettingsTable,
   SharedItemTable,
+  UiSettingsTable,
   UserTable,
 } from "../db/schema.js";
 import { privateProcedure, publicProcedure, router } from "../trpc.js";
@@ -60,6 +61,9 @@ export const usersRouter = router({
         await tx
           .delete(MediaSettingsTable)
           .where(eq(MediaSettingsTable.userId, input.id));
+        await tx
+          .delete(UiSettingsTable)
+          .where(eq(UiSettingsTable.userId, input.id));
         await tx
           .delete(EventLogTable)
           .where(eq(EventLogTable.userId, input.id));

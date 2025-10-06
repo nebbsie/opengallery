@@ -93,7 +93,7 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
         </div>
       }
 
-      <button class="mb-10" hlmBtn variant="outline" (click)="addPath()">Add Another Path</button>
+      <button class="mb-10" hlmBtn variant="outline" (click)="addPath()">Add Path</button>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -5,6 +5,7 @@ import { SideNav } from '@core/components/side-nav/side-nav';
 import { Auth } from '@core/services/auth/auth';
 import { ScreenSize } from '@core/services/screen-size/screen-size';
 import { Sidebar } from '@core/services/sidebar/sidebar';
+import { UiSettingsService } from '@core/services/ui-settings/ui-settings';
 
 @Component({
   selector: 'app-root',
@@ -40,6 +41,8 @@ export class App {
   private auth = inject(Auth);
   protected readonly sidebar = inject(Sidebar);
   protected readonly size = inject(ScreenSize);
+  // Ensure UI settings load on app start by injecting the singleton
+  private readonly uiSettings = inject(UiSettingsService);
 
   isAuthenticated = this.auth.isAuthenticated;
 }

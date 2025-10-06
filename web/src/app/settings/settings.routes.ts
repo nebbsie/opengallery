@@ -23,6 +23,10 @@ export const routes: Routes = [
         path: 'users',
         loadComponent: () => import('./settings-users/settings-users').then((c) => c.SettingsUsers),
       },
+      {
+        path: 'ui',
+        loadComponent: () => import('./settings-ui/settings-ui').then((c) => c.SettingsUi),
+      },
     ],
   },
 ];

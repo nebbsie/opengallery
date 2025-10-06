@@ -11,8 +11,9 @@ import { libraryRouter } from "./routers/library.router.js";
 import { logRouter } from "./routers/log.router.js";
 import { mediaSourcesSettingsRouter } from "./routers/media-sources-settings.router.js";
 import { settingsRouter } from "./routers/settings.router.js";
-import { router } from "./trpc.js";
+import { uiSettingsRouter } from "./routers/ui-settings.router.js";
 import { usersRouter } from "./routers/users.router.js";
+import { router } from "./trpc.js";
 
 export const appRouter = router({
   health: healthRouter,
@@ -29,6 +30,7 @@ export const appRouter = router({
   imageMetadata: imageMetadataRouter,
   geoLocation: geoLocationRouter,
   users: usersRouter,
+  uiSettings: uiSettingsRouter,
 });
 
 export type AppRouter = typeof appRouter;

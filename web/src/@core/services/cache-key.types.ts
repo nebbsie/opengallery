@@ -10,4 +10,5 @@ export const CacheKey = {
   AssetSingle: 'asset-single',
   IsFirstUser: 'is-first-user',
   AllowsUserSelfRegistration: 'allows-user-self-registration',
+  UiSettings: 'ui-settings',
 };

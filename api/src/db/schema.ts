@@ -61,7 +61,7 @@ export const FileTable = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)],
+  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)]
 );
 
 export const LibraryFileTable = pgTable("library_file", {
@@ -99,7 +99,7 @@ export const AlbumTable = pgTable(
       name: "album_parent_fk", // custom constraint name
     }),
     uniqueIndex("album_library_dir_uidx").on(table.libraryId, table.dir),
-  ],
+  ]
 );
 
 export const AlbumRelations = relations(AlbumTable, ({ one, many }) => ({
@@ -150,9 +150,9 @@ export const FileVariantTable = pgTable(
   (t) => ({
     uniqFileType: uniqueIndex("file_variant_fileid_type_idx").on(
       t.originalFileId,
-      t.type,
+      t.type
     ),
-  }),
+  })
 );
 
 export const ImageMetadataTable = pgTable("image_metadata", {
@@ -211,7 +211,7 @@ export const MediaPathTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId, table.path)];
-  },
+  }
 );
 
 export const MediaSettingsTable = pgTable(
@@ -228,7 +228,26 @@ export const MediaSettingsTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId)];
+  }
+);
+
+export const UiSettingsTable = pgTable(
+  "ui_settings",
+  {
+    id: id(),
+    autoCloseSidebarOnAssetOpen: boolean("auto_close_sidebar_on_asset_open")
+      .notNull()
+      .default(true),
+    userId: text("user_id")
+      .notNull()
+      .references(() => UserTable.id)
+      .notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
+  (table) => {
+    return [uniqueIndex().on(table.userId)];
+  }
 );
 
 export const SystemSettingsTable = pgTable("system_settings", {

@@ -1,15 +1,17 @@
-import { Injectable } from '@angular/core';
+import { DOCUMENT, inject, Injectable } from '@angular/core';
 
 @Injectable({ providedIn: 'root' })
 export class Theme {
   private key = 'theme';
 
+  private document = inject(DOCUMENT);
+
   set(mode: 'light' | 'dark' | 'system' = 'system') {
-    const hasDocument = typeof document !== 'undefined';
+    const hasDocument = typeof this.document !== 'undefined';
     const hasWindow = typeof window !== 'undefined';
     if (!hasDocument) return; // SSR guard
 
-    const root = document.documentElement;
+    const root = this.document.documentElement;
     if (mode === 'system') {
       if (hasWindow && 'localStorage' in window) {
         window.localStorage.removeItem(this.key);
@@ -42,8 +44,8 @@ export class Theme {
   }
 
   toggle() {
-    const hasDocument = typeof document !== 'undefined';
+    const hasDocument = typeof this.document !== 'undefined';
     if (!hasDocument) return; // SSR guard
-    this.set(document.documentElement.classList.contains('dark') ? 'light' : 'dark');
+    this.set(this.document.documentElement.classList.contains('dark') ? 'light' : 'dark');
   }
 }

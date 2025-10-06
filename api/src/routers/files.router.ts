@@ -142,13 +142,6 @@ export const filesRouter = router({
         });
       }
 
-      if (file.type !== "image") {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "viewFile is only supported for images.",
-        });
-      }
-
       // Ensure the user has this file in their library and it's not deleted
       const [link] = await db
         .select({ libraryFileId: LibraryFileTable.id })
@@ -225,7 +218,7 @@ export const filesRouter = router({
         .limit(1);
 
       // Compute prev/next IDs using the same ordering, optionally scoped to an album
-      const orderedImageIds = albumId
+      const orderedFileIds = albumId
         ? await db
             .select({ id: FileTable.id })
             .from(AlbumFileTable)
@@ -237,7 +230,7 @@ export const filesRouter = router({
             .where(
               and(
                 eq(AlbumFileTable.albumId, albumId),
-                eq(FileTable.type, "image")
+                eq(FileTable.type, file.type)
               )
             )
             .orderBy(
@@ -261,7 +254,7 @@ export const filesRouter = router({
               and(
                 eq(LibraryTable.userId, userId),
                 isNull(LibraryFileTable.deletedAt),
-                eq(FileTable.type, "image")
+                eq(FileTable.type, file.type)
               )
             )
             .orderBy(
@@ -270,7 +263,7 @@ export const filesRouter = router({
               )
             );
 
-      const ids = orderedImageIds.map((r) => r.id);
+      const ids = orderedFileIds.map((r) => r.id);
       const currentIndex = ids.indexOf(file.id);
       if (currentIndex === -1) {
         // Shouldn't happen due to access check, but guard anyway

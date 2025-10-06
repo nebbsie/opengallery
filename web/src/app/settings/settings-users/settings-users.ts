@@ -1,11 +1,11 @@
-import { DatePipe, TitleCasePipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { Confirm } from '@core/dialogs/confirm/confirm';
 import { CreateUser } from '@core/dialogs/create-user/create-user';
 import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
-import { injectTrpc, RouterOutputs } from '@core/services/trpc';
+import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCrown, lucidePlus, lucideTrash2, lucideUser } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
@@ -15,21 +15,10 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
-type User = RouterOutputs['users']['getAll'][number];
-
 @Component({
   selector: 'app-settings-users',
   providers: [provideIcons({ lucidePlus, lucideTrash2, lucideUser, lucideCrown })],
-  imports: [
-    ErrorAlert,
-    HlmCheckbox,
-    HlmSpinner,
-    HlmButton,
-    HlmIcon,
-    NgIcon,
-    DatePipe,
-    TitleCasePipe,
-  ],
+  imports: [ErrorAlert, HlmCheckbox, HlmSpinner, HlmButton, HlmIcon, NgIcon, DatePipe],
   host: {
     class: 'w-full',
   },

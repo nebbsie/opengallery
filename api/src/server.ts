@@ -80,14 +80,16 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
             .where(
               and(
                 eq(FileVariantTable.originalFileId, base.id),
-                eq(FileVariantTable.type, v),
-              ),
+                eq(FileVariantTable.type, v)
+              )
             )
             .limit(1)
         )[0]?.file;
 
-  if (!target)
+  if (!target) {
+    logger.error(`Variant ${v} not found for file: ${id}`);
     return reply.code(404).send({ error: `Variant not found: ${v}` });
+  }
 
   const abs = path.resolve(path.join(target.dir, target.name));
   const updatedAt = new Date(target.updatedAt);
@@ -209,7 +211,7 @@ const start = async () => {
     const host = process.env["HOST"] ?? "0.0.0.0";
     logger.info(`Starting server on ${host}:${port}...`);
     logger.info(
-      `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
+      `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`
     );
 
     await server.listen({ port, host });
