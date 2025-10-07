@@ -192,10 +192,10 @@ export const folderRouter = router({
         folder_id: string;
         items: number;
       }>`
-        SELECT ff.album_id, COUNT(*)::int AS items
+        SELECT ff.folder_id, COUNT(*)::int AS items
         FROM ${FolderFileTable} ff
-        WHERE ff.album_id IN (${sql.join(folderIds, sql`, `)})
-        GROUP BY ff.album_id
+        WHERE ff.folder_id IN (${sql.join(folderIds, sql`, `)})
+        GROUP BY ff.folder_id
       `,
     );
     const itemsByFolder = Object.fromEntries(
@@ -215,7 +215,7 @@ export const folderRouter = router({
                    SELECT f.id
                    FROM ${FolderFileTable} ff
                    JOIN ${FileTable} f ON f.id = ff.file_id
-                   WHERE ff.album_id = f.id AND f.type = 'image'
+                   WHERE ff.folder_id = f.id AND f.type = 'image'
                    ORDER BY f.created_at ASC
                    LIMIT 1
                  )

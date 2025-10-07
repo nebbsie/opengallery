@@ -7,6 +7,7 @@ import {
   AlbumTable,
   FileTable,
   FileVariantTable,
+  FolderFileTable,
   GeoLocationTable,
   ImageMetadataTable,
   LibraryFileTable,
@@ -26,8 +27,8 @@ export const filesRouter = router({
           type: z.enum(["image", "video"]),
           mime: z.string(),
           size: z.number(),
-        })
-      )
+        }),
+      ),
     )
     .mutation(async ({ input }) => {
       const addedFiles = await db.insert(FileTable).values(input).returning();
@@ -52,7 +53,7 @@ export const filesRouter = router({
   getFilesInDir: privateProcedure
     .input(z.string())
     .mutation(({ input }) =>
-      db.select().from(FileTable).where(eq(FileTable.dir, input))
+      db.select().from(FileTable).where(eq(FileTable.dir, input)),
     ),
 
   removeFilesById: internalProcedure
@@ -101,8 +102,8 @@ export const filesRouter = router({
           .where(
             or(
               inArray(FileVariantTable.originalFileId, idsToDelete),
-              inArray(FileVariantTable.fileId, idsToDelete)
-            )
+              inArray(FileVariantTable.fileId, idsToDelete),
+            ),
           );
 
         // Finally delete the files themselves (originals and variants)
@@ -199,11 +200,12 @@ export const filesRouter = router({
     .input(
       z.object({
         fileId: z.string(),
-        albumId: z.string().uuid().optional(),
-      })
+        id: z.string().uuid().optional(),
+        idType: z.enum(["album", "folder"]),
+      }),
     )
     .query(async ({ input, ctx: { userId } }) => {
-      const { fileId, albumId } = input;
+      const { fileId, id, idType } = input;
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
@@ -228,14 +230,14 @@ export const filesRouter = router({
         .from(LibraryFileTable)
         .innerJoin(
           LibraryTable,
-          eq(LibraryTable.id, LibraryFileTable.libraryId)
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
         )
         .where(
           and(
             eq(LibraryFileTable.fileId, file.id),
             eq(LibraryTable.userId, userId),
-            isNull(LibraryFileTable.deletedAt)
-          )
+            isNull(LibraryFileTable.deletedAt),
+          ),
         )
         .limit(1);
 
@@ -247,12 +249,12 @@ export const filesRouter = router({
       }
 
       // If albumId provided, ensure album belongs to user and file is in album
-      if (albumId) {
+      if (id && idType == "album") {
         const [albumRow] = await db
           .select({ id: AlbumTable.id, libraryUserId: LibraryTable.userId })
           .from(AlbumTable)
           .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-          .where(eq(AlbumTable.id, albumId))
+          .where(eq(AlbumTable.id, id))
           .limit(1);
 
         if (!albumRow) {
@@ -270,9 +272,9 @@ export const filesRouter = router({
           .from(AlbumFileTable)
           .where(
             and(
-              eq(AlbumFileTable.albumId, albumId),
-              eq(AlbumFileTable.fileId, file.id)
-            )
+              eq(AlbumFileTable.albumId, id),
+              eq(AlbumFileTable.fileId, file.id),
+            ),
           )
           .limit(1);
 
@@ -298,45 +300,70 @@ export const filesRouter = router({
         .limit(1);
 
       // Compute prev/next IDs using the same ordering, optionally scoped to an album
-      // Include both images and videos; do not filter by current file's type
-      const orderedFileIds = albumId
-        ? await db
-            .select({ id: FileTable.id })
-            .from(AlbumFileTable)
-            .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-            .leftJoin(
-              ImageMetadataTable,
-              eq(ImageMetadataTable.fileId, FileTable.id)
-            )
-            .where(and(eq(AlbumFileTable.albumId, albumId)))
-            .orderBy(
-              desc(
-                sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
-              )
-            )
-        : await db
-            .select({ id: FileTable.id })
-            .from(LibraryFileTable)
-            .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
-            .innerJoin(
-              LibraryTable,
-              eq(LibraryTable.id, LibraryFileTable.libraryId)
-            )
-            .leftJoin(
-              ImageMetadataTable,
-              eq(ImageMetadataTable.fileId, FileTable.id)
-            )
-            .where(
-              and(
-                eq(LibraryTable.userId, userId),
-                isNull(LibraryFileTable.deletedAt)
-              )
-            )
-            .orderBy(
-              desc(
-                sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
-              )
-            );
+      let orderedFileIds;
+
+      if (id && idType === "album") {
+        // 🔹 Case 1: Album
+        orderedFileIds = await db
+          .select({ id: FileTable.id })
+          .from(AlbumFileTable)
+          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+          .leftJoin(
+            ImageMetadataTable,
+            eq(ImageMetadataTable.fileId, FileTable.id),
+          )
+          .where(
+            eq(AlbumFileTable.albumId, id),
+          )
+          .orderBy(
+            desc(
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+            ),
+          );
+      } else if (id && idType === "folder") {
+        // 🔹 Case 2: Folder
+        orderedFileIds = await db
+          .select({ id: FileTable.id })
+          .from(FolderFileTable) // <-- use the right table for folders
+          .innerJoin(FileTable, eq(FileTable.id, FolderFileTable.fileId))
+          .leftJoin(
+            ImageMetadataTable,
+            eq(ImageMetadataTable.fileId, FileTable.id),
+          )
+          .where(
+            eq(FolderFileTable.folderId, id),
+          )
+          .orderBy(
+            desc(
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+            ),
+          );
+      } else {
+        // 🔹 Default case (e.g., library or no specific scope)
+        orderedFileIds = await db
+          .select({ id: FileTable.id })
+          .from(LibraryFileTable)
+          .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
+          .innerJoin(
+            LibraryTable,
+            eq(LibraryTable.id, LibraryFileTable.libraryId),
+          )
+          .leftJoin(
+            ImageMetadataTable,
+            eq(ImageMetadataTable.fileId, FileTable.id),
+          )
+          .where(
+            and(
+              eq(LibraryTable.userId, userId),
+              isNull(LibraryFileTable.deletedAt)
+            ),
+          )
+          .orderBy(
+            desc(
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+            ),
+          );
+      }
 
       const ids = orderedFileIds.map((r) => r.id);
       const currentIndex = ids.indexOf(file.id);
@@ -374,11 +401,11 @@ export const filesRouter = router({
               name: z.string(), // e.g. `${base}__thumb.avif`
               mime: z.string(),
               size: z.number().int().nonnegative(),
-            })
+            }),
           )
           .min(1)
           .max(2),
-      })
+      }),
     )
     .mutation(async ({ input }) => {
       const { originalFileId, variants } = input;
@@ -441,8 +468,8 @@ export const filesRouter = router({
       .where(
         and(
           eq(FileVariantTable.fileId, file.id),
-          inArray(FileVariantTable.type, ["thumbnail", "optimised"])
-        )
+          inArray(FileVariantTable.type, ["thumbnail", "optimised"]),
+        ),
       );
 
     const thumbnail = variants.find((v) => v.type === "thumbnail") ?? null;
@@ -463,7 +490,7 @@ export const filesRouter = router({
 
 const getUsersFiles = async (
   userId: string,
-  filter: "all" | "video" | "image"
+  filter: "all" | "video" | "image",
 ) => {
   const rows = await db
     .select({
@@ -488,9 +515,9 @@ const getUsersFiles = async (
             .where(
               and(
                 eq(FileVariantTable.originalFileId, FileTable.id),
-                eq(FileVariantTable.type, "thumbnail")
-              )
-            )
+                eq(FileVariantTable.type, "thumbnail"),
+              ),
+            ),
         ),
         exists(
           db
@@ -499,14 +526,16 @@ const getUsersFiles = async (
             .where(
               and(
                 eq(FileVariantTable.originalFileId, FileTable.id),
-                eq(FileVariantTable.type, "optimised")
-              )
-            )
-        )
-      )
+                eq(FileVariantTable.type, "optimised"),
+              ),
+            ),
+        ),
+      ),
     )
     .orderBy(
-      desc(sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`)
+      desc(
+        sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+      ),
     );
 
   return rows.map((r) => ({
