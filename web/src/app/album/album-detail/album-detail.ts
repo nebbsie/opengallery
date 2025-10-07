@@ -49,7 +49,8 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
             <app-asset-thumbnail
               [from]="'/albums/' + data.album.id"
               [asset]="asset"
-              [albumId]="data.album.id"
+              [sourceId]="data.album.id"
+              sourceType="album"
             />
           </ng-template>
         </app-virtual-thumbnail-grid>

@@ -15,7 +15,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
       @if (_folder.cover) {
         <img
           [src]="apiUrl + '/asset/' + _folder.cover + '/thumbnail'"
-          alt="Album cover"
+          alt="Folder cover"
           class="h-full w-full rounded-lg object-cover"
         />
       } @else {

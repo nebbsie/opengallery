@@ -155,10 +155,10 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                   data.imageMetadata.cameraMake ||
                   data.imageMetadata.cameraModel ||
                   data.imageMetadata.lensModel ||
-                  data.imageMetadata.iso != null ||
+                  data.imageMetadata.iso !== null ||
                   data.imageMetadata.exposureTime ||
                   data.imageMetadata.fNumber ||
-                  data.imageMetadata.focalLength != null
+                  data.imageMetadata.focalLength !== null
                 ) {
                   <div class="grid gap-1.5">
                     <div class="text-muted-foreground font-semibold">Camera</div>
@@ -219,11 +219,13 @@ export class Asset implements OnDestroy {
   private readonly queryClient = inject(QueryClient);
 
   protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
-  protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
+  protected readonly sourceId = this.route.snapshot.queryParamMap.get('sourceId');
+  protected readonly sourceType = this.route.snapshot.queryParamMap.get('sourceType');
 
   protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
   private wasSideBarOpen: boolean;
+  private sourceTypeParam: 'album' | 'folder';
 
   constructor() {
     this.wasSideBarOpen = this.sidebar.isOpen();
@@ -236,19 +238,22 @@ export class Asset implements OnDestroy {
       }
     });
 
+    this.sourceTypeParam = this.sourceType === 'album' ? 'album' : 'folder';
+
     // Prefetch next/prev asset data and preload media to reduce flicker
     effect(() => {
       const data = this.file.data();
       if (!data) return;
 
-      const albumId = this.albumId ?? undefined;
-
       const prefetch = async (id: string | null) => {
         if (!id) return;
-        const key: [string, string, string | null] = [CacheKey.AssetSingle, id, this.albumId];
+        const key: [string, string, string | null, string] = [CacheKey.AssetSingle, id, this.sourceId, this.sourceTypeParam];
         await this.queryClient.prefetchQuery({
           queryKey: key,
-          queryFn: () => this.trpc.files.viewFile.query({ fileId: id, albumId }),
+          queryFn: () => this.trpc.files.viewFile.query({
+            fileId: id,
+            id: this.sourceId ?? undefined,
+            idType: this.sourceTypeParam ?? undefined, }),
           staleTime: 60_000,
         });
 
@@ -284,18 +289,23 @@ export class Asset implements OnDestroy {
   id = input.required<string>();
 
   file = injectQuery(() => ({
-    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId],
+    queryKey: [CacheKey.AssetSingle, this.id(), this.sourceId, this.sourceTypeParam],
     staleTime: Infinity,
     networkMode: 'offlineFirst',
     queryFn: async () =>
-      this.trpc.files.viewFile.query({ fileId: this.id(), albumId: this.albumId ?? undefined }),
+      this.trpc.files.viewFile.query({
+        fileId: this.id(),
+        id: this.sourceId ?? undefined,
+        idType: this.sourceTypeParam ?? undefined,
+      }),
   }));
 
   // No direct query here; we rely on UiSettingsService
 
   protected getNavQueryParams(): Record<string, string> | null {
     const qp: Record<string, string> = {};
-    if (this.albumId) qp['albumId'] = this.albumId;
+    if (this.sourceId && this.sourceTypeParam == 'album') qp['albumId'] = this.sourceId;
+    if (this.sourceId && this.sourceTypeParam == 'folder') qp['folder'] = this.sourceId;
     if (this.backLink) qp['from'] = this.backLink;
     return Object.keys(qp).length ? qp : null;
   }

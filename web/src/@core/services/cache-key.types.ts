@@ -12,4 +12,5 @@ export const CacheKey = {
   AllowsUserSelfRegistration: 'allows-user-self-registration',
   UiSettings: 'ui-settings',
   FoldersAll: 'folders-all',
+  FolderSingle: 'folders-single',
 };

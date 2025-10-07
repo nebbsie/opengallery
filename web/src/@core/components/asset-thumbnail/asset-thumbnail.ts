@@ -19,7 +19,10 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   },
   template: `
     @let _asset = asset();
-    <a [routerLink]="['/asset', _asset.id]" [queryParams]="{ from: from(), albumId: albumId() }">
+    <a
+      [routerLink]="['/asset', _asset.id]"
+      [queryParams]="{ from: from(), sourceId: sourceId(), sourceType: sourceType() }"
+    >
       <img
         class="absolute inset-0 h-full w-full object-cover"
         [src]="apiUrl + '/asset/' + _asset.id + '/thumbnail'"
@@ -44,5 +47,6 @@ export class AssetThumbnail {
 
   asset = input.required<{ type: 'image' | 'video'; id: string }>();
   from = input<string>();
-  albumId = input<string>();
+  sourceId = input<string>();
+  sourceType = input<'album' | 'folder'>();
 }

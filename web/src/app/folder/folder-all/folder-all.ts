@@ -7,10 +7,11 @@ import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { FolderThumbnail } from '@core/components/folder-thumbnail/folder-thumbnail';
+import { FolderToolbar } from '@core/components/folder-toolbar/folder-toolbar';
 
 @Component({
   selector: 'app-folder-all',
-  imports: [ErrorAlert, HlmSpinner, ThumbnailGrid, AlbumToolbar, FolderThumbnail],
+  imports: [ErrorAlert, HlmSpinner, ThumbnailGrid, FolderThumbnail, FolderToolbar],
   template: `
     @if (response.isPending()) {
       <hlm-spinner />
@@ -21,7 +22,7 @@ import { FolderThumbnail } from '@core/components/folder-thumbnail/folder-thumbn
     }
 
     @if (response.isSuccess()) {
-      <app-album-toolbar [items]="[]" />
+      <app-folder-toolbar [items]="[]" />
 
       <app-thumbnail-grid>
         @for (folder of response.data(); track folder.id) {
