@@ -128,6 +128,34 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     return created?.id ?? null;
   }
 
+  // Helper to ensure a folder (and its parent chain) exists for a directory
+  async function ensureFolderForDir(dir: string, libraryId: string): Promise<string | null> {
+    if (!dir) return null;
+
+    const [existing] = await trpc.folder.getFolderByDir.query(dir);
+    if (existing && existing.id) return existing.id;
+
+    const folderName = basename(dir);
+    if (!folderName) return null;
+
+    const parentDir = dirname(dir);
+    const parentId =
+      parentDir && parentDir !== dir ? await ensureFolderForDir(parentDir, libraryId) : null;
+
+    await trpc.folder.create.mutate({
+      userId,
+      folder: {
+        name: folderName,
+        libraryId,
+        dir,
+        parentId,
+      },
+    });
+
+    const [created] = await trpc.folder.getFolderByDir.query(dir);
+    return created?.id ?? null;
+  }
+
   for (const folder of folders) {
     //at this level, we are looping through a specifc users given source paths.
 
@@ -154,11 +182,14 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       await trpc.files.removeFilesById.mutate(alreadySavedFiles.map((f: { id: string }) => f.id));
 
       //here we should really delete them everywhere if not found on disk
-      //albumFile, LibraryFile too due to foreign key constraints in db
+      //albumFile, LibraryFile, FolderFile too due to foreign key constraints in db
       await trpc.albumFile.removeAlbumFilesById.mutate(
         alreadySavedFiles.map((f: { id: string }) => f.id),
       );
       await trpc.libraryFile.removeLibraryFilesById.mutate(
+        alreadySavedFiles.map((f: { id: string }) => f.id),
+      );
+      await trpc.folderFile.removeFolderFilesById.mutate(
         alreadySavedFiles.map((f: { id: string }) => f.id),
       );
 
@@ -173,11 +204,14 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       await trpc.files.removeFilesById.mutate(orphanedFiles.map((f: { id: string }) => f.id));
 
       //here we should really delete them everywhere if not found on disk
-      //albumFile, LibraryFile too due to foreign key constraints in db
+      //albumFile, LibraryFile, FolderFile too due to foreign key constraints in db
       await trpc.albumFile.removeAlbumFilesById.mutate(
         orphanedFiles.map((f: { id: string }) => f.id),
       );
       await trpc.libraryFile.removeLibraryFilesById.mutate(
+        orphanedFiles.map((f: { id: string }) => f.id),
+      );
+      await trpc.folderFile.removeFolderFilesById.mutate(
         orphanedFiles.map((f: { id: string }) => f.id),
       );
     }
@@ -234,6 +268,16 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       }
     }
 
+    //check if file is linked to a folder based on folder dir == file dir
+    //if no folder, generate one first for this folder dir
+    await trpc.folder.getFolderByDir.query(folder);
+
+    // Ensure album exists for this folder (this will also ensure parents exist)
+    const ensuredFolderId = await ensureFolderForDir(folder, libraryId);
+    if (ensuredFolderId) {
+      logger.info(`Folder ensured for folder: ${folder}`);
+    }
+
     //this may need to be changed to get all users library files(if in future they could have many), not just default library files.
     //library is what links a file to a user
     const allFiles = (await trpc.libraryFile.getAllLibraryFiles.query(libraryId)) as Array<{
@@ -244,6 +288,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       id: string;
       dir: string;
     }>;
+    const folders = await trpc.folder.getAllFoldersForLibrary.query(libraryId);
 
     const albumFiles = (await trpc.albumFile.getByAlbumIds.query(
       albums.map((f: { id: string }) => f.id),
@@ -273,6 +318,37 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     if (albumFilesToInsert.length > 0) {
       await trpc.albumFile.create.mutate(albumFilesToInsert);
       logger.info(`Linking album files for folder: ${folder}`);
+    }
+
+    //Handle Folders
+    const folderFiles = await trpc.folderFile.getByFolderIds.query(
+      folders.map((f: { id: string }) => f.id),
+    );
+
+    // Build a lookup table: album name → albumId
+    const folderMap = new Map(folders.map((a) => [a.dir, a.id]));
+
+    // Build lookup: folderId → Set<fileId>
+    const existingFolderLinks = new Map<string, Set<string>>();
+    for (const ff of folderFiles) {
+      if (!existingFolderLinks.has(ff.folderId)) {
+        existingFolderLinks.set(ff.folderId, new Set());
+      }
+      existingFolderLinks.get(ff.folderId)!.add(ff.fileId);
+    }
+
+    // Collect new links
+    const folderFilesToInsert = allFiles.flatMap((file) => {
+      const folderId = folderMap.get(file.dir);
+      if (!folderId) return [];
+
+      const alreadyLinked = existingFolderLinks.get(folderId)?.has(file.id);
+      return alreadyLinked ? [] : [{ fileId: file.id, folderId }];
+    });
+
+    if (folderFilesToInsert.length > 0) {
+      await trpc.folderFile.create.mutate(folderFilesToInsert);
+      logger.info(`Linking folder files for folder: ${folder}`);
     }
   }
 

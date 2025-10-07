@@ -69,7 +69,7 @@ export const FileTable = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)]
+  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)],
 );
 
 export const LibraryFileTable = pgTable("library_file", {
@@ -107,7 +107,7 @@ export const AlbumTable = pgTable(
       name: "album_parent_fk", // custom constraint name
     }),
     uniqueIndex("album_library_dir_uidx").on(table.libraryId, table.dir),
-  ]
+  ],
 );
 
 export const AlbumRelations = relations(AlbumTable, ({ one, many }) => ({
@@ -123,6 +123,51 @@ export const AlbumFileTable = pgTable("album_file", {
   albumId: uuid("album_id")
     .notNull()
     .references(() => AlbumTable.id),
+  fileId: uuid("file_id")
+    .notNull()
+    .references(() => FileTable.id),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const FolderTable = pgTable(
+  "folder",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    desc: text("desc"),
+    cover: uuid("cover").references(() => FileTable.id),
+    parentId: uuid("parent_id"),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => LibraryTable.id),
+    dir: text("dir").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.parentId],
+      foreignColumns: [table.id],
+      name: "folder_parent_fk", // custom constraint name
+    }),
+    uniqueIndex("folder_library_dir_uidx").on(table.libraryId, table.dir),
+  ],
+);
+
+export const FolderRelations = relations(FolderTable, ({ one, many }) => ({
+  parent: one(FolderTable, {
+    fields: [FolderTable.parentId],
+    references: [FolderTable.id],
+  }),
+  children: many(FolderTable),
+}));
+
+export const FolderFileTable = pgTable("folder_file", {
+  id: id(),
+  folderId: uuid("folder_id")
+    .notNull()
+    .references(() => FolderTable.id),
   fileId: uuid("file_id")
     .notNull()
     .references(() => FileTable.id),
@@ -158,9 +203,9 @@ export const FileVariantTable = pgTable(
   (t) => ({
     uniqFileType: uniqueIndex("file_variant_fileid_type_idx").on(
       t.originalFileId,
-      t.type
+      t.type,
     ),
-  })
+  }),
 );
 
 export const ImageMetadataTable = pgTable("image_metadata", {
@@ -226,7 +271,7 @@ export const MediaPathTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId, table.path)];
-  }
+  },
 );
 
 export const MediaSettingsTable = pgTable(
@@ -243,7 +288,7 @@ export const MediaSettingsTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId)];
-  }
+  },
 );
 
 export const UiSettingsTable = pgTable(
@@ -262,7 +307,7 @@ export const UiSettingsTable = pgTable(
   },
   (table) => {
     return [uniqueIndex().on(table.userId)];
-  }
+  },
 );
 
 export const SystemSettingsTable = pgTable("system_settings", {

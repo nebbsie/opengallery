@@ -16,6 +16,9 @@ import { settingsRouter } from "./routers/settings.router.js";
 import { uiSettingsRouter } from "./routers/ui-settings.router.js";
 import { usersRouter } from "./routers/users.router.js";
 import { router } from "./trpc.js";
+import { mediaPathRouter } from "./routers/media-path.router.js";
+import { folderRouter } from "./routers/folder.router.js";
+import { folderFileRouter } from "./routers/folder-file.router.js";
 
 export const appRouter = router({
   health: healthRouter,
@@ -35,6 +38,9 @@ export const appRouter = router({
   uiSettings: uiSettingsRouter,
   queue: queueRouter,
   issues: issuesRouter,
+  mediaPath: mediaPathRouter,
+  folder: folderRouter,
+  folderFile: folderFileRouter,
 });
 
 export type AppRouter = typeof appRouter;

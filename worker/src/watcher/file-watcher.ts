@@ -295,6 +295,60 @@ export class FileWatcherService {
             }
           }
 
+          // Check if folder exists for this directory, create if needed (but never for the root watched path)
+          const folderName = basename(dir);
+          const [existingFolder] = await trpc.folder.getFolderByDir.query(dir);
+
+          if (!existingFolder && folderName && dir !== rootPath) {
+            // Determine parent folder path
+            const parentPath = dirname(dir) !== dir ? dirname(dir) : null;
+
+            // Look up parent folder ID if it exists
+            let parentFolderId: string | null = null;
+            if (parentPath) {
+              const [parentFolder] = await trpc.album.getAlbumByDir.query(parentPath);
+              if (parentFolder && parentFolder.id) {
+                parentFolderId = parentFolder.id;
+              }
+            }
+
+            // Create the new folder
+            await trpc.folder.create.mutate({
+              userId: userId,
+              folder: {
+                name: folderName,
+                libraryId: libraryId,
+                dir: dir,
+                parentId: parentFolderId,
+              },
+            });
+
+            this.logger.info(`Created new folder for directory: ${dir}`);
+          }
+
+          // Link file to album if album exists
+          const [folder] = await trpc.folder.getFolderByDir.query(dir);
+          if (folder) {
+            await trpc.folderFile.create.mutate([
+              {
+                fileId: newFileId,
+                folderId: folder.id,
+              },
+            ]);
+            if (!folder.parentId) {
+              const parentDir = dirname(dir);
+              const maybeParent =
+                parentDir !== dir ? await trpc.folder.getFolderByDir.query(parentDir) : [];
+              if (maybeParent[0]) {
+                await trpc.folder.setParentByDir.mutate({
+                  libraryId,
+                  dir,
+                  parentId: maybeParent[0].id,
+                });
+              }
+            }
+          }
+
           // Encoding job is automatically queued by the files.create API endpoint
           if (type === 'image' && mime !== 'image/svg+xml') {
             this.logger.info(`Encoding job queued for new image: ${filePath} (ID: ${newFileId})`);
@@ -348,6 +402,7 @@ export class FileWatcherService {
         // Also remove from album files and library files due to foreign key constraints
         await trpc.albumFile.removeAlbumFilesById.mutate([fileToDelete.id]);
         await trpc.libraryFile.removeLibraryFilesById.mutate([fileToDelete.id]);
+        await trpc.folderFile.removeFolderFilesById.mutate([fileToDelete.id]);
 
         this.logger.info(`Successfully removed deleted file from database: ${filePath}`);
       }
@@ -384,6 +439,13 @@ export class FileWatcherService {
         );
       } catch (innerErr) {
         this.logger.warn(`Failed to remove empty albums under ${dirPath}: ${String(innerErr)}`);
+      }
+
+      // Note: Folder deletion is not implemented in the API
+      // The folder will remain but without files, which is acceptable for now
+      const [folder] = await trpc.folder.getFolderByDir.query(dirPath);
+      if (folder) {
+        this.logger.info(`Folder exists for deleted directory: ${dirPath} (not removing folder)`);
       }
 
       this.logger.info(`Successfully cleaned up deleted directory: ${dirPath}`);
