@@ -83,6 +83,13 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }
 
     <hr class="my-2" />
+
+    <div class="flex items-center justify-between">
+      <p class="font-medium">Folders</p>
+      <a class="text-xs text-blue-500" size="sm" hlmBtn variant="link" routerLink="/folders"
+        >View All</a
+      >
+    </div>
   `,
 
   changeDetection: ChangeDetectionStrategy.OnPush,
