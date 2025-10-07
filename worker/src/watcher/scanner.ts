@@ -40,6 +40,8 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
   const byFolder = new Map<string, TempFile[]>();
 
   const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
+  const skipPath = skipAlbumFor.replace(/\\[^\\]+$/, '');
+  logger.info(`Scanner skipPath is: ${skipPath}`);
 
   function walk(dir: string) {
     folders.push(dir);
@@ -130,7 +132,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
   // Helper to ensure a folder (and its parent chain) exists for a directory
   async function ensureFolderForDir(dir: string, libraryId: string): Promise<string | null> {
-    if (!dir) return null;
+    if (!dir || dir === skipPath) return null;
 
     const [existing] = await trpc.folder.getFolderByDir.query(dir);
     if (existing && existing.id) return existing.id;
@@ -273,9 +275,11 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     await trpc.folder.getFolderByDir.query(folder);
 
     // Ensure album exists for this folder (this will also ensure parents exist)
-    const ensuredFolderId = await ensureFolderForDir(folder, libraryId);
-    if (ensuredFolderId) {
-      logger.info(`Folder ensured for folder: ${folder}`);
+    if (folder !== skipPath) {
+      const ensuredFolderId = await ensureFolderForDir(folder, libraryId);
+      if (ensuredFolderId) {
+        logger.info(`Folder ensured for folder: ${folder}`);
+      }
     }
 
     //this may need to be changed to get all users library files(if in future they could have many), not just default library files.
