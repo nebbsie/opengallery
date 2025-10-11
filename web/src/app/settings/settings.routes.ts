@@ -32,6 +32,11 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./settings-issues/settings-issues').then((c) => c.SettingsIssues),
       },
+      {
+        path: 'encoding',
+        loadComponent: () =>
+          import('./settings-encoding/settings-encoding').then((c) => c.SettingsEncoding),
+      },
     ],
   },
 ];

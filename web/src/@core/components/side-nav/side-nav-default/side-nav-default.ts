@@ -65,7 +65,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     </div>
 
     @if (albums.isSuccess()) {
-      @for (album of albums.data().slice(0, 3); track album.id) {
+      @for (album of albums.data().slice(0, 5); track album.id) {
         <a
           class="mb-1"
           hlmBtn

@@ -29,6 +29,20 @@
       "when": 1759711281198,
       "tag": "0003_bizarre_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1760185213977,
+      "tag": "0004_mysterious_magma",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1760194889774,
+      "tag": "0005_wakeful_inhumans",
+      "breakpoints": true
     }
   ]
 }

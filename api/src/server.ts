@@ -200,7 +200,24 @@ server.register(fastifyTRPCPlugin, {
     router: appRouter,
     createContext,
     onError({ path, error }) {
-      logger.error(`Error in tRPC handler on path '${path}':`, error);
+      const code = (error as any)?.code as string | undefined;
+      const msg = error?.message || "Unknown tRPC error";
+      const isExpected =
+        code === "UNAUTHORIZED" ||
+        code === "FORBIDDEN" ||
+        code === "NOT_FOUND" ||
+        code === "BAD_REQUEST" ||
+        code === "CONFLICT";
+
+      if (isExpected) {
+        // concise single line for expected errors
+        logger.warn(`[tRPC] ${code ?? "ERROR"} ${path}: ${msg}`);
+      } else {
+        // include stack only for unexpected errors
+        logger.error(`[tRPC] ${code ?? "INTERNAL"} ${path}: ${msg}`, {
+          stack: error?.stack,
+        });
+      }
     },
   } satisfies FastifyTRPCPluginOptions<AppRouter>["trpcOptions"],
 });

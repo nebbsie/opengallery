@@ -13,8 +13,10 @@ export class Logger {
             name,
             level: process.env.LOG_LEVEL || "info",
         };
-        const targets = [
-            {
+        const targets = [];
+        // Pretty printing only in non-production environments to avoid requiring pino-pretty in production images
+        if (!isProd) {
+            targets.push({
                 target: "pino-pretty",
                 level: base.level,
                 options: {
@@ -23,8 +25,8 @@ export class Logger {
                     ignore: "pid,hostname",
                     singleLine: false,
                 },
-            },
-        ];
+            });
+        }
         if (isProd) {
             const logDir = `/var/log/opengallery`;
             const filePath = `${logDir}/${name}.log`;
@@ -42,8 +44,14 @@ export class Logger {
                 options: { destination: filePath, append: true },
             });
         }
-        const transport = pino.transport({ targets });
-        this.logger = pino(base, transport);
+        if (targets.length > 0) {
+            const transport = pino.transport({ targets });
+            this.logger = pino(base, transport);
+        }
+        else {
+            // default stdout JSON when no transports configured
+            this.logger = pino(base);
+        }
     }
     async saveToDb(type, msg, data) {
         const line = data && Object.keys(data).length > 0

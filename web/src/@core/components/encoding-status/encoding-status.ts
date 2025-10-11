@@ -20,10 +20,7 @@ type QueueCounts = {
   },
   template: `
     @if (visible()) {
-      <div class="border-t pt-2">
-        <p class="text-sm">Import in progress…</p>
-        <p class="text-muted-foreground text-xs">{{ active() }} active · {{ waiting() }} waiting</p>
-      </div>
+      <p class="text-muted-foreground border-t pt-2 text-xs">{{ total() }} files being imported</p>
     }
   `,
 })
@@ -36,6 +33,7 @@ export class EncodingStatusComponent implements OnDestroy {
 
   active = computed(() => this.counts()?.counts.active ?? 0);
   waiting = computed(() => this.counts()?.counts.waiting ?? 0);
+  total = computed(() => this.counts()?.totalPending ?? this.active() + this.waiting());
 
   constructor() {
     this.startPolling();

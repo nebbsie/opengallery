@@ -20,7 +20,7 @@ import { lucideChevronLeft, lucideChevronRight, lucideInfo, lucideX } from '@ng-
 import { HlmBadge } from '@spartan-ng/helm/badge';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { injectQuery } from '@tanstack/angular-query-experimental';
+import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
@@ -150,6 +150,45 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                     <div>{{ data.imageMetadata.takenAt | date: 'M/d/y h:mma' }}</div>
                   </div>
                 }
+
+                @if (
+                  data.imageMetadata.cameraMake ||
+                  data.imageMetadata.cameraModel ||
+                  data.imageMetadata.lensModel ||
+                  data.imageMetadata.iso != null ||
+                  data.imageMetadata.exposureTime ||
+                  data.imageMetadata.fNumber ||
+                  data.imageMetadata.focalLength != null
+                ) {
+                  <div class="grid gap-1.5">
+                    <div class="text-muted-foreground font-semibold">Camera</div>
+                    @if (data.imageMetadata.cameraMake || data.imageMetadata.cameraModel) {
+                      <div class="truncate">
+                        {{ data.imageMetadata.cameraMake || '' }}
+                        {{ data.imageMetadata.cameraModel || '' }}
+                      </div>
+                    }
+                    @if (data.imageMetadata.lensModel) {
+                      <div class="truncate">Lens: {{ data.imageMetadata.lensModel }}</div>
+                    }
+                    <div
+                      class="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+                    >
+                      @if (data.imageMetadata.exposureTime) {
+                        <span>{{ formatShutterSpeed(data.imageMetadata.exposureTime) }}</span>
+                      }
+                      @if (data.imageMetadata.fNumber) {
+                        <span>f/{{ data.imageMetadata.fNumber }}</span>
+                      }
+                      @if (data.imageMetadata.iso !== null) {
+                        <span>ISO {{ data.imageMetadata.iso }}</span>
+                      }
+                      @if (data.imageMetadata.focalLength !== null) {
+                        <span>{{ data.imageMetadata.focalLength }} mm</span>
+                      }
+                    </div>
+                  </div>
+                }
               }
 
               <div>
@@ -177,6 +216,7 @@ export class Asset implements OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly sidebar = inject(Sidebar);
   private readonly uiSettings = inject(UiSettingsService);
+  private readonly queryClient = inject(QueryClient);
 
   protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
   protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
@@ -194,6 +234,37 @@ export class Asset implements OnDestroy {
       if (autoClose && this.wasSideBarOpen && this.sidebar.isOpen()) {
         this.sidebar.close();
       }
+    });
+
+    // Prefetch next/prev asset data and preload media to reduce flicker
+    effect(() => {
+      const data = this.file.data();
+      if (!data) return;
+
+      const albumId = this.albumId ?? undefined;
+
+      const prefetch = async (id: string | null) => {
+        if (!id) return;
+        const key: [string, string, string | null] = [CacheKey.AssetSingle, id, this.albumId];
+        await this.queryClient.prefetchQuery({
+          queryKey: key,
+          queryFn: () => this.trpc.files.viewFile.query({ fileId: id, albumId }),
+          staleTime: 60_000,
+        });
+
+        // After metadata is cached, decide what to preload
+        const cached: any = this.queryClient.getQueryData(key as unknown as any);
+        const fileType: 'image' | 'video' | undefined = cached?.file?.type;
+        if (fileType === 'image') {
+          this.preloadUrl(`${this.apiUrl}/asset/${id}/optimised`);
+        } else {
+          // Always safe to preload thumbnail (image) for both images/videos
+          this.preloadUrl(`${this.apiUrl}/asset/${id}/thumbnail`);
+        }
+      };
+
+      void prefetch(data.nextId);
+      void prefetch(data.prevId);
     });
   }
 
@@ -290,6 +361,19 @@ export class Asset implements OnDestroy {
     return `${value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[i]}`;
   }
 
+  protected formatShutterSpeed(value: string | number): string {
+    const n = typeof value === 'number' ? value : Number(value);
+    if (!isFinite(n) || n <= 0) return String(value);
+    if (n >= 1) {
+      // 1s or longer; show with s suffix, trim trailing zeros
+      const rounded = n >= 10 ? n.toFixed(0) : n >= 1 ? n.toFixed(1) : String(n);
+      return `${Number(rounded)}s`;
+    }
+    // Shorter than 1s: render as a fraction 1/x, rounding denominator nicely
+    const denom = Math.round(1 / n);
+    return `1/${denom}`;
+  }
+
   protected shouldShowTaken(
     takenAt: Date | string | null | undefined,
     createdAt: Date | string | null | undefined,
@@ -341,6 +425,21 @@ export class Asset implements OnDestroy {
   ngOnDestroy(): void {
     if (this.wasSideBarOpen) {
       this.sidebar.open();
+    }
+  }
+
+  private readonly preloaded = new Set<string>();
+  private preloadUrl(url: string) {
+    if (typeof window === 'undefined') return;
+    if (this.preloaded.has(url)) return;
+    this.preloaded.add(url);
+    try {
+      const img = new Image();
+      (img as any).decoding = 'async';
+      (img as any).loading = 'eager';
+      img.src = url;
+    } catch {
+      // ignore
     }
   }
 }

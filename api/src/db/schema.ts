@@ -172,6 +172,13 @@ export const ImageMetadataTable = pgTable("image_metadata", {
   height: integer("height").notNull(),
   blurhash: text("blurhash"),
   takenAt: timestamp("taken_at"),
+  cameraMake: text("camera_make"),
+  cameraModel: text("camera_model"),
+  lensModel: text("lens_model"),
+  iso: integer("iso"),
+  exposureTime: text("exposure_time"),
+  focalLength: integer("focal_length"),
+  fNumber: text("f_number"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -264,6 +271,7 @@ export const SystemSettingsTable = pgTable("system_settings", {
   allowsSelfRegistration: boolean("allows_self_registration")
     .notNull()
     .default(false),
+  encodingConcurrency: integer("encoding_concurrency").notNull().default(5),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

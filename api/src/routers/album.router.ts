@@ -1,11 +1,12 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
   AlbumFileTable,
   AlbumTable,
   FileTable,
+  FileVariantTable,
   ImageMetadataTable,
   LibraryTable,
   MediaPathTable,
@@ -191,7 +192,16 @@ export const albumRouter = router({
       }>`
         SELECT af.album_id, COUNT(*)::int AS items
         FROM ${AlbumFileTable} af
+        JOIN ${FileTable} f ON f.id = af.file_id
         WHERE af.album_id IN (${sql.join(albumIds, sql`, `)})
+          AND EXISTS (
+            SELECT 1 FROM ${FileVariantTable} fv
+            WHERE fv.original_file_id = f.id AND fv.type = 'thumbnail'
+          )
+          AND EXISTS (
+            SELECT 1 FROM ${FileVariantTable} fv2
+            WHERE fv2.original_file_id = f.id AND fv2.type = 'optimised'
+          )
         GROUP BY af.album_id
       `
     );
@@ -372,7 +382,34 @@ export const albumRouter = router({
           ImageMetadataTable,
           eq(ImageMetadataTable.fileId, FileTable.id)
         )
-        .where(eq(AlbumFileTable.albumId, albumId))
+        .where(
+          and(
+            eq(AlbumFileTable.albumId, albumId),
+            // Only include files that have BOTH thumbnail and optimised variants
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "thumbnail")
+                  )
+                )
+            ),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "optimised")
+                  )
+                )
+            )
+          )
+        )
         .orderBy(
           desc(
             sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
@@ -433,6 +470,10 @@ export const albumRouter = router({
                        FROM ${AlbumFileTable} af
                        JOIN ${FileTable} f ON f.id = af.file_id
                        WHERE af.album_id = a.id AND f.type = 'image'
+                         AND EXISTS (
+                           SELECT 1 FROM ${FileVariantTable} fv
+                           WHERE fv.original_file_id = f.id AND fv.type = 'thumbnail'
+                         )
                        ORDER BY f.created_at ASC
                        LIMIT 1
                      )

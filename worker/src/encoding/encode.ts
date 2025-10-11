@@ -21,7 +21,15 @@ async function encodeImage(file: File) {
     throw new Error('uploadPath missing from settings');
   }
 
-  const path = join(file.dir, file.name);
+  const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
+  const toContainerPath = (p: string) =>
+    containerRootPrefix && containerRootPrefix.trim() !== ''
+      ? p === '/'
+        ? containerRootPrefix
+        : `${containerRootPrefix}${p}`
+      : p;
+  const hostPath = join(file.dir, file.name);
+  const path = toContainerPath(hostPath);
   const input = readFileSync(path);
   const fileId = file.id;
 
@@ -96,7 +104,18 @@ async function encodeImage(file: File) {
     ],
   });
 
-  const { lon, lat, takenAt } = await getExifInfo(path);
+  const {
+    lon,
+    lat,
+    takenAt,
+    cameraMake,
+    cameraModel,
+    lensModel,
+    iso,
+    exposureTime,
+    focalLength,
+    fNumber,
+  } = await getExifInfo(path);
 
   // Save image metadata (width, height, takenAt). If no EXIF takenAt, fall back to file.createdAt
   if (width && height) {
@@ -110,6 +129,13 @@ async function encodeImage(file: File) {
       width,
       height,
       takenAt: takenAtFinal,
+      cameraMake: cameraMake ?? null,
+      cameraModel: cameraModel ?? null,
+      lensModel: lensModel ?? null,
+      iso: iso ?? null,
+      exposureTime: exposureTime ?? null,
+      focalLength: focalLength ?? null,
+      fNumber: (typeof fNumber === 'number' ? String(fNumber) : fNumber) ?? null,
     });
   }
 
@@ -199,7 +225,14 @@ async function encodeVideo(file: File) {
     throw new Error('uploadPath missing from settings');
   }
 
-  const inputPath = join(file.dir, file.name);
+  const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
+  const toContainerPath = (p: string) =>
+    containerRootPrefix && containerRootPrefix.trim() !== ''
+      ? p === '/'
+        ? containerRootPrefix
+        : `${containerRootPrefix}${p}`
+      : p;
+  const inputPath = toContainerPath(join(file.dir, file.name));
   const dt = new Date(file.createdAt || Date.now());
   const yyyy = String(dt.getUTCFullYear());
   const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
@@ -215,7 +248,8 @@ async function encodeVideo(file: File) {
   const optPath = join(destDir, optName);
 
   // Extract metadata (width/height, takenAt, geo) from source video
-  const { width, height, takenAt, lat, lon } = await getVideoMetadata(inputPath);
+  const { width, height, takenAt, lat, lon, cameraMake, cameraModel, lensModel } =
+    await getVideoMetadata(inputPath);
 
   // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
   await runFfmpeg(
@@ -309,6 +343,9 @@ async function encodeVideo(file: File) {
       width,
       height,
       takenAt: takenAtFinal,
+      cameraMake: cameraMake ?? null,
+      cameraModel: cameraModel ?? null,
+      lensModel: lensModel ?? null,
     });
   }
 

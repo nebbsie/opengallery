@@ -1,6 +1,7 @@
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
+import { withConcurrency } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
 
@@ -25,6 +26,11 @@ type CreateFilesInput = RouterInputs['files']['create'];
 type TempFile = CreateFilesInput[0];
 
 export async function scan(rootDir: string, userId: string, options?: { skipAlbumFor?: string }) {
+  const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
+  const toHostPath = (p: string) =>
+    containerRootPrefix && p.startsWith(containerRootPrefix)
+      ? p.slice(containerRootPrefix.length) || '/'
+      : p;
   if (!existsSync(rootDir)) {
     logger.warn(`Scan skipped, path not found: ${rootDir}`);
     return { folders: [], totalFiles: 0, byFolder: new Map<string, TempFile[]>() };
@@ -82,7 +88,8 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       const arr: TempFile[] = byFolder.get(dir) ?? [];
       arr.push({
         name: entry.name,
-        dir: dir,
+        // Store host-style path in DB
+        dir: toHostPath(dir),
         mime,
         size: stats.size,
         type,
@@ -128,7 +135,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     const files = byFolder.get(folder) ?? [];
 
     // Get all the files already in the database for this folder.
-    const alreadySavedFiles = (await trpc.files.getFilesInDir.mutate(folder)) as Array<{
+    const alreadySavedFiles = (await trpc.files.getFilesInDir.mutate(toHostPath(folder))) as Array<{
       id: string;
       dir: string;
       name: string;
@@ -179,7 +186,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     const filesToAdd: CreateFilesInput = files
       .filter((f) => !alreadySavedPaths.has(getFullPath(f)))
       .map((f) => ({
-        dir: folder,
+        dir: toHostPath(folder),
         type: f.type,
         mime: f.mime,
         name: f.name,
@@ -193,7 +200,9 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
 
     // Actually add all new files that aren't already in the DB.
-    const fileCreateResult = (await trpc.files.create.mutate(filesToAdd)) as Array<{
+    const fileCreateResult = (await withConcurrency(() =>
+      trpc.files.create.mutate(filesToAdd),
+    )) as Array<{
       id: string;
       dir: string;
       name: string;
@@ -203,21 +212,23 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     const libraryId = await trpc.library.getDefaultLibraryIdForUser.query(userId);
 
     // Link each new file to the library.
-    await trpc.libraryFile.create.mutate(
-      fileCreateResult.map(({ id }) => ({
-        fileId: id,
-        libraryId,
-      })),
+    await withConcurrency(() =>
+      trpc.libraryFile.create.mutate(
+        fileCreateResult.map(({ id }) => ({
+          fileId: id,
+          libraryId,
+        })),
+      ),
     );
 
     //check if file is linked to an album based on album dir == file dir
     //if not album, generate one first for this folder dir
-    await trpc.album.getAlbumByDir.query(folder);
+    await withConcurrency(() => trpc.album.getAlbumByDir.query(toHostPath(folder)));
 
     const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
     // Ensure album exists for this folder (this will also ensure parents exist)
     if (folder !== skipAlbumFor) {
-      const ensuredAlbumId = await ensureAlbumForDir(folder, libraryId);
+      const ensuredAlbumId = await ensureAlbumForDir(toHostPath(folder), libraryId);
       if (ensuredAlbumId) {
         logger.info(`Album ensured for folder: ${folder}`);
       }

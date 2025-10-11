@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, output } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideActivity,
   lucideBadgeAlert,
   lucideHardDrive,
   lucideLogs,
@@ -15,7 +16,14 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   selector: 'app-side-nav-settings',
   imports: [HlmButton, HlmIcon, NgIcon, RouterLink, RouterLinkActive],
   providers: [
-    provideIcons({ lucideHardDrive, lucideLogs, lucideUsers, lucideMonitor, lucideBadgeAlert }),
+    provideIcons({
+      lucideHardDrive,
+      lucideLogs,
+      lucideUsers,
+      lucideMonitor,
+      lucideBadgeAlert,
+      lucideActivity,
+    }),
   ],
   host: {
     class: 'flex flex-col w-full',
@@ -66,6 +74,20 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
     </a>
 
     <p class="my-2 font-medium">Advanced</p>
+
+    <a
+      class="mb-1"
+      hlmBtn
+      routerLink="/settings/encoding"
+      routerLinkActive="active"
+      #rlaEncoding="routerLinkActive"
+      [variant]="rlaEncoding.isActive ? 'menu_active' : 'menu'"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="handleClicked()"
+    >
+      <ng-icon hlm size="sm" name="lucideActivity" />
+      Encoding
+    </a>
 
     <a
       class="mb-1"

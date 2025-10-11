@@ -12,6 +12,13 @@ export const imageMetadataRouter = router({
         width: z.number().int().positive(),
         height: z.number().int().positive(),
         takenAt: z.coerce.date().nullable().optional(),
+        cameraMake: z.string().nullable().optional(),
+        cameraModel: z.string().nullable().optional(),
+        lensModel: z.string().nullable().optional(),
+        iso: z.number().int().nullable().optional(),
+        exposureTime: z.string().nullable().optional(),
+        focalLength: z.number().int().nullable().optional(),
+        fNumber: z.string().nullable().optional(),
       })
     )
     .mutation(async ({ input }) => {
@@ -28,6 +35,13 @@ export const imageMetadataRouter = router({
             width: input.width,
             height: input.height,
             takenAt: input.takenAt ?? null,
+            cameraMake: input.cameraMake ?? null,
+            cameraModel: input.cameraModel ?? null,
+            lensModel: input.lensModel ?? null,
+            iso: input.iso ?? null,
+            exposureTime: input.exposureTime ?? null,
+            focalLength: input.focalLength ?? null,
+            fNumber: input.fNumber ?? null,
             updatedAt: new Date(),
           })
           .where(eq(ImageMetadataTable.fileId, input.fileId))
@@ -42,6 +56,13 @@ export const imageMetadataRouter = router({
           width: input.width,
           height: input.height,
           takenAt: input.takenAt ?? null,
+          cameraMake: input.cameraMake ?? null,
+          cameraModel: input.cameraModel ?? null,
+          lensModel: input.lensModel ?? null,
+          iso: input.iso ?? null,
+          exposureTime: input.exposureTime ?? null,
+          focalLength: input.focalLength ?? null,
+          fNumber: input.fNumber ?? null,
         })
         .returning();
       return created;

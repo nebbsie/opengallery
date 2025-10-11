@@ -1,3 +1,10 @@
 #!/usr/bin/env bash
 
-rm -rf node_modules web/node_modules api/node_modules worker/node_modules web/dist api/dist worker/dist web/.angular package-lock.json web/package-lock.json api/package-lock.json worker/package-lock.json
+# Remove temporary files
+rm -rf /tmp/opengallery/
+
+# Stop containers and remove everything including volumes
+docker compose -f ./docker-compose.infra.yml down --volumes --remove-orphans
+
+# Start everything fresh
+docker compose -f ./docker-compose.infra.yml up -d --remove-orphans

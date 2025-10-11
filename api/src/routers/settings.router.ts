@@ -1,7 +1,7 @@
-import { privateProcedure, publicProcedure, router } from "../trpc.js";
+import { z } from "zod";
 import { db } from "../db/index.js";
 import { SystemSettingsTable } from "../db/schema.js";
-import { z } from "zod";
+import { privateProcedure, publicProcedure, router } from "../trpc.js";
 
 export const settingsRouter = router({
   get: privateProcedure.query(async () => {
@@ -18,7 +18,8 @@ export const settingsRouter = router({
     .input(
       z.object({
         allowsSelfRegistration: z.optional(z.boolean()),
-      }),
+        encodingConcurrency: z.optional(z.number().int().min(1).max(64)),
+      })
     )
     .mutation(async (ctx) => {
       const [res] = await db

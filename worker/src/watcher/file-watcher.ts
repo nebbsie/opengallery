@@ -3,6 +3,7 @@ import chokidar from 'chokidar';
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
+import { withConcurrency } from '../utils/concurrency.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
 
@@ -63,16 +64,26 @@ export class FileWatcherService {
       await this.removeWatcher(id);
     }
 
+    // Translate host path to container path if HOST_ROOT_PREFIX is set (Docker); else use as-is.
+    const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
+    const toContainerPath = (p: string) =>
+      containerRootPrefix && containerRootPrefix.trim() !== ''
+        ? p === '/'
+          ? containerRootPrefix
+          : `${containerRootPrefix}${p}`
+        : p;
+    const containerPath = toContainerPath(path);
+
     // Do an initial scan, but don't crash if a path is missing or unreadable.
     try {
-      await scan(path, userId, { skipAlbumFor: path });
+      await withConcurrency(() => scan(containerPath, userId, { skipAlbumFor: containerPath }));
     } catch (error: unknown) {
-      this.logger.error(`Initial scan failed for ${path} because: ${error}`);
+      this.logger.error(`Initial scan failed for ${containerPath} because: ${error}`);
     }
 
     // Setup watcher.
     try {
-      const watcher = chokidar.watch(path, {
+      const watcher = chokidar.watch(containerPath, {
         persistent: true,
         ignoreInitial: true,
         awaitWriteFinish: {
@@ -85,25 +96,25 @@ export class FileWatcherService {
       // Setup event listeners
       watcher
         .on('add', async (filePath: string) => {
-          await this.handleFileAdded(filePath, userId, path);
+          await withConcurrency(() => this.handleFileAdded(filePath, userId, containerPath));
         })
         .on('change', async (filePath: string) => {
-          await this.handleFileChanged(filePath, userId, path);
+          await withConcurrency(() => this.handleFileChanged(filePath, userId, containerPath));
         })
         .on('unlink', async (filePath: string) => {
-          await this.handleFileDeleted(filePath, userId, path);
+          await withConcurrency(() => this.handleFileDeleted(filePath, userId, containerPath));
         })
         .on('addDir', async (dirPath: string) => {
-          await this.handleDirectoryAdded(dirPath, userId, path);
+          await withConcurrency(() => this.handleDirectoryAdded(dirPath, userId, containerPath));
         })
         .on('unlinkDir', async (dirPath: string) => {
-          await this.handleDirectoryDeleted(dirPath, userId, path);
+          await withConcurrency(() => this.handleDirectoryDeleted(dirPath, userId, containerPath));
         })
         .on('error', (error) => {
           this.logger.error(`Watcher error for ${path}:`, error);
         });
 
-      this.watchers.set(id, { id, path, watcher });
+      this.watchers.set(id, { id, path: containerPath, watcher });
     } catch (error) {
       this.logger.error(`Failed to add watcher for ${path}:`, error as Error);
     }
@@ -130,9 +141,11 @@ export class FileWatcherService {
   async updateWatchers() {
     const usersPaths =
       (await trpc.mediaSourcesSettings.getAll.query()) as RouterOutputs['mediaSourcesSettings']['getAll'];
-    const allPaths = usersPaths.flatMap((u) => u.paths);
+    const allPaths = usersPaths.flatMap(
+      (u: { paths: { id: string; path: string; userId: string }[] }) => u.paths,
+    );
 
-    const currentPathIds = new Set(allPaths.map((p) => p.id));
+    const currentPathIds = new Set(allPaths.map((p: { id: string }) => p.id));
     const existingPathIds = new Set(this.watchers.keys());
 
     // remove stale watchers

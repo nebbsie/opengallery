@@ -1,15 +1,15 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { injectQuery } from '@tanstack/angular-query-experimental';
+import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
+import { ErrorAlert } from '@core/components/error/error';
+import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { ErrorAlert } from '@core/components/error/error';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
-import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
-import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-photos',
-  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, ThumbnailGrid],
+  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -20,11 +20,11 @@ import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
     }
 
     @if (files.isSuccess()) {
-      <app-thumbnail-grid>
-        @for (asset of files.data(); track asset.id) {
-          <app-asset-thumbnail [asset]="asset" />
-        }
-      </app-thumbnail-grid>
+      <app-virtual-thumbnail-grid [items]="files.data()">
+        <ng-template let-asset>
+          <app-asset-thumbnail from="/gallery/photos" [asset]="asset" />
+        </ng-template>
+      </app-virtual-thumbnail-grid>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -87,9 +87,16 @@ async function runFfprobeJson(path: string): Promise<FfprobeResult | undefined> 
   });
 }
 
-export async function getVideoMetadata(
-  inputPath: string,
-): Promise<{ width?: number; height?: number; takenAt?: Date; lat?: number; lon?: number }> {
+export async function getVideoMetadata(inputPath: string): Promise<{
+  width?: number;
+  height?: number;
+  takenAt?: Date;
+  lat?: number;
+  lon?: number;
+  cameraMake?: string;
+  cameraModel?: string;
+  lensModel?: string;
+}> {
   const info = await runFfprobeJson(inputPath);
   if (!info) return {};
 
@@ -101,16 +108,42 @@ export async function getVideoMetadata(
   const streamTags = videoStream?.tags;
 
   const takenAt = extractTakenAtFromTags(streamTags) || extractTakenAtFromTags(formatTags);
+  const cameraMake =
+    (streamTags?.['make'] as string | undefined) ||
+    (formatTags?.['make'] as string | undefined) ||
+    (streamTags?.['com.apple.quicktime.make'] as string | undefined) ||
+    (formatTags?.['com.apple.quicktime.make'] as string | undefined);
+  const cameraModel =
+    (streamTags?.['model'] as string | undefined) ||
+    (formatTags?.['model'] as string | undefined) ||
+    (streamTags?.['com.apple.quicktime.model'] as string | undefined) ||
+    (formatTags?.['com.apple.quicktime.model'] as string | undefined);
+  const lensModel =
+    (streamTags?.['com.apple.quicktime.lens-model'] as string | undefined) ||
+    (formatTags?.['com.apple.quicktime.lens-model'] as string | undefined) ||
+    (streamTags?.['lens_model'] as string | undefined) ||
+    (formatTags?.['lens_model'] as string | undefined);
   const { lat, lon } = extractLatLonFromTags(streamTags) || extractLatLonFromTags(formatTags);
 
   // With exactOptionalPropertyTypes enabled, avoid returning properties with value `undefined`.
-  const result: { width?: number; height?: number; takenAt?: Date; lat?: number; lon?: number } =
-    {};
+  const result: {
+    width?: number;
+    height?: number;
+    takenAt?: Date;
+    lat?: number;
+    lon?: number;
+    cameraMake?: string;
+    cameraModel?: string;
+    lensModel?: string;
+  } = {};
   if (width != null) result.width = width;
   if (height != null) result.height = height;
   if (takenAt != null) result.takenAt = takenAt;
   if (lat != null) result.lat = lat;
   if (lon != null) result.lon = lon;
+  if (cameraMake != null) result.cameraMake = cameraMake;
+  if (cameraModel != null) result.cameraModel = cameraModel;
+  if (lensModel != null) result.lensModel = lensModel;
 
   return result;
 }

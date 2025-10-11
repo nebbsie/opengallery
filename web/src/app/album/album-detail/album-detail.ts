@@ -4,6 +4,7 @@ import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
 import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
+import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
@@ -11,7 +12,15 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-album-detail',
-  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, AlbumThumbnail, ThumbnailGrid, AlbumToolbar],
+  imports: [
+    HlmSpinner,
+    ErrorAlert,
+    AssetThumbnail,
+    AlbumThumbnail,
+    ThumbnailGrid,
+    AlbumToolbar,
+    VirtualThumbnailGrid,
+  ],
   template: `
     @if (response.isPending()) {
       <hlm-spinner />
@@ -35,15 +44,15 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <p class="mb-4 text-sm">Items</p>
         }
 
-        <app-thumbnail-grid>
-          @for (asset of data.files; track asset.id) {
+        <app-virtual-thumbnail-grid [items]="data.files">
+          <ng-template let-asset>
             <app-asset-thumbnail
               [from]="'/albums/' + data.album.id"
               [asset]="asset"
               [albumId]="data.album.id"
             />
-          }
-        </app-thumbnail-grid>
+          </ng-template>
+        </app-virtual-thumbnail-grid>
       }
     }
   `,

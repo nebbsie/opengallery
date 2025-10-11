@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
-import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
+import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { provideIcons } from '@ng-icons/core';
@@ -19,7 +19,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       lucideCirclePause,
     }),
   ],
-  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, ThumbnailGrid, RouterLink, HlmButton],
+  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, RouterLink, HlmButton, VirtualThumbnailGrid],
   template: `
     @if (files.isPending()) {
       <hlm-spinner />
@@ -38,11 +38,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
         </div>
       } @else {
-        <app-thumbnail-grid>
-          @for (asset of files.data(); track asset.id) {
+        <app-virtual-thumbnail-grid [items]="files.data()">
+          <ng-template let-asset>
             <app-asset-thumbnail from="/" [asset]="asset" />
-          }
-        </app-thumbnail-grid>
+          </ng-template>
+        </app-virtual-thumbnail-grid>
       }
     }
   `,
