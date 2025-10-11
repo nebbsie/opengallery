@@ -3,7 +3,7 @@ import chokidar from 'chokidar';
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
-import { trpc } from '../utils/trpc.js';
+import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
 
 interface WatchedPath {
@@ -84,19 +84,19 @@ export class FileWatcherService {
 
       // Setup event listeners
       watcher
-        .on('add', async (filePath) => {
+        .on('add', async (filePath: string) => {
           await this.handleFileAdded(filePath, userId, path);
         })
-        .on('change', async (filePath) => {
+        .on('change', async (filePath: string) => {
           await this.handleFileChanged(filePath, userId, path);
         })
-        .on('unlink', async (filePath) => {
+        .on('unlink', async (filePath: string) => {
           await this.handleFileDeleted(filePath, userId, path);
         })
-        .on('addDir', async (dirPath) => {
+        .on('addDir', async (dirPath: string) => {
           await this.handleDirectoryAdded(dirPath, userId, path);
         })
-        .on('unlinkDir', async (dirPath) => {
+        .on('unlinkDir', async (dirPath: string) => {
           await this.handleDirectoryDeleted(dirPath, userId, path);
         })
         .on('error', (error) => {
@@ -128,7 +128,8 @@ export class FileWatcherService {
   }
 
   async updateWatchers() {
-    const usersPaths = await trpc.mediaSourcesSettings.getAll.query();
+    const usersPaths =
+      (await trpc.mediaSourcesSettings.getAll.query()) as RouterOutputs['mediaSourcesSettings']['getAll'];
     const allPaths = usersPaths.flatMap((u) => u.paths);
 
     const currentPathIds = new Set(allPaths.map((p) => p.id));
@@ -194,7 +195,11 @@ export class FileWatcherService {
       const name = basename(filePath);
 
       // Check if file already exists in database
-      const existingFiles = await trpc.files.getFilesInDir.mutate(dir);
+      const existingFiles = (await trpc.files.getFilesInDir.mutate(dir)) as Array<{
+        id: string;
+        name: string;
+        dir: string;
+      }>;
       const fileExists = existingFiles.some((f) => f.name === name);
 
       if (!fileExists) {
@@ -318,7 +323,10 @@ export class FileWatcherService {
       const name = basename(filePath);
 
       // Find and remove the file from database
-      const existingFiles = await trpc.files.getFilesInDir.mutate(dir);
+      const existingFiles = (await trpc.files.getFilesInDir.mutate(dir)) as Array<{
+        id: string;
+        name: string;
+      }>;
       const fileToDelete = existingFiles.find((f) => f.name === name);
 
       if (fileToDelete) {

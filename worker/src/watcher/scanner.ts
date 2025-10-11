@@ -16,7 +16,7 @@ function getMediaType(ext: string): MediaType | null {
   return null;
 }
 
-function getFullPath(file: TempFile) {
+function getFullPath(file: { dir: string; name: string }) {
   return join(file.dir, file.name);
 }
 
@@ -82,7 +82,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       const arr: TempFile[] = byFolder.get(dir) ?? [];
       arr.push({
         name: entry.name,
-        dir: entry.parentPath,
+        dir: dir,
         mime,
         size: stats.size,
         type,
@@ -128,7 +128,11 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     const files = byFolder.get(folder) ?? [];
 
     // Get all the files already in the database for this folder.
-    const alreadySavedFiles = await trpc.files.getFilesInDir.mutate(folder);
+    const alreadySavedFiles = (await trpc.files.getFilesInDir.mutate(folder)) as Array<{
+      id: string;
+      dir: string;
+      name: string;
+    }>;
     const alreadySavedPaths = new Set(alreadySavedFiles.map(getFullPath));
 
     // If no files to add and no files in the DB for this folder, skip.
@@ -189,7 +193,11 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
 
     // Actually add all new files that aren't already in the DB.
-    const fileCreateResult = await trpc.files.create.mutate(filesToAdd);
+    const fileCreateResult = (await trpc.files.create.mutate(filesToAdd)) as Array<{
+      id: string;
+      dir: string;
+      name: string;
+    }>;
 
     // Get the user's default library.
     const libraryId = await trpc.library.getDefaultLibraryIdForUser.query(userId);
@@ -217,12 +225,18 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
     //this may need to be changed to get all users library files(if in future they could have many), not just default library files.
     //library is what links a file to a user
-    const allFiles = await trpc.libraryFile.getAllLibraryFiles.query(libraryId);
-    const albums = await trpc.album.getAllAlbumsForLibrary.query(libraryId);
+    const allFiles = (await trpc.libraryFile.getAllLibraryFiles.query(libraryId)) as Array<{
+      id: string;
+      dir: string;
+    }>;
+    const albums = (await trpc.album.getAllAlbumsForLibrary.query(libraryId)) as Array<{
+      id: string;
+      dir: string;
+    }>;
 
-    const albumFiles = await trpc.albumFile.getByAlbumIds.query(
+    const albumFiles = (await trpc.albumFile.getByAlbumIds.query(
       albums.map((f: { id: string }) => f.id),
-    );
+    )) as Array<{ albumId: string; fileId: string }>;
 
     // Build a lookup table: album name → albumId
     const albumMap = new Map(albums.map((a) => [a.dir, a.id]));

@@ -103,7 +103,14 @@ export async function getVideoMetadata(
   const takenAt = extractTakenAtFromTags(streamTags) || extractTakenAtFromTags(formatTags);
   const { lat, lon } = extractLatLonFromTags(streamTags) || extractLatLonFromTags(formatTags);
 
-  return { width, height, takenAt, lat, lon };
+  // With exactOptionalPropertyTypes enabled, avoid returning properties with value `undefined`.
+  const result: { width?: number; height?: number; takenAt?: Date; lat?: number; lon?: number } =
+    {};
+  if (width != null) result.width = width;
+  if (height != null) result.height = height;
+  if (takenAt != null) result.takenAt = takenAt;
+  if (lat != null) result.lat = lat;
+  if (lon != null) result.lon = lon;
+
+  return result;
 }
-
-
