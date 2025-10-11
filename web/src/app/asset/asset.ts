@@ -39,9 +39,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
     @if (file.isSuccess() && file.data(); as data) {
       <div
-        class="mx-auto flex h-12 w-full items-center {{
-          backLink ? ' justify-between' : 'justify-end'
-        }}"
+        class="mx-auto flex w-full items-center {{ backLink ? ' justify-between' : 'justify-end' }}"
       >
         @if (backLink) {
           <a hlmBtn variant="ghost" size="icon" [routerLink]="backLink">
@@ -226,7 +224,7 @@ export class Asset implements OnDestroy {
 
   protected getNavQueryParams(): Record<string, string> | null {
     const qp: Record<string, string> = {};
-    if (this.albumId) qp['album'] = this.albumId;
+    if (this.albumId) qp['albumId'] = this.albumId;
     if (this.backLink) qp['from'] = this.backLink;
     return Object.keys(qp).length ? qp : null;
   }
@@ -267,19 +265,19 @@ export class Asset implements OnDestroy {
     const tier = this.getVideoTierLabel(height);
     switch (tier) {
       case 'SD':
-        return 'bg-secondary text-secondary-foreground';
+        return 'bg-secondary text-secondary-foreground font-bold';
       case 'HD':
-        return 'bg-blue-600 text-white';
+        return 'bg-blue-600 text-white font-bold';
       case 'FHD':
-        return 'bg-indigo-600 text-white';
+        return 'bg-indigo-600 text-white font-bold';
       case 'QHD':
-        return 'bg-purple-600 text-white';
+        return 'bg-purple-600 text-white font-bold';
       case '4K':
-        return 'bg-emerald-600 text-white';
+        return 'bg-emerald-600 text-white font-bold';
       case '8K':
-        return 'bg-rose-600 text-white';
+        return 'bg-rose-600 text-white font-bold';
       default:
-        return 'bg-primary text-primary-foreground';
+        return 'bg-primary text-primary-foreground font-bold';
     }
   }
 
@@ -321,6 +319,11 @@ export class Asset implements OnDestroy {
   }
 
   onKeydown(event: KeyboardEvent) {
+    // Allow quick back navigation with ESC when coming from a page
+    if (this.backLink && event.key === 'Escape') {
+      this.router.navigateByUrl(this.backLink);
+      return;
+    }
     if (!this.file.isSuccess()) return;
     const data = this.file.data();
     if (!data) return;

@@ -1,4 +1,14 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Router, RouterLink } from '@angular/router';
+import { Logo } from '@core/components/logo/logo';
+import { Auth } from '@core/services/auth/auth';
+import { CacheKey } from '@core/services/cache-key.types';
+import { injectTrpc } from '@core/services/trpc';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCircleAlert, lucideInfo } from '@ng-icons/lucide';
+import { HlmAlert, HlmAlertDescription, HlmAlertIcon, HlmAlertTitle } from '@spartan-ng/helm/alert';
+import { HlmButton } from '@spartan-ng/helm/button';
 import {
   HlmCard,
   HlmCardContent,
@@ -7,20 +17,10 @@ import {
   HlmCardHeader,
   HlmCardTitle,
 } from '@spartan-ng/helm/card';
-import { HlmButton } from '@spartan-ng/helm/button';
-import { HlmLabel } from '@spartan-ng/helm/label';
-import { HlmInput } from '@spartan-ng/helm/input';
-import { Router, RouterLink } from '@angular/router';
-import { Logo } from '@core/components/logo/logo';
-import { HlmAlert, HlmAlertDescription, HlmAlertIcon, HlmAlertTitle } from '@spartan-ng/helm/alert';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCircleAlert, lucideInfo } from '@ng-icons/lucide';
-import { Auth } from '@core/services/auth/auth';
-import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { HlmInput } from '@spartan-ng/helm/input';
+import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
-import { CacheKey } from '@core/services/cache-key.types';
-import { injectTrpc } from '@core/services/trpc';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
@@ -119,7 +119,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
               >Already have an account? Log in</a
             >
           } @else {
-            <div hlmAlert>
+            <div class="mt-4" hlmAlert>
               <ng-icon hlm hlmAlertIcon name="lucideInfo" />
               <h4 hlmAlertTitle>First-Time Setup</h4>
               <p hlmAlertDescription>Your first account will automatically become the admin.</p>

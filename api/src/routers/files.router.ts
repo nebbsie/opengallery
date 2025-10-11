@@ -113,6 +113,86 @@ export const filesRouter = router({
       });
     }),
 
+  // Remove all files under a directory (recursively) for a specified user (internal only)
+  removeFilesUnderDir: internalProcedure
+    .input(z.object({ dir: z.string(), userId: z.string() }))
+    .mutation(async ({ input }) => {
+      const { dir, userId } = input;
+
+      // Gather all file IDs for this user where FileTable.dir is dir or a subdirectory of dir
+      const rows = await db
+        .select({ id: FileTable.id })
+        .from(LibraryFileTable)
+        .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
+        .innerJoin(
+          LibraryTable,
+          eq(LibraryTable.id, LibraryFileTable.libraryId)
+        )
+        .where(
+          and(
+            eq(LibraryTable.userId, userId),
+            isNull(LibraryFileTable.deletedAt),
+            or(eq(FileTable.dir, dir), sql`${FileTable.dir} LIKE ${dir + "/%"}`)
+          )
+        );
+
+      const fileIds = rows.map((r) => r.id);
+      if (fileIds.length === 0) return [] as { id: string }[];
+
+      // Reuse the same deletion logic as removeFilesById
+      return db.transaction(async (tx) => {
+        // Also delete any variants created for these files
+        const variantRows = await tx
+          .select({ fileId: FileVariantTable.fileId })
+          .from(FileVariantTable)
+          .where(inArray(FileVariantTable.originalFileId, fileIds));
+
+        const variantFileIds = variantRows.map((r) => r.fileId);
+        const idsToDelete = Array.from(
+          new Set([...fileIds, ...variantFileIds])
+        );
+
+        await tx
+          .update(AlbumTable)
+          .set({ cover: null })
+          .where(inArray(AlbumTable.cover, idsToDelete));
+
+        await tx
+          .delete(VideoMetadataTable)
+          .where(inArray(VideoMetadataTable.fileId, idsToDelete));
+
+        await tx
+          .delete(ImageMetadataTable)
+          .where(inArray(ImageMetadataTable.fileId, idsToDelete));
+
+        await tx
+          .delete(GeoLocationTable)
+          .where(inArray(GeoLocationTable.fileId, idsToDelete));
+
+        await tx
+          .delete(AlbumFileTable)
+          .where(inArray(AlbumFileTable.fileId, idsToDelete));
+
+        await tx
+          .delete(LibraryFileTable)
+          .where(inArray(LibraryFileTable.fileId, idsToDelete));
+
+        await tx
+          .delete(FileVariantTable)
+          .where(
+            or(
+              inArray(FileVariantTable.originalFileId, idsToDelete),
+              inArray(FileVariantTable.fileId, idsToDelete)
+            )
+          );
+
+        return tx
+          .delete(FileTable)
+          .where(inArray(FileTable.id, idsToDelete))
+          .returning({ id: FileTable.id });
+      });
+    }),
+
   getAllFiles: internalProcedure.query(() => db.select().from(FileTable)),
 
   viewFile: privateProcedure
@@ -218,6 +298,7 @@ export const filesRouter = router({
         .limit(1);
 
       // Compute prev/next IDs using the same ordering, optionally scoped to an album
+      // Include both images and videos; do not filter by current file's type
       const orderedFileIds = albumId
         ? await db
             .select({ id: FileTable.id })
@@ -227,12 +308,7 @@ export const filesRouter = router({
               ImageMetadataTable,
               eq(ImageMetadataTable.fileId, FileTable.id)
             )
-            .where(
-              and(
-                eq(AlbumFileTable.albumId, albumId),
-                eq(FileTable.type, file.type)
-              )
-            )
+            .where(and(eq(AlbumFileTable.albumId, albumId)))
             .orderBy(
               desc(
                 sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
@@ -253,8 +329,7 @@ export const filesRouter = router({
             .where(
               and(
                 eq(LibraryTable.userId, userId),
-                isNull(LibraryFileTable.deletedAt),
-                eq(FileTable.type, file.type)
+                isNull(LibraryFileTable.deletedAt)
               )
             )
             .orderBy(

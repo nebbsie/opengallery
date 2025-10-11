@@ -351,22 +351,18 @@ export class FileWatcherService {
     this.logger.info(`Directory deleted: ${dirPath}`);
 
     try {
-      // Remove all files in this directory from database
-      const existingFiles = await trpc.files.getFilesInDir.mutate(dirPath);
-
-      if (existingFiles.length > 0) {
-        await trpc.files.removeFilesById.mutate(existingFiles.map((f) => f.id));
-
-        // Also remove from album files and library files
-        await trpc.albumFile.removeAlbumFilesById.mutate(existingFiles.map((f) => f.id));
-        await trpc.libraryFile.removeLibraryFilesById.mutate(existingFiles.map((f) => f.id));
-      }
+      // Remove all files under this directory (recursively) for the user
+      await trpc.files.removeFilesUnderDir.mutate({ dir: dirPath, userId });
 
       // Note: Album deletion is not implemented in the API
-      // The album will remain but without files, which is acceptable for now
-      const [album] = await trpc.album.getAlbumByDir.query(dirPath);
-      if (album) {
-        this.logger.info(`Album exists for deleted directory: ${dirPath} (not removing album)`);
+      // After removing files, try to remove now-empty albums below this path
+      try {
+        const result = await trpc.album.removeEmptyUnderDir.mutate({ dir: dirPath, userId });
+        this.logger.info(
+          `Removed ${result.removed} empty album(s) under deleted directory: ${dirPath}`,
+        );
+      } catch (innerErr) {
+        this.logger.warn(`Failed to remove empty albums under ${dirPath}: ${String(innerErr)}`);
       }
 
       this.logger.info(`Successfully cleaned up deleted directory: ${dirPath}`);

@@ -105,3 +105,5 @@ export async function getVideoMetadata(
 
   return { width, height, takenAt, lat, lon };
 }
+
+

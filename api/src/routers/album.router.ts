@@ -1,11 +1,12 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
   AlbumFileTable,
   AlbumTable,
   FileTable,
+  ImageMetadataTable,
   LibraryTable,
   MediaPathTable,
 } from "../db/schema.js";
@@ -362,13 +363,21 @@ export const albumRouter = router({
       const rel = stripPrefix(normalize(albumRow.dir), rootPath);
       const relSegments = rel.split("/").filter(Boolean);
 
-      // files
+      // files - order consistently with asset view: coalesce(takenAt, createdAt) DESC
       const files = await db
         .select({ file: FileTable })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .leftJoin(
+          ImageMetadataTable,
+          eq(ImageMetadataTable.fileId, FileTable.id)
+        )
         .where(eq(AlbumFileTable.albumId, albumId))
-        .orderBy(desc(FileTable.createdAt));
+        .orderBy(
+          desc(
+            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
+          )
+        );
 
       // child albums
       const children = await db
@@ -464,6 +473,47 @@ export const albumRouter = router({
           ancestors, // [{ id, parentId, name, dir }, ...] root->current
         },
       };
+    }),
+
+  // Remove empty albums under a directory (recursively) for a specified user (internal only)
+  removeEmptyUnderDir: internalProcedure
+    .input(z.object({ dir: z.string(), userId: z.string() }))
+    .mutation(async ({ input }) => {
+      const { dir, userId } = input;
+
+      // Fetch candidate albums under dir for this user, deepest-first
+      const candidates = await db
+        .select({ id: AlbumTable.id })
+        .from(AlbumTable)
+        .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
+        .where(
+          and(
+            eq(LibraryTable.userId, userId),
+            or(
+              eq(AlbumTable.dir, dir),
+              sql`${AlbumTable.dir} LIKE ${dir + "/%"}`
+            )
+          )
+        )
+        .orderBy(desc(sql`length(${AlbumTable.dir})`));
+
+      if (candidates.length === 0) return { removed: 0 } as const;
+
+      let removed = 0;
+      for (const { id } of candidates) {
+        // Skip if album still has files linked
+        const hasFiles = await db
+          .select({ id: AlbumFileTable.id })
+          .from(AlbumFileTable)
+          .where(eq(AlbumFileTable.albumId, id))
+          .limit(1);
+        if (hasFiles.length > 0) continue;
+
+        await db.delete(AlbumTable).where(eq(AlbumTable.id, id));
+        removed++;
+      }
+
+      return { removed } as const;
     }),
 
   setParentByDir: internalProcedure
