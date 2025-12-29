@@ -3,10 +3,12 @@ import {
   ChangeDetectionStrategy,
   Component,
   effect,
+  ElementRef,
   inject,
   input,
   OnDestroy,
   signal,
+  viewChild,
 } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ErrorAlert } from '@core/components/error/error';
@@ -16,18 +18,27 @@ import { injectTrpc } from '@core/services/trpc';
 import { UiSettingsService } from '@core/services/ui-settings/ui-settings';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronLeft, lucideChevronRight, lucideInfo, lucideX } from '@ng-icons/lucide';
+import {
+  lucideChevronLeft,
+  lucideChevronRight,
+  lucideCopy,
+  lucideInfo,
+  lucideX,
+} from '@ng-icons/lucide';
 import { HlmBadge } from '@spartan-ng/helm/badge';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
+import * as L from 'leaflet';
 
 const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
 @Component({
   selector: 'app-asset',
   imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, HlmBadge, DatePipe],
-  providers: [provideIcons({ lucideChevronLeft, lucideChevronRight, lucideInfo, lucideX })],
+  providers: [
+    provideIcons({ lucideChevronLeft, lucideChevronRight, lucideCopy, lucideInfo, lucideX }),
+  ],
   host: {
     class: 'relative block h-full w-full overflow-hidden',
     '(document:keydown)': 'onKeydown($event)',
@@ -54,7 +65,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
       @let f = data.file;
       <div
-        class="mx-auto flex h-[calc(100%-3rem)] w-full items-stretch px-4"
+        class="mx-auto flex h-[calc(100%-3rem)] w-full items-stretch"
         [class.gap-4]="infoOpen()"
         [class.gap-0]="!infoOpen()"
       >
@@ -107,98 +118,170 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
           class="bg-background text-foreground border-border absolute inset-0 right-0 z-50 translate-x-full transition-transform duration-150 ease-in-out sm:static sm:inset-auto sm:z-auto sm:shrink-0 sm:translate-x-0 sm:overflow-hidden sm:transition-[width] sm:duration-150 sm:ease-in-out"
           [class.translate-x-0]="infoOpen()"
           [class.pointer-events-none]="!infoOpen()"
-          [class.w-70]="infoOpen()"
+          [class.w-80]="infoOpen()"
           [class.w-0]="!infoOpen()"
           [class.border-l]="infoOpen()"
         >
           <div
-            class="h-full overflow-y-auto p-4 pr-0 transition-opacity duration-150"
+            class="h-full overflow-y-auto p-4 transition-opacity duration-150"
             [class.opacity-0]="!infoOpen()"
             [class.opacity-100]="infoOpen()"
           >
-            <div class="mb-4 flex items-center justify-between">
-              <h3 class="text-lg font-semibold">Details</h3>
-            </div>
-
-            <div class="space-y-3 text-sm">
-              <div>
-                <div class="text-muted-foreground font-semibold">Name</div>
-                <div class="truncate">{{ f.name }}</div>
-              </div>
-
-              <div>
-                <div class="text-muted-foreground font-semibold">Size</div>
-                <div>{{ formatBytes(f.size) }}</div>
-              </div>
-
-              @if (data.imageMetadata) {
-                <div>
-                  <div class="text-muted-foreground font-semibold">Dimensions</div>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span>{{ data.imageMetadata.width }} × {{ data.imageMetadata.height }}</span>
-                    @if (f.type === 'video') {
-                      <span hlmBadge [class]="getBadgeClass(data.imageMetadata.height)">{{
-                        getVideoBadgeLabel(data.imageMetadata.height)
-                      }}</span>
-                    }
+            <div class="space-y-6">
+              <!-- File Information Section -->
+              <section>
+                <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                  File Info
+                </h4>
+                <div class="space-y-3">
+                  <div class="flex items-start justify-between gap-3">
+                    <span class="text-muted-foreground text-xs">Name</span>
+                    <span class="text-right text-sm font-medium break-words">{{ f.name }}</span>
                   </div>
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="text-muted-foreground text-xs">Size</span>
+                    <span class="text-sm">{{ formatBytes(f.size) }}</span>
+                  </div>
+                  @if (data.imageMetadata) {
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-muted-foreground text-xs">Dimensions</span>
+                      <div class="flex items-center gap-2">
+                        <span class="text-sm font-medium"
+                          >{{ data.imageMetadata.width }} × {{ data.imageMetadata.height }}</span
+                        >
+                        @if (f.type === 'image') {
+                          <span hlmBadge class="bg-primary text-primary-foreground font-bold">{{
+                            getMegapixels(data.imageMetadata.width, data.imageMetadata.height)
+                          }}</span>
+                        }
+                        @if (f.type === 'video') {
+                          <span hlmBadge [class]="getBadgeClass(data.imageMetadata.height)">{{
+                            getVideoBadgeLabel(data.imageMetadata.height)
+                          }}</span>
+                        }
+                      </div>
+                    </div>
+                  }
                 </div>
+              </section>
 
-                @if (shouldShowTaken(data.imageMetadata.takenAt, f.createdAt)) {
-                  <div>
-                    <div class="text-muted-foreground font-semibold">Taken</div>
-                    <div>{{ data.imageMetadata.takenAt | date: 'M/d/y h:mma' }}</div>
-                  </div>
-                }
-
-                @if (
+              @if (
+                data.imageMetadata &&
+                (shouldShowTaken(data.imageMetadata.takenAt, f.createdAt) ||
                   data.imageMetadata.cameraMake ||
                   data.imageMetadata.cameraModel ||
                   data.imageMetadata.lensModel ||
                   data.imageMetadata.iso != null ||
                   data.imageMetadata.exposureTime ||
                   data.imageMetadata.fNumber ||
-                  data.imageMetadata.focalLength != null
-                ) {
-                  <div class="grid gap-1.5">
-                    <div class="text-muted-foreground font-semibold">Camera</div>
-                    @if (data.imageMetadata.cameraMake || data.imageMetadata.cameraModel) {
-                      <div class="truncate">
-                        {{ data.imageMetadata.cameraMake || '' }}
-                        {{ data.imageMetadata.cameraModel || '' }}
-                      </div>
-                    }
-                    @if (data.imageMetadata.lensModel) {
-                      <div class="truncate">Lens: {{ data.imageMetadata.lensModel }}</div>
-                    }
-                    <div
-                      class="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
-                    >
-                      @if (data.imageMetadata.exposureTime) {
-                        <span>{{ formatShutterSpeed(data.imageMetadata.exposureTime) }}</span>
+                  data.imageMetadata.focalLength != null)
+              ) {
+                <div class="border-border border-t pt-6">
+                  <section>
+                    <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                      Capture Details
+                    </h4>
+                    <div class="space-y-3">
+                      @if (shouldShowTaken(data.imageMetadata.takenAt, f.createdAt)) {
+                        <div class="flex items-center justify-between gap-3">
+                          <span class="text-muted-foreground text-xs">Taken</span>
+                          <span class="text-sm">{{
+                            data.imageMetadata.takenAt | date: 'MMM d, y · h:mma'
+                          }}</span>
+                        </div>
                       }
-                      @if (data.imageMetadata.fNumber) {
-                        <span>f/{{ data.imageMetadata.fNumber }}</span>
+
+                      @if (data.imageMetadata.cameraMake || data.imageMetadata.cameraModel) {
+                        <div class="flex items-start justify-between gap-3">
+                          <span class="text-muted-foreground text-xs">Camera</span>
+                          <span class="text-right text-sm font-medium break-words">
+                            {{ data.imageMetadata.cameraMake || '' }}
+                            {{ data.imageMetadata.cameraModel || '' }}
+                          </span>
+                        </div>
                       }
-                      @if (data.imageMetadata.iso !== null) {
-                        <span>ISO {{ data.imageMetadata.iso }}</span>
+
+                      @if (data.imageMetadata.lensModel) {
+                        <div class="flex items-start justify-between gap-3">
+                          <span class="text-muted-foreground text-xs">Lens</span>
+                          <span class="text-right text-sm break-words">{{
+                            data.imageMetadata.lensModel
+                          }}</span>
+                        </div>
                       }
-                      @if (data.imageMetadata.focalLength !== null) {
-                        <span>{{ data.imageMetadata.focalLength }} mm</span>
+
+                      @if (
+                        data.imageMetadata.exposureTime ||
+                        data.imageMetadata.fNumber ||
+                        data.imageMetadata.iso !== null ||
+                        data.imageMetadata.focalLength !== null
+                      ) {
+                        <div class="flex items-start justify-between gap-3">
+                          <span class="text-muted-foreground text-xs">Settings</span>
+                          <div class="flex flex-wrap justify-end gap-1.5">
+                            @if (data.imageMetadata.exposureTime) {
+                              <span
+                                class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
+                                >{{ formatShutterSpeed(data.imageMetadata.exposureTime) }}</span
+                              >
+                            }
+                            @if (data.imageMetadata.fNumber) {
+                              <span
+                                class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
+                                >f/{{ data.imageMetadata.fNumber }}</span
+                              >
+                            }
+                            @if (data.imageMetadata.iso !== null) {
+                              <span
+                                class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
+                                >ISO {{ data.imageMetadata.iso }}</span
+                              >
+                            }
+                            @if (data.imageMetadata.focalLength !== null) {
+                              <span
+                                class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
+                                >{{ data.imageMetadata.focalLength }}mm</span
+                              >
+                            }
+                          </div>
+                        </div>
                       }
                     </div>
-                  </div>
-                }
+                  </section>
+                </div>
               }
 
-              <div>
-                <div class="text-muted-foreground font-semibold">Path</div>
-                <div class="truncate" [title]="f.dir + '/' + f.name">{{ f.dir }}/{{ f.name }}</div>
-              </div>
+              @if (data.geoLocation) {
+                <div class="border-border border-t pt-6">
+                  <section>
+                    <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                      Location
+                    </h4>
+                    <div
+                      #mapContainer
+                      class="border-border h-48 w-full overflow-hidden rounded-lg border shadow-sm"
+                    ></div>
+                  </section>
+                </div>
+              }
 
-              <div>
-                <div class="text-muted-foreground font-semibold">Imported</div>
-                <div>{{ f.createdAt | date: 'M/d/y h:mma' }}</div>
+              <!-- Import Details Section -->
+              <div class="border-border border-t pt-6">
+                <section>
+                  <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                    Import Details
+                  </h4>
+                  <div class="space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                      <span class="text-muted-foreground text-xs">Filename</span>
+                      <span class="text-right text-sm font-medium break-words">{{ f.name }}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-muted-foreground text-xs">Imported</span>
+                      <span class="text-sm">{{ f.createdAt | date: 'MMM d, y · h:mma' }}</span>
+                    </div>
+                  </div>
+                </section>
               </div>
             </div>
           </div>
@@ -224,6 +307,9 @@ export class Asset implements OnDestroy {
   protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
   private wasSideBarOpen: boolean;
+  private hasAutoClosedSidebar = false;
+  private map: L.Map | null = null;
+  protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
   constructor() {
     this.wasSideBarOpen = this.sidebar.isOpen();
@@ -231,8 +317,26 @@ export class Asset implements OnDestroy {
     effect(() => {
       const autoClose = this.uiSettings.autoCloseSidebarOnAssetOpen();
       if (autoClose === null) return; // not yet loaded
-      if (autoClose && this.wasSideBarOpen && this.sidebar.isOpen()) {
+      if (autoClose && this.wasSideBarOpen && this.sidebar.isOpen() && !this.hasAutoClosedSidebar) {
         this.sidebar.close();
+        this.hasAutoClosedSidebar = true;
+      }
+    });
+
+    // Initialize map when data and container are available
+    effect(() => {
+      const data = this.file.data();
+      const container = this.mapContainer();
+
+      // Clean up existing map first
+      if (this.map) {
+        this.map.remove();
+        this.map = null;
+      }
+
+      // Create new map if we have geolocation data
+      if (data?.geoLocation && container) {
+        this.initMap(Number(data.geoLocation.lat), Number(data.geoLocation.lon));
       }
     });
 
@@ -253,8 +357,10 @@ export class Asset implements OnDestroy {
         });
 
         // After metadata is cached, decide what to preload
-        const cached: any = this.queryClient.getQueryData(key as unknown as any);
-        const fileType: 'image' | 'video' | undefined = cached?.file?.type;
+        const cached = this.queryClient.getQueryData(key as unknown as readonly unknown[]) as
+          | { file?: { type?: 'image' | 'video' } }
+          | undefined;
+        const fileType = cached?.file?.type;
         if (fileType === 'image') {
           this.preloadUrl(`${this.apiUrl}/asset/${id}/optimised`);
         } else {
@@ -361,6 +467,18 @@ export class Asset implements OnDestroy {
     return `${value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[i]}`;
   }
 
+  protected getMegapixels(
+    width: number | null | undefined,
+    height: number | null | undefined,
+  ): string {
+    if (!width || !height) return '';
+    const megapixels = (width * height) / 1_000_000;
+    if (megapixels < 1) {
+      return `${(megapixels * 1000).toFixed(0)}K`;
+    }
+    return `${megapixels.toFixed(1)} MP`;
+  }
+
   protected formatShutterSpeed(value: string | number): string {
     const n = typeof value === 'number' ? value : Number(value);
     if (!isFinite(n) || n <= 0) return String(value);
@@ -402,6 +520,30 @@ export class Asset implements OnDestroy {
     }
   }
 
+  protected async copyToClipboard(value: string) {
+    if (!value) return;
+    const hasNavigator = typeof navigator !== 'undefined';
+    const hasDocument = typeof document !== 'undefined';
+    try {
+      if (hasNavigator && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return;
+      }
+      if (!hasDocument) return;
+      const el = document.createElement('textarea');
+      el.value = value;
+      el.setAttribute('readonly', '');
+      el.style.position = 'fixed';
+      el.style.top = '-9999px';
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    } catch {
+      // no-op
+    }
+  }
+
   onKeydown(event: KeyboardEvent) {
     // Allow quick back navigation with ESC when coming from a page
     if (this.backLink && event.key === 'Escape') {
@@ -423,9 +565,40 @@ export class Asset implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.map) {
+      this.map.remove();
+      this.map = null;
+    }
     if (this.wasSideBarOpen) {
       this.sidebar.open();
     }
+  }
+
+  private initMap(lat: number, lon: number): void {
+    const container = this.mapContainer()?.nativeElement;
+    if (!container || this.map) return;
+
+    // Fix Leaflet's default icon path issue in bundled apps
+    delete (L.Icon.Default.prototype as any)._getIconUrl;
+    L.Icon.Default.mergeOptions({
+      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    });
+
+    this.map = L.map(container, {
+      center: [lat, lon],
+      zoom: 13,
+      zoomControl: false,
+      attributionControl: true,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap',
+      maxZoom: 19,
+    }).addTo(this.map);
+
+    L.marker([lat, lon]).addTo(this.map);
   }
 
   private readonly preloaded = new Set<string>();
@@ -435,8 +608,8 @@ export class Asset implements OnDestroy {
     this.preloaded.add(url);
     try {
       const img = new Image();
-      (img as any).decoding = 'async';
-      (img as any).loading = 'eager';
+      img.decoding = 'async';
+      img.loading = 'eager';
       img.src = url;
     } catch {
       // ignore

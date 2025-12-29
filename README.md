@@ -51,19 +51,10 @@ opengallery/
 
 ---
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-- **Node.js 18+**
-- **PostgreSQL** database
-- **Docker** (optional, for containerized deployment)
-
-### 1. Start Infrastructure
+### 1. Start Dev Infrastructure
 
 ```bash
-# Start all services with Docker Compose
-docker compose up -d --remove-orphans
+./dev
 ```
 
 ### 2. Individual Module Setup

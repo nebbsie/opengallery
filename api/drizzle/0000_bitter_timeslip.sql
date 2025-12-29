@@ -1,6 +1,9 @@
+CREATE TYPE "public"."file_task_status" AS ENUM('pending', 'in_progress', 'succeeded', 'failed', 'skipped');--> statement-breakpoint
+CREATE TYPE "public"."file_task_type" AS ENUM('encode_thumbnail', 'encode_optimised', 'video_poster');--> statement-breakpoint
 CREATE TYPE "public"."file_type" AS ENUM('image', 'video');--> statement-breakpoint
 CREATE TYPE "public"."file_variant_type" AS ENUM('thumbnail', 'optimised');--> statement-breakpoint
 CREATE TYPE "public"."log_type" AS ENUM('error', 'info', 'warn', 'debug');--> statement-breakpoint
+CREATE TYPE "public"."processing_stage" AS ENUM('import', 'encode', 'metadata', 'geolocation', 'variants', 'ffmpeg');--> statement-breakpoint
 CREATE TYPE "public"."share_type" AS ENUM('user', 'public');--> statement-breakpoint
 CREATE TYPE "public"."shared_access_level_type" AS ENUM('view', 'add', 'edit');--> statement-breakpoint
 CREATE TYPE "public"."shared_item_type" AS ENUM('library', 'album', 'file');--> statement-breakpoint
@@ -61,6 +64,22 @@ CREATE TABLE "file" (
 	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "file_task" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"file_id" uuid NOT NULL,
+	"type" "file_task_type" NOT NULL,
+	"version" integer DEFAULT 1 NOT NULL,
+	"status" "file_task_status" DEFAULT 'pending' NOT NULL,
+	"attempts" integer DEFAULT 0 NOT NULL,
+	"priority" integer DEFAULT 0 NOT NULL,
+	"scheduled_at" timestamp,
+	"started_at" timestamp,
+	"finished_at" timestamp,
+	"last_error" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "file_variant" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"type" "file_variant_type" NOT NULL,
@@ -86,6 +105,13 @@ CREATE TABLE "image_metadata" (
 	"height" integer NOT NULL,
 	"blurhash" text,
 	"taken_at" timestamp,
+	"camera_make" text,
+	"camera_model" text,
+	"lens_model" text,
+	"iso" integer,
+	"exposure_time" text,
+	"focal_length" integer,
+	"f_number" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -157,6 +183,16 @@ CREATE TABLE "shared_item" (
 CREATE TABLE "system_settings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"upload_path" text NOT NULL,
+	"allows_self_registration" boolean DEFAULT false NOT NULL,
+	"encoding_concurrency" integer DEFAULT 5 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "ui_settings" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"auto_close_sidebar_on_asset_open" boolean DEFAULT true NOT NULL,
+	"user_id" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updatedAt" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -203,6 +239,7 @@ ALTER TABLE "album" ADD CONSTRAINT "album_cover_file_id_fk" FOREIGN KEY ("cover"
 ALTER TABLE "album" ADD CONSTRAINT "album_library_id_library_id_fk" FOREIGN KEY ("library_id") REFERENCES "public"."library"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "album" ADD CONSTRAINT "album_parent_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."album"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "event_log" ADD CONSTRAINT "event_log_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "file_task" ADD CONSTRAINT "file_task_file_id_file_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "file_variant" ADD CONSTRAINT "file_variant_original_file_id_file_id_fk" FOREIGN KEY ("original_file_id") REFERENCES "public"."file"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "file_variant" ADD CONSTRAINT "file_variant_file_id_file_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "geo_location" ADD CONSTRAINT "geo_location_file_id_file_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -214,10 +251,13 @@ ALTER TABLE "media_path" ADD CONSTRAINT "media_path_user_id_user_id_fk" FOREIGN 
 ALTER TABLE "media_settings" ADD CONSTRAINT "media_settings_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "session" ADD CONSTRAINT "session_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "shared_item" ADD CONSTRAINT "shared_item_shared_to_user_id_user_id_fk" FOREIGN KEY ("shared_to_user_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ui_settings" ADD CONSTRAINT "ui_settings_user_id_user_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."user"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "video_metadata" ADD CONSTRAINT "video_metadata_file_id_file_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."file"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "video_metadata" ADD CONSTRAINT "video_metadata_poster_file_variant_id_fk" FOREIGN KEY ("poster") REFERENCES "public"."file_variant"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "album_library_dir_uidx" ON "album" USING btree ("library_id","dir");--> statement-breakpoint
 CREATE UNIQUE INDEX "file_path_uidx" ON "file" USING btree ("dir","name");--> statement-breakpoint
+CREATE UNIQUE INDEX "file_task_unique" ON "file_task" USING btree ("file_id","type","version");--> statement-breakpoint
 CREATE UNIQUE INDEX "file_variant_fileid_type_idx" ON "file_variant" USING btree ("original_file_id","type");--> statement-breakpoint
 CREATE UNIQUE INDEX "media_path_user_id_path_index" ON "media_path" USING btree ("user_id","path");--> statement-breakpoint
-CREATE UNIQUE INDEX "media_settings_user_id_index" ON "media_settings" USING btree ("user_id");
+CREATE UNIQUE INDEX "media_settings_user_id_index" ON "media_settings" USING btree ("user_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "ui_settings_user_id_index" ON "ui_settings" USING btree ("user_id");

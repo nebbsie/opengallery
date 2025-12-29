@@ -3,7 +3,6 @@ import chokidar from 'chokidar';
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
-import { withConcurrency } from '../utils/concurrency.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
 
@@ -76,7 +75,7 @@ export class FileWatcherService {
 
     // Do an initial scan, but don't crash if a path is missing or unreadable.
     try {
-      await withConcurrency(() => scan(containerPath, userId, { skipAlbumFor: containerPath }));
+      await scan(containerPath, userId, { skipAlbumFor: containerPath });
     } catch (error: unknown) {
       this.logger.error(`Initial scan failed for ${containerPath} because: ${error}`);
     }
@@ -96,19 +95,19 @@ export class FileWatcherService {
       // Setup event listeners
       watcher
         .on('add', async (filePath: string) => {
-          await withConcurrency(() => this.handleFileAdded(filePath, userId, containerPath));
+          await this.handleFileAdded(filePath, userId, containerPath);
         })
         .on('change', async (filePath: string) => {
-          await withConcurrency(() => this.handleFileChanged(filePath, userId, containerPath));
+          await this.handleFileChanged(filePath, userId, containerPath);
         })
         .on('unlink', async (filePath: string) => {
-          await withConcurrency(() => this.handleFileDeleted(filePath, userId, containerPath));
+          await this.handleFileDeleted(filePath, userId, containerPath);
         })
         .on('addDir', async (dirPath: string) => {
-          await withConcurrency(() => this.handleDirectoryAdded(dirPath, userId, containerPath));
+          await this.handleDirectoryAdded(dirPath, userId, containerPath);
         })
         .on('unlinkDir', async (dirPath: string) => {
-          await withConcurrency(() => this.handleDirectoryDeleted(dirPath, userId, containerPath));
+          await this.handleDirectoryDeleted(dirPath, userId, containerPath);
         })
         .on('error', (error) => {
           this.logger.error(`Watcher error for ${path}:`, error);

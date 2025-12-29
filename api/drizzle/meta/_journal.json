@@ -5,43 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1758836754623,
-      "tag": "0000_next_natasha_romanoff",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1759591760227,
-      "tag": "0001_confused_steve_rogers",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1759709145429,
-      "tag": "0002_slow_mandrill",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1759711281198,
-      "tag": "0003_bizarre_mongoose",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1760185213977,
-      "tag": "0004_mysterious_magma",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1760194889774,
-      "tag": "0005_wakeful_inhumans",
+      "when": 1766450428116,
+      "tag": "0000_bitter_timeslip",
       "breakpoints": true
     }
   ]

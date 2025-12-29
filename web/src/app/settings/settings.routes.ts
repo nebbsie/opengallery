@@ -37,6 +37,10 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./settings-encoding/settings-encoding').then((c) => c.SettingsEncoding),
       },
+      {
+        path: 'tasks',
+        loadComponent: () => import('./settings-tasks/settings-tasks').then((c) => c.SettingsTasks),
+      },
     ],
   },
 ];

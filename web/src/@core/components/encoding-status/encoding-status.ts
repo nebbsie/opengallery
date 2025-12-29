@@ -4,9 +4,6 @@ import { injectTrpc } from '@core/services/trpc';
 type QueueCounts = {
   waiting: number;
   active: number;
-  delayed: number;
-  paused: number;
-  completed: number;
   failed: number;
 };
 

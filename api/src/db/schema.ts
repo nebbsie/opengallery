@@ -38,6 +38,7 @@ export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
   "edit",
 ]);
 export const LogEnum = pgEnum("log_type", ["error", "info", "warn", "debug"]);
+// Legacy enum used by deprecated ProcessingIssueTable (removed).
 export const ProcessingStageEnum = pgEnum("processing_stage", [
   "import",
   "encode",
@@ -45,6 +46,26 @@ export const ProcessingStageEnum = pgEnum("processing_stage", [
   "geolocation",
   "variants",
   "ffmpeg",
+]);
+
+export const FileTaskTypeEnum = pgEnum("file_task_type", [
+  "encode_thumbnail",
+  "encode_optimised",
+  "video_poster",
+]);
+
+// FileTaskStatusEnum semantics:
+// - pending: queued to be processed, not yet started
+// - in_progress: worker picked it up and is running
+// - succeeded: completed successfully (idempotent; safe to skip next runs)
+// - failed: last attempt failed; may be retried based on policy
+// - skipped: intentionally not applicable (e.g., unsupported format)
+export const FileTaskStatusEnum = pgEnum("file_task_status", [
+  "pending",
+  "in_progress",
+  "succeeded",
+  "failed",
+  "skipped",
 ]);
 
 export const LibraryTable = pgTable("library", {
@@ -355,19 +376,27 @@ export const LogTable = pgTable("log", {
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 });
 
-export const ProcessingIssueTable = pgTable("processing_issue", {
-  id: id(),
-  fileId: uuid("file_id")
-    .notNull()
-    .references(() => FileTable.id),
-  stage: ProcessingStageEnum("stage").notNull(),
-  message: text("message").notNull(),
-  extra: jsonb("extra"),
-  attempts: integer("attempts").notNull().default(0),
-  resolvedAt: timestamp("resolved_at"),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const FileTaskTable = pgTable(
+  "file_task",
+  {
+    id: id(),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => FileTable.id, { onDelete: "cascade" }),
+    type: FileTaskTypeEnum("type").notNull(),
+    version: integer("version").notNull().default(1),
+    status: FileTaskStatusEnum("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    priority: integer("priority").notNull().default(0),
+    scheduledAt: timestamp("scheduled_at"),
+    startedAt: timestamp("started_at"),
+    finishedAt: timestamp("finished_at"),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("file_task_unique").on(t.fileId, t.type, t.version)]
+);
 
 export const AuthSchema = {
   user: UserTable,

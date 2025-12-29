@@ -30,7 +30,8 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }
 
     @if (files.isSuccess()) {
-      @if (!files.data().length) {
+      @let payload = files.data();
+      @if (!payload.items.length) {
         <div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
           <p class="text-muted-foreground text-sm">
             No assets yet. Add a new source folder to import your library.
@@ -38,7 +39,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
         </div>
       } @else {
-        <app-virtual-thumbnail-grid [items]="files.data()">
+        <app-virtual-thumbnail-grid [items]="payload.items">
           <ng-template let-asset>
             <app-asset-thumbnail from="/" [asset]="asset" />
           </ng-template>
@@ -53,6 +54,6 @@ export class GalleryAll {
 
   files = injectQuery(() => ({
     queryKey: [CacheKey.GalleryAll],
-    queryFn: async () => this.trpc.files.getUsersFiles.query('all'),
+    queryFn: async () => this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 120 }),
   }));
 }

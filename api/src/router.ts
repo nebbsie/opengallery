@@ -2,6 +2,7 @@ import { albumFileRouter } from "./routers/album-file.router.js";
 import { albumRouter } from "./routers/album.router.js";
 import { directoryRouter } from "./routers/directory.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
+import { fileTaskRouter } from "./routers/file-task.router.js";
 import { filesRouter } from "./routers/files.router.js";
 import { geoLocationRouter } from "./routers/geo-location.router.js";
 import { healthRouter } from "./routers/health.router.js";
@@ -22,6 +23,7 @@ export const appRouter = router({
   mediaSourcesSettings: mediaSourcesSettingsRouter,
   directory: directoryRouter,
   files: filesRouter,
+  fileTask: fileTaskRouter,
   log: logRouter,
   library: libraryRouter,
   libraryFile: libraryFileRouter,

@@ -28,7 +28,8 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }
 
     @if (files.isSuccess()) {
-      <app-virtual-thumbnail-grid [items]="files.data()">
+      @let payload = files.data();
+      <app-virtual-thumbnail-grid [items]="payload.items">
         <ng-template let-asset>
           <app-asset-thumbnail from="/gallery/videos" [asset]="asset" />
         </ng-template>
@@ -42,6 +43,6 @@ export class GalleryVideos {
 
   files = injectQuery(() => ({
     queryKey: [CacheKey.GalleryVideos],
-    queryFn: async () => this.trpc.files.getUsersFiles.query('video'),
+    queryFn: async () => this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 120 }),
   }));
 }

@@ -23,14 +23,11 @@ services:
       PORT: 3219
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-opengallery}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-changeme}
-      REDIS_URL: redis://redis:6379
       TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-*}
       DEFAULT_UPLOAD_PATH: ${DEFAULT_UPLOAD_PATH:-/data/uploads}
       HOST_ROOT_PREFIX: /host
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     ports:
       - "3219:3219"
@@ -39,18 +36,6 @@ services:
       - ${UPLOADS_DIR:-/var/opengallery/uploads}:/data/uploads
       - /:/host:ro
 
-  redis:
-    image: redis:8.2.1-alpine
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-
   watcher:
     image: ghcr.io/nebbsie/opengallery-watcher:latest
     restart: unless-stopped
@@ -58,14 +43,11 @@ services:
       NODE_ENV: production
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:-changeme}
       API_URL: http://api:3219
-      REDIS_URL: redis://redis:6379
     depends_on:
       db:
         condition: service_healthy
       api:
         condition: service_started
-      redis:
-        condition: service_healthy
     volumes:
       - /var/log/opengallery:/var/log/opengallery
       - ${UPLOADS_DIR:-/var/opengallery/uploads}:/data/uploads
@@ -86,4 +68,3 @@ services:
 
 volumes:
   pgdata:
-  redisdata:

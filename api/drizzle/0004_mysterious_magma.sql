@@ -1,1 +1,0 @@
-ALTER TABLE "system_settings" ADD COLUMN "encoding_concurrency" integer DEFAULT 5 NOT NULL;

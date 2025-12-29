@@ -1,37 +1,44 @@
-import { TasksQueue } from "../redis.js";
+import { sql } from "drizzle-orm";
+import { db } from "../db/index.js";
+import { FileTaskTable } from "../db/schema.js";
 import { privateProcedure, router } from "../trpc.js";
 
-type QueueCounts = {
-  waiting: number;
-  active: number;
-  delayed: number;
-  paused: number;
-  completed: number;
-  failed: number;
-};
-
 export const queueRouter = router({
+  // Returns total distinct files with any non-succeeded tasks (i.e., work remaining)
   encodingCounts: privateProcedure.query(async () => {
-    // Return key counts relevant to user-visible progress
-    const jobCounts = await TasksQueue.getJobCounts(
-      "waiting",
-      "active",
-      "delayed",
-      "paused",
-      "completed",
-      "failed"
+    const totalRes = await db.execute(
+      sql<{ total: number }>`
+        SELECT COUNT(DISTINCT file_id)::int AS total
+        FROM ${FileTaskTable}
+        WHERE status IN ('pending','in_progress','failed')
+          AND attempts < 3
+      `
     );
 
-    const counts: QueueCounts = {
-      waiting: jobCounts["waiting"] ?? 0,
-      active: jobCounts["active"] ?? 0,
-      delayed: jobCounts["delayed"] ?? 0,
-      paused: jobCounts["paused"] ?? 0,
-      completed: jobCounts["completed"] ?? 0,
-      failed: jobCounts["failed"] ?? 0,
-    };
+    // Breakdown (distinct file_ids per status)
+    const byStatusRes = await db.execute(
+      sql<{ status: string; count: number }>`
+        SELECT status::text, COUNT(DISTINCT file_id)::int AS count
+        FROM ${FileTaskTable}
+        WHERE status IN ('pending','in_progress','failed')
+          AND attempts < 3
+        GROUP BY status
+      `
+    );
 
-    const totalPending = counts.waiting + counts.active + counts.delayed;
-    return { counts, totalPending };
+    const totalPending = Number(totalRes.rows[0]?.["total"] ?? 0);
+    const counts: Record<string, number> = {};
+    byStatusRes.rows.forEach(
+      (r) => (counts[r["status"] as string] = Number(r["count"]))
+    );
+
+    return {
+      counts: {
+        waiting: counts["pending"] ?? 0,
+        active: counts["in_progress"] ?? 0,
+        failed: counts["failed"] ?? 0,
+      },
+      totalPending,
+    } as const;
   }),
 });

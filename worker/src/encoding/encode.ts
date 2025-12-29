@@ -10,10 +10,6 @@ import { type RouterOutputs, trpc } from '../utils/trpc.js';
 type File = RouterOutputs['files']['getFileById']['raw'];
 
 async function encodeImage(file: File) {
-  logger.info(
-    `[encode:image] start id=${file.id} name="${file.name}" mime=${file.mime} size=${file.size}`,
-  );
-
   // Get upload path from settings
   const settings = await trpc.settings.get.query();
   const uploadDir = settings?.uploadPath;
@@ -148,52 +144,116 @@ async function encodeImage(file: File) {
       console.warn('Failed to save geo location for', fileId, e);
     }
   }
-  logger.info(`[encode:image] done id=${file.id}`);
   try {
     await trpc.issues.resolveForFile.mutate({ fileId: file.id });
   } catch {}
 }
 
 export async function encode(fileId: string) {
-  logger.info(`[encode] start fileId=${fileId}`);
+  const startedAt = Date.now();
   const fileResult = await trpc.files.getFileById.query(fileId);
-  if (fileResult.optimized || fileResult.thumbnail) {
-    logger.info(`[encode] already encoded, skipping fileId=${fileId}`);
+  const file = fileResult.raw;
+  // If both required variants already exist, mark tasks as succeeded and skip work
+  const hasThumb = !!fileResult.thumbnail;
+  const hasOpt = !!fileResult.optimized;
+  if (file.type === 'image' && hasThumb && hasOpt) {
+    await trpc.fileTask.setManyStatusByFileAndType.mutate([
+      { fileId, type: 'encode_thumbnail', status: 'succeeded' },
+      { fileId, type: 'encode_optimised', status: 'succeeded' },
+    ]);
+    logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
+    return;
+  }
+  if (file.type === 'video' && hasThumb && hasOpt) {
+    await trpc.fileTask.setManyStatusByFileAndType.mutate([
+      { fileId, type: 'video_poster', status: 'succeeded' },
+      { fileId, type: 'encode_optimised', status: 'succeeded' },
+    ]);
+    logger.info(`[encode] [video] ${fileId} | ${Date.now() - startedAt}ms`);
     return;
   }
 
-  const file = fileResult.raw;
   if (file.type === 'image') {
     if (file.mime === 'image/svg+xml') return;
     try {
+      await trpc.fileTask.setManyStatusByFileAndType.mutate([
+        { fileId, type: 'encode_thumbnail', status: 'in_progress' },
+        { fileId, type: 'encode_optimised', status: 'in_progress' },
+      ]);
       await encodeImage(file);
+      await trpc.fileTask.setManyStatusByFileAndType.mutate([
+        { fileId, type: 'encode_thumbnail', status: 'succeeded' },
+        { fileId, type: 'encode_optimised', status: 'succeeded' },
+      ]);
+      logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
     } catch (e) {
       logger.error(`[encode] image failed fileId=${fileId}`, e as Error);
       try {
-        await trpc.issues.record.mutate({
-          fileId,
-          stage: 'encode',
-          message: (e as Error)?.message || 'encode image failed',
-        });
+        await trpc.fileTask.setManyStatusByFileAndType.mutate([
+          {
+            fileId,
+            type: 'encode_thumbnail',
+            status: 'failed',
+            error: (e as Error)?.message,
+            incrementAttempts: true,
+          },
+          {
+            fileId,
+            type: 'encode_optimised',
+            status: 'failed',
+            error: (e as Error)?.message,
+            incrementAttempts: true,
+          },
+        ]);
+      } catch (statusErr) {
+        logger.error('[encode] failed to mark image tasks failed', statusErr as Error);
+      }
+      try {
+        // no-op (issues retired)
       } catch {}
-      throw e;
+      return;
     }
     return;
   }
 
   if (file.type === 'video') {
     try {
+      await trpc.fileTask.setManyStatusByFileAndType.mutate([
+        { fileId, type: 'video_poster', status: 'in_progress' },
+        { fileId, type: 'encode_optimised', status: 'in_progress' },
+      ]);
       await encodeVideo(file);
+      await trpc.fileTask.setManyStatusByFileAndType.mutate([
+        { fileId, type: 'video_poster', status: 'succeeded' },
+        { fileId, type: 'encode_optimised', status: 'succeeded' },
+      ]);
+      logger.info(`[encode] [video] ${fileId} | ${Date.now() - startedAt}ms`);
     } catch (e) {
       logger.error(`[encode] video failed fileId=${fileId}`, e as Error);
       try {
-        await trpc.issues.record.mutate({
-          fileId,
-          stage: 'encode',
-          message: (e as Error)?.message || 'encode video failed',
-        });
+        await trpc.fileTask.setManyStatusByFileAndType.mutate([
+          {
+            fileId,
+            type: 'video_poster',
+            status: 'failed',
+            error: (e as Error)?.message,
+            incrementAttempts: true,
+          },
+          {
+            fileId,
+            type: 'encode_optimised',
+            status: 'failed',
+            error: (e as Error)?.message,
+            incrementAttempts: true,
+          },
+        ]);
+      } catch (statusErr) {
+        logger.error('[encode] failed to mark video tasks failed', statusErr as Error);
+      }
+      try {
+        // no-op (issues retired)
       } catch {}
-      throw e;
+      return;
     }
     return;
   }
@@ -215,10 +275,6 @@ async function runFfmpeg(args: string[], label: string) {
 }
 
 async function encodeVideo(file: File) {
-  logger.info(
-    `[encode:video] start id=${file.id} name="${file.name}" mime=${file.mime} size=${file.size}`,
-  );
-
   const settings = await trpc.settings.get.query();
   const uploadDir = settings?.uploadPath;
   if (!uploadDir) {
@@ -358,7 +414,6 @@ async function encodeVideo(file: File) {
       console.warn('Failed to save geo location for', file.id, e);
     }
   }
-  logger.info(`[encode:video] done id=${file.id}`);
   try {
     await trpc.issues.resolveForFile.mutate({ fileId: file.id });
   } catch {}

@@ -108,6 +108,11 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   }
 
   ngAfterViewInit(): void {
+    const initialWidth = this.host.nativeElement.clientWidth;
+    if (initialWidth > 0) {
+      this.width.set(initialWidth);
+    }
+
     this.resizeObs = new ResizeObserver((entries: ResizeObserverEntry[]) => {
       const entry = entries[0];
       const cr = entry?.contentRect as DOMRect | undefined;

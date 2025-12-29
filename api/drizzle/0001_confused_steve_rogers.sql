@@ -1,1 +1,0 @@
-ALTER TABLE "system_settings" ADD COLUMN "allows_self_registration" boolean DEFAULT false NOT NULL;

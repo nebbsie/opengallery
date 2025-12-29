@@ -2,13 +2,12 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-issues',
-  imports: [HlmSpinner, ErrorAlert, HlmButton],
+  imports: [HlmSpinner, ErrorAlert],
   host: { class: 'w-full' },
   template: `
     <h1 class="text-foreground mb-2 block text-lg font-bold">Import/Encoding Issues</h1>
@@ -25,26 +24,18 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
     }
 
     @if (issues.isSuccess()) {
-      @if (!issues.data().length) {
+      @if (issues.data().length === 0) {
         <p class="text-muted-foreground">No issues found.</p>
       } @else {
-        <div class="space-y-2">
-          @for (item of issues.data(); track item.id) {
-            <div class="flex items-center justify-between rounded-lg border p-3">
-              <div class="min-w-0">
-                <p class="truncate text-sm">
-                  <span class="font-medium">{{ item.file.name }}</span>
-                  <span class="text-muted-foreground"> — {{ item.stage }}</span>
-                </p>
-                <p class="text-muted-foreground text-sm">{{ item.message }}</p>
-              </div>
-              <div class="flex items-center gap-2">
-                <button hlmBtn variant="outline" size="sm" (click)="retry(item.fileId)">
-                  Retry
-                </button>
-              </div>
-            </div>
-          }
+        <div class="rounded border p-2">
+          <div class="grid grid-cols-[1fr_auto] gap-2 font-mono text-sm">
+            <div class="font-bold">File ID</div>
+            <div class="text-right font-bold">Attempts</div>
+            @for (it of issues.data(); track it.fileId) {
+              <div class="truncate">{{ it.fileId }}</div>
+              <div class="text-right">{{ it.attempts }}</div>
+            }
+          </div>
         </div>
       }
     }

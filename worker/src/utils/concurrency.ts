@@ -37,17 +37,5 @@ class Semaphore {
   }
 }
 
-const globalSemaphore = new Semaphore(5);
-
-export function setConcurrencyLimit(n: number) {
-  globalSemaphore.setCapacity(n);
-}
-
-export async function withConcurrency<T>(fn: () => Promise<T>): Promise<T> {
-  await globalSemaphore.acquire();
-  try {
-    return await fn();
-  } finally {
-    globalSemaphore.release();
-  }
-}
+// Deprecated: global concurrency in watcher has been removed in favor of
+// API-controlled leasing. This file remains for future use if needed.

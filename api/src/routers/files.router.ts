@@ -6,6 +6,7 @@ import {
   AlbumFileTable,
   AlbumTable,
   FileTable,
+  FileTaskTable,
   FileVariantTable,
   GeoLocationTable,
   ImageMetadataTable,
@@ -13,7 +14,6 @@ import {
   LibraryTable,
   VideoMetadataTable,
 } from "../db/schema.js";
-import { TasksQueue } from "../redis.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
 export const filesRouter = router({
@@ -32,19 +32,21 @@ export const filesRouter = router({
     .mutation(async ({ input }) => {
       const addedFiles = await db.insert(FileTable).values(input).returning();
 
-      type Message = {
-        name: "encode";
-        data: {
-          fileId: string;
-        };
-      };
-
-      const tasks: Message[] = addedFiles.map((f) => ({
-        name: "encode",
-        data: { fileId: f.id },
-      }));
-
-      await TasksQueue.addBulk(tasks);
+      // Seed file tasks for downstream processing
+      type FileTaskInsert = typeof FileTaskTable.$inferInsert;
+      const taskRows: FileTaskInsert[] = [];
+      for (const f of addedFiles) {
+        if (f.type === "image") {
+          taskRows.push({ fileId: f.id, type: "encode_thumbnail" });
+          taskRows.push({ fileId: f.id, type: "encode_optimised" });
+        } else {
+          taskRows.push({ fileId: f.id, type: "video_poster" });
+          taskRows.push({ fileId: f.id, type: "encode_optimised" });
+        }
+      }
+      if (taskRows.length) {
+        await db.insert(FileTaskTable).values(taskRows);
+      }
 
       return addedFiles;
     }),
@@ -95,6 +97,11 @@ export const filesRouter = router({
         await tx
           .delete(LibraryFileTable)
           .where(inArray(LibraryFileTable.fileId, idsToDelete));
+
+        // Remove any file tasks
+        await tx
+          .delete(FileTaskTable)
+          .where(inArray(FileTaskTable.fileId, idsToDelete));
 
         await tx
           .delete(FileVariantTable)
@@ -452,7 +459,13 @@ export const filesRouter = router({
   }),
 
   getUsersFiles: privateProcedure
-    .input(z.enum(["all", "video", "image"]))
+    .input(
+      z.object({
+        kind: z.enum(["all", "video", "image"]).default("all"),
+        limit: z.number().int().positive().max(200).default(60),
+        cursor: z.string().uuid().nullable().optional(),
+      })
+    )
     .query(async ({ ctx: { userId }, input }) => {
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -463,8 +476,13 @@ export const filesRouter = router({
 
 const getUsersFiles = async (
   userId: string,
-  filter: "all" | "video" | "image"
+  params: {
+    kind: "all" | "video" | "image";
+    limit: number;
+    cursor?: string | null;
+  }
 ) => {
+  const { kind, limit, cursor } = params;
   const rows = await db
     .select({
       file: FileTable,
@@ -479,7 +497,7 @@ const getUsersFiles = async (
       and(
         eq(LibraryTable.userId, userId),
         isNull(LibraryFileTable.deletedAt),
-        ...(filter === "all" ? [] : [eq(FileTable.type, filter)]),
+        ...(kind === "all" ? [] : [eq(FileTable.type, kind)]),
         // Only include files that have BOTH thumbnail and optimised variants
         exists(
           db
@@ -507,11 +525,17 @@ const getUsersFiles = async (
     )
     .orderBy(
       desc(sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`)
-    );
+    )
+    .limit(limit + 1);
 
-  return rows.map((r) => ({
+  const data = rows.map((r) => ({
     ...r.file,
     libraryId: r.libraryId,
     libraryFileId: r.libraryFileId,
   }));
+
+  const hasMore = data.length > limit;
+  const items = hasMore ? data.slice(0, limit) : data;
+  const nextCursor = hasMore ? (items[items.length - 1]?.id ?? null) : null;
+  return { items, nextCursor } as const;
 };

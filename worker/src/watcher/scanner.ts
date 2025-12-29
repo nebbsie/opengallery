@@ -1,7 +1,6 @@
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
-import { withConcurrency } from '../utils/concurrency.js';
 import { logger } from '../utils/logger.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
 
@@ -100,7 +99,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
   walk(rootDir);
 
-  // Helper to ensure an album (and its parent chain) exists for a directory
+  // Ensure an album (and its parent chain) exists for a directory
   async function ensureAlbumForDir(dir: string, libraryId: string): Promise<string | null> {
     if (!dir || dir === skipAlbumFor) return null;
 
@@ -200,9 +199,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
 
     // Actually add all new files that aren't already in the DB.
-    const fileCreateResult = (await withConcurrency(() =>
-      trpc.files.create.mutate(filesToAdd),
-    )) as Array<{
+    const fileCreateResult = (await trpc.files.create.mutate(filesToAdd)) as Array<{
       id: string;
       dir: string;
       name: string;
@@ -212,18 +209,16 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     const libraryId = await trpc.library.getDefaultLibraryIdForUser.query(userId);
 
     // Link each new file to the library.
-    await withConcurrency(() =>
-      trpc.libraryFile.create.mutate(
-        fileCreateResult.map(({ id }) => ({
-          fileId: id,
-          libraryId,
-        })),
-      ),
+    await trpc.libraryFile.create.mutate(
+      fileCreateResult.map(({ id }) => ({
+        fileId: id,
+        libraryId,
+      })),
     );
 
     //check if file is linked to an album based on album dir == file dir
     //if not album, generate one first for this folder dir
-    await withConcurrency(() => trpc.album.getAlbumByDir.query(toHostPath(folder)));
+    await trpc.album.getAlbumByDir.query(toHostPath(folder));
 
     const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
     // Ensure album exists for this folder (this will also ensure parents exist)

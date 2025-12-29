@@ -1,5 +1,5 @@
 {
-  "id": "1711cdb7-5553-4b3a-934b-39543e9cce9f",
+  "id": "8defba69-b489-4851-8ba8-a358b4c60ed6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -466,6 +466,148 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.file_task": {
+      "name": "file_task",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "file_id": {
+          "name": "file_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "file_task_type",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "status": {
+          "name": "status",
+          "type": "file_task_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "scheduled_at": {
+          "name": "scheduled_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "file_task_unique": {
+          "name": "file_task_unique",
+          "columns": [
+            {
+              "expression": "file_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "file_task_file_id_file_id_fk": {
+          "name": "file_task_file_id_file_id_fk",
+          "tableFrom": "file_task",
+          "tableTo": "file",
+          "columnsFrom": [
+            "file_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.file_variant": {
       "name": "file_variant",
       "schema": "",
@@ -672,6 +814,48 @@
         "taken_at": {
           "name": "taken_at",
           "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "camera_make": {
+          "name": "camera_make",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "camera_model": {
+          "name": "camera_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lens_model": {
+          "name": "lens_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "iso": {
+          "name": "iso",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exposure_time": {
+          "name": "exposure_time",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "focal_length": {
+          "name": "focal_length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "f_number": {
+          "name": "f_number",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -1236,6 +1420,20 @@
           "primaryKey": false,
           "notNull": true
         },
+        "allows_self_registration": {
+          "name": "allows_self_registration",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "encoding_concurrency": {
+          "name": "encoding_concurrency",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 5
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1253,6 +1451,83 @@
       },
       "indexes": {},
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ui_settings": {
+      "name": "ui_settings",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "auto_close_sidebar_on_asset_open": {
+          "name": "auto_close_sidebar_on_asset_open",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ui_settings_user_id_index": {
+          "name": "ui_settings_user_id_index",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ui_settings_user_id_user_id_fk": {
+          "name": "ui_settings_user_id_user_id_fk",
+          "tableFrom": "ui_settings",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -1490,6 +1765,26 @@
     }
   },
   "enums": {
+    "public.file_task_status": {
+      "name": "file_task_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "in_progress",
+        "succeeded",
+        "failed",
+        "skipped"
+      ]
+    },
+    "public.file_task_type": {
+      "name": "file_task_type",
+      "schema": "public",
+      "values": [
+        "encode_thumbnail",
+        "encode_optimised",
+        "video_poster"
+      ]
+    },
     "public.file_type": {
       "name": "file_type",
       "schema": "public",
@@ -1514,6 +1809,18 @@
         "info",
         "warn",
         "debug"
+      ]
+    },
+    "public.processing_stage": {
+      "name": "processing_stage",
+      "schema": "public",
+      "values": [
+        "import",
+        "encode",
+        "metadata",
+        "geolocation",
+        "variants",
+        "ffmpeg"
       ]
     },
     "public.share_type": {

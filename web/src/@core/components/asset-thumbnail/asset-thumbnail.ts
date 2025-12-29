@@ -24,6 +24,8 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         class="absolute inset-0 h-full w-full object-cover"
         [src]="apiUrl + '/asset/' + _asset.id + '/thumbnail'"
         [alt]="_asset.id"
+        width="400"
+        height="400"
         loading="lazy"
         decoding="async"
       />
