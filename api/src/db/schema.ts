@@ -1,5 +1,6 @@
 import { relations } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   decimal,
   foreignKey,
@@ -86,7 +87,7 @@ export const FileTable = pgTable(
     name: text("name").notNull(),
     type: FileTypeEnum("type").notNull(),
     mime: text("mime").notNull(),
-    size: integer("size").notNull(),
+    size: bigint("size", { mode: "number" }).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

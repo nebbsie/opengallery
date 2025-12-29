@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
@@ -9,7 +9,7 @@ import { provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
-import { injectQuery } from '@tanstack/angular-query-experimental';
+import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-all',
@@ -30,8 +30,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }
 
     @if (files.isSuccess()) {
-      @let payload = files.data();
-      @if (!payload.items.length) {
+      @if (!allItems().length) {
         <div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
           <p class="text-muted-foreground text-sm">
             No assets yet. Add a new source folder to import your library.
@@ -39,7 +38,12 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
         </div>
       } @else {
-        <app-virtual-thumbnail-grid [items]="payload.items">
+        <app-virtual-thumbnail-grid
+          [items]="allItems()"
+          [hasMore]="files.hasNextPage()"
+          [isLoadingMore]="files.isFetchingNextPage()"
+          (loadMore)="loadMore()"
+        >
           <ng-template let-asset>
             <app-asset-thumbnail from="/" [asset]="asset" />
           </ng-template>
@@ -52,8 +56,23 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 export class GalleryAll {
   private readonly trpc = injectTrpc();
 
-  files = injectQuery(() => ({
+  files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.GalleryAll],
-    queryFn: async () => this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 120 }),
+    queryFn: async ({ pageParam }) =>
+      this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 100, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
   }));
+
+  allItems = computed(() => {
+    const data = this.files.data();
+    if (!data) return [];
+    return data.pages.flatMap((page) => page.items);
+  });
+
+  loadMore(): void {
+    if (this.files.hasNextPage() && !this.files.isFetchingNextPage()) {
+      this.files.fetchNextPage();
+    }
+  }
 }

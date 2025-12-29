@@ -479,10 +479,29 @@ const getUsersFiles = async (
   params: {
     kind: "all" | "video" | "image";
     limit: number;
-    cursor?: string | null;
+    cursor?: string | null | undefined;
   }
 ) => {
   const { kind, limit, cursor } = params;
+
+  // If cursor provided, get the sort value of that record to paginate from
+  let cursorCondition: ReturnType<typeof sql> | undefined;
+  if (cursor) {
+    // Get the sort timestamp for the cursor record
+    const [cursorRecord] = await db
+      .select({
+        sortTs: sql<Date>`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+      })
+      .from(FileTable)
+      .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+      .where(eq(FileTable.id, cursor))
+      .limit(1);
+
+    if (cursorRecord) {
+      cursorCondition = sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${cursorRecord.sortTs}`;
+    }
+  }
+
   const rows = await db
     .select({
       file: FileTable,
@@ -520,7 +539,9 @@ const getUsersFiles = async (
                 eq(FileVariantTable.type, "optimised")
               )
             )
-        )
+        ),
+        // Cursor-based pagination: only get items older than cursor
+        ...(cursorCondition ? [cursorCondition] : [])
       )
     )
     .orderBy(

@@ -1,5 +1,6 @@
 import { albumFileRouter } from "./routers/album-file.router.js";
 import { albumRouter } from "./routers/album.router.js";
+import { cameraRouter } from "./routers/camera.router.js";
 import { directoryRouter } from "./routers/directory.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
 import { fileTaskRouter } from "./routers/file-task.router.js";
@@ -37,6 +38,7 @@ export const appRouter = router({
   uiSettings: uiSettingsRouter,
   queue: queueRouter,
   issues: issuesRouter,
+  camera: cameraRouter,
 });
 
 export type AppRouter = typeof appRouter;

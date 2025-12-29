@@ -130,6 +130,20 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
       <ng-icon hlm size="sm" name="lucideBadgeAlert" />
       Tasks
     </a>
+
+    <a
+      class="mb-1"
+      hlmBtn
+      routerLink="/settings/storage"
+      routerLinkActive="active"
+      #rlaStorage="routerLinkActive"
+      [variant]="rlaStorage.isActive ? 'menu_active' : 'menu'"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="handleClicked()"
+    >
+      <ng-icon hlm size="sm" name="lucideActivity" />
+      Storage
+    </a>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { injectTrpc } from '@core/services/trpc';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
@@ -7,12 +7,21 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 @Component({
   selector: 'app-settings-tasks',
   imports: [HlmSpinner, ErrorAlert],
-  host: { class: 'w-full' },
+  host: { class: 'flex flex-col w-full h-full' },
   template: `
-    <h1 class="text-foreground mb-2 block text-lg font-bold">Outstanding Encoding Tasks</h1>
-    <p class="text-muted-foreground mb-6 text-sm">
-      Files currently queued or in progress (max 3 attempts).
-    </p>
+    <div class="mb-3 flex items-center justify-between gap-4">
+      <div>
+        <h1 class="text-foreground block text-lg font-bold">Outstanding Encoding Tasks</h1>
+        <p class="text-muted-foreground text-sm">
+          Files currently queued or in progress (max 3 attempts).
+        </p>
+      </div>
+      @if (tasks.isSuccess()) {
+        <div class="text-muted-foreground text-sm">
+          <span class="bg-muted rounded px-2 py-1 font-mono">{{ taskCount() }} tasks</span>
+        </div>
+      }
+    </div>
 
     @if (tasks.isPending()) {
       <hlm-spinner />
@@ -26,7 +35,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       @if (tasks.data().length === 0) {
         <p class="text-muted-foreground">No outstanding tasks 🎉</p>
       } @else {
-        <div class="rounded border p-2">
+        <div class="flex-1 overflow-auto rounded border p-2">
           <div class="grid grid-cols-[1fr_auto] gap-2 font-mono text-sm">
             <div class="font-bold">File ID</div>
             <div class="text-right font-bold">Tasks</div>
@@ -80,4 +89,10 @@ export class SettingsTasks {
     queryFn: () => this.trpc.fileTask.listOutstanding.query(),
     refetchInterval: 5000,
   }));
+
+  taskCount = computed(() => {
+    const data = this.tasks.data();
+    if (!data) return 0;
+    return data.reduce((acc, item) => acc + item.tasks.length, 0);
+  });
 }

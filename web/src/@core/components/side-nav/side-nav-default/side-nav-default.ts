@@ -57,6 +57,23 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
     <hr class="my-2" />
 
+    <p class="mb-2 font-medium">Browse</p>
+
+    <a
+      class="mb-1"
+      hlmBtn
+      routerLink="/cameras"
+      routerLinkActive="active"
+      #rlaCameras="routerLinkActive"
+      [variant]="rlaCameras.isActive ? 'menu_active' : 'menu'"
+      (click)="handleClicked()"
+    >
+      <ng-icon hlm size="sm" name="lucideCamera" />
+      Cameras
+    </a>
+
+    <hr class="my-2" />
+
     <div class="flex items-center justify-between">
       <p class="font-medium">Albums</p>
       <a class="text-xs text-blue-500" size="sm" hlmBtn variant="link" routerLink="/albums"

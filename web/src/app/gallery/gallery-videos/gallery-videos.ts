@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed } from '@angular/core';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
@@ -7,7 +7,7 @@ import { injectTrpc } from '@core/services/trpc';
 import { provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
-import { injectQuery } from '@tanstack/angular-query-experimental';
+import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-videos',
@@ -28,8 +28,12 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }
 
     @if (files.isSuccess()) {
-      @let payload = files.data();
-      <app-virtual-thumbnail-grid [items]="payload.items">
+      <app-virtual-thumbnail-grid
+        [items]="allItems()"
+        [hasMore]="files.hasNextPage()"
+        [isLoadingMore]="files.isFetchingNextPage()"
+        (loadMore)="loadMore()"
+      >
         <ng-template let-asset>
           <app-asset-thumbnail from="/gallery/videos" [asset]="asset" />
         </ng-template>
@@ -41,8 +45,23 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 export class GalleryVideos {
   private readonly trpc = injectTrpc();
 
-  files = injectQuery(() => ({
+  files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.GalleryVideos],
-    queryFn: async () => this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 120 }),
+    queryFn: async ({ pageParam }) =>
+      this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 60, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
   }));
+
+  allItems = computed(() => {
+    const data = this.files.data();
+    if (!data) return [];
+    return data.pages.flatMap((page) => page.items);
+  });
+
+  loadMore(): void {
+    if (this.files.hasNextPage() && !this.files.isFetchingNextPage()) {
+      this.files.fetchNextPage();
+    }
+  }
 }

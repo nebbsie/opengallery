@@ -1,4 +1,4 @@
-import { ScrollingModule } from '@angular/cdk/scrolling';
+import { CdkVirtualScrollViewport, ScrollingModule } from '@angular/cdk/scrolling';
 import { NgFor, NgTemplateOutlet } from '@angular/common';
 import {
   AfterViewInit,
@@ -6,11 +6,15 @@ import {
   Component,
   ContentChild,
   ElementRef,
-  Input,
+  EventEmitter,
   OnDestroy,
+  Output,
   TemplateRef,
+  ViewChild,
   computed,
+  effect,
   inject,
+  input,
   signal,
 } from '@angular/core';
 
@@ -47,6 +51,8 @@ import {
       [itemSize]="rowHeight()"
       [minBufferPx]="rowHeight() * 3"
       [maxBufferPx]="rowHeight() * 6"
+      (scrolledIndexChange)="onScrollIndexChange($event)"
+      (scroll)="onScroll()"
     >
       <div
         class="mb-2 grid gap-2 sm:gap-2 lg:gap-2"
@@ -64,23 +70,37 @@ import {
 export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestroy {
   private readonly host = inject(ElementRef<HTMLElement>);
 
-  @Input() items: readonly T[] | null = [];
-  @Input() minTilePx = 200; // approximate min tile width
+  items = input<readonly T[] | null>([]);
+  minTilePx = input(200); // approximate min tile width
+  hasMore = input(false);
+  isLoadingMore = input(false);
+
+  @Output() loadMore = new EventEmitter<void>();
 
   @ContentChild(TemplateRef) itemTpl!: TemplateRef<{ $implicit: T }>;
+  @ViewChild(CdkVirtualScrollViewport) viewport!: CdkVirtualScrollViewport;
 
   private readonly width = signal(0);
   private resizeObs: ResizeObserver | null = null;
 
+  constructor() {
+    effect(() => {
+      const rows = this.rows();
+      if (this.viewport && rows.length > 0) {
+        this.viewport.checkViewportSize();
+      }
+    });
+  }
+
   columns = computed(() => {
     const w = this.width();
-    const min = Math.max(120, this.minTilePx);
+    const min = Math.max(120, this.minTilePx());
     const cols = Math.max(1, Math.floor(w / min));
     return cols;
   });
 
   gridTemplateColumns = computed(
-    () => `repeat(${this.columns()}, minmax(${this.minTilePx}px, 1fr))`,
+    () => `repeat(${this.columns()}, minmax(${this.minTilePx()}px, 1fr))`,
   );
 
   // Assume square tiles; include gap (approx 8px) for row height
@@ -93,15 +113,19 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   });
 
   rows = computed(() => {
-    const items = (this.items ?? []) as readonly T[];
+    const itemsArray = (this.items() ?? []) as readonly T[];
     const cols = this.columns();
-    if (!items.length) return [] as T[][];
+    if (!itemsArray.length) return [] as T[][];
     const out: T[][] = [];
-    for (let i = 0; i < items.length; i += cols) out.push(items.slice(i, i + cols));
+    for (let i = 0; i < itemsArray.length; i += cols) out.push(itemsArray.slice(i, i + cols));
     return out;
   });
 
-  trackRow = (_: number, row: readonly T[]) => (row.length ? row[0] : _);
+  trackRow = (index: number, row: readonly T[]) => {
+    if (!row.length) return index;
+    const firstItem = row[0] as { id?: string };
+    return firstItem?.id ?? index;
+  };
 
   templateCtx(item: T): { $implicit: T } {
     return { $implicit: item } as { $implicit: T };
@@ -120,6 +144,31 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
       this.width.set(w);
     });
     this.resizeObs.observe(this.host.nativeElement);
+  }
+
+  onScrollIndexChange(index: number): void {
+    if (!this.hasMore() || this.isLoadingMore()) return;
+    const totalRows = this.rows().length;
+    // Load more when within 3 rows of the end
+    if (index >= totalRows - 3) {
+      this.loadMore.emit();
+    }
+  }
+
+  onScroll(): void {
+    // Don't load if already loading or no more items
+    if (!this.hasMore() || this.isLoadingMore() || !this.viewport) return;
+
+    // Measure distance from bottom
+    const distanceFromBottom = this.viewport.measureScrollOffset('bottom');
+    const viewportSize = this.viewport.getViewportSize();
+
+    // Trigger when within 2 viewport heights from bottom
+    const threshold = viewportSize * 2;
+
+    if (distanceFromBottom < threshold) {
+      this.loadMore.emit();
+    }
   }
 
   ngOnDestroy(): void {

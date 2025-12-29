@@ -8,6 +8,13 @@
       "when": 1766450428116,
       "tag": "0000_bitter_timeslip",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1766977997175,
+      "tag": "0001_thin_warlock",
+      "breakpoints": true
     }
   ]
 }

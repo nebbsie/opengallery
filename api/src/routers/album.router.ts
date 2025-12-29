@@ -209,7 +209,7 @@ export const albumRouter = router({
       itemsRes.rows.map((r) => [r["album_id"], Number(r["items"])])
     ) as Record<string, number>;
 
-    // Compute cover per album: prefer explicit cover, else first image file id
+    // Compute cover per album: prefer explicit cover, else first image file id with thumbnail ready
     const coverRes = await db.execute(
       sql<{
         album_id: string;
@@ -223,6 +223,10 @@ export const albumRouter = router({
                    FROM ${AlbumFileTable} af
                    JOIN ${FileTable} f ON f.id = af.file_id
                    WHERE af.album_id = a.id AND f.type = 'image'
+                     AND EXISTS (
+                       SELECT 1 FROM ${FileVariantTable} fv
+                       WHERE fv.original_file_id = f.id AND fv.type = 'thumbnail'
+                     )
                    ORDER BY f.created_at ASC
                    LIMIT 1
                  )

@@ -41,6 +41,11 @@ export const routes: Routes = [
         path: 'tasks',
         loadComponent: () => import('./settings-tasks/settings-tasks').then((c) => c.SettingsTasks),
       },
+      {
+        path: 'storage',
+        loadComponent: () =>
+          import('./settings-storage/settings-storage').then((c) => c.SettingsStorage),
+      },
     ],
   },
 ];

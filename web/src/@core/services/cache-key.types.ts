@@ -11,4 +11,7 @@ export const CacheKey = {
   IsFirstUser: 'is-first-user',
   AllowsUserSelfRegistration: 'allows-user-self-registration',
   UiSettings: 'ui-settings',
+  StorageStats: 'storage-stats',
+  CamerasAll: 'cameras-all',
+  CameraSingle: 'camera-single',
 };

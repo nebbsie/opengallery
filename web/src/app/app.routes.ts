@@ -30,6 +30,12 @@ export const routes: Routes = [
     loadChildren: () => import('./album/album.routes').then((r) => r.routes),
   },
   {
+    path: 'cameras',
+    title: 'Cameras - Open Gallery',
+    canActivate: [AuthGuard],
+    loadChildren: () => import('./cameras/cameras.routes').then((r) => r.routes),
+  },
+  {
     path: 'settings',
     title: 'Settings - Open Gallery',
     canActivate: [AuthGuard],

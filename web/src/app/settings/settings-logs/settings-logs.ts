@@ -29,7 +29,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }),
   ],
   host: {
-    class: 'flex flex-col w-full',
+    class: 'flex flex-col w-full h-full',
   },
   template: `
     <div class="mb-3 flex items-center justify-between gap-4">
@@ -108,7 +108,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
     @if (logsResult.isSuccess()) {
       <div
-        class="flex max-h-[500px] flex-1 flex-col gap-1 overflow-scroll rounded border px-1 py-2 font-mono text-sm lg:max-h-[800px]"
+        class="flex flex-1 flex-col gap-1 overflow-auto rounded border px-1 py-2 font-mono text-sm"
       >
         @for (log of logsResult.data(); track log.id) {
           <div
