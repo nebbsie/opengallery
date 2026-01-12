@@ -1,14 +1,8 @@
-import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
-import {
-  AlbumFileTable,
-  FileTable,
-  FileTypeEnum,
-  LibraryFileTable,
-} from "../db/schema.js";
-import { eq, inArray } from "drizzle-orm";
-import { integer, text } from "drizzle-orm/pg-core";
+import { FileTable, LibraryFileTable } from "../db/schema.js";
+import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
 export const libraryFileRouter = router({
   create: privateProcedure
@@ -17,8 +11,8 @@ export const libraryFileRouter = router({
         z.object({
           fileId: z.string(),
           libraryId: z.string(),
-        }),
-      ),
+        })
+      )
     )
     .mutation(({ ctx: { userId }, input }) =>
       db
@@ -27,9 +21,9 @@ export const libraryFileRouter = router({
           input.map((inp) => ({
             ...inp,
             userId,
-          })),
+          }))
         )
-        .returning(),
+        .returning()
     ),
 
   getAllLibraryFiles: privateProcedure
@@ -48,12 +42,12 @@ export const libraryFileRouter = router({
         })
         .from(FileTable)
         .innerJoin(LibraryFileTable, eq(FileTable.id, LibraryFileTable.fileId))
-        .where(eq(LibraryFileTable.libraryId, libraryId)),
+        .where(eq(LibraryFileTable.libraryId, libraryId))
     ),
 
   removeLibraryFilesById: internalProcedure
     .input(z.array(z.string()))
     .mutation(({ input }) =>
-      db.delete(LibraryFileTable).where(inArray(LibraryFileTable.id, input)),
+      db.delete(LibraryFileTable).where(inArray(LibraryFileTable.id, input))
     ),
 });

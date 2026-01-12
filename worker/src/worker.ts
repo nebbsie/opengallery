@@ -15,7 +15,7 @@ export function runWorker(): void {
         }
         // Process leased files concurrently
         await Promise.allSettled(
-          files.map(async (fileId) => {
+          files.map(async (fileId: string) => {
             try {
               await encode(fileId);
             } catch (e) {

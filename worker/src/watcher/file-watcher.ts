@@ -3,6 +3,7 @@ import chokidar from 'chokidar';
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
+import { computeFileHash } from '../utils/hash.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
 
@@ -215,6 +216,14 @@ export class FileWatcherService {
       const fileExists = existingFiles.some((f) => f.name === name);
 
       if (!fileExists) {
+        // Compute content hash for deduplication
+        let contentHash: string | undefined;
+        try {
+          contentHash = await computeFileHash(filePath);
+        } catch (err) {
+          this.logger.warn(`Failed to compute hash for ${filePath}: ${err}`);
+        }
+
         // Create the file record
         const fileCreateResult = await trpc.files.create.mutate([
           {
@@ -223,6 +232,7 @@ export class FileWatcherService {
             mime,
             name,
             size: stats.size,
+            contentHash,
           },
         ]);
 

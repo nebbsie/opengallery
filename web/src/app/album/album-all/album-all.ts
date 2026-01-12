@@ -11,19 +11,16 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 @Component({
   selector: 'app-album-all',
   imports: [ErrorAlert, HlmSpinner, AlbumThumbnail, AlbumToolbar, VirtualThumbnailGrid],
+  host: { class: 'flex flex-col h-full' },
   template: `
-    @if (response.isPending()) {
+    @if (response.isPending() && !response.data()) {
       <hlm-spinner />
-    }
-
-    @if (response.isError() && response.error(); as error) {
-      <app-error-alert [error]="error" />
-    }
-
-    @if (response.isSuccess()) {
+    } @else if (response.isError() && !response.data()) {
+      <app-error-alert [error]="response.error()" />
+    } @else {
       <app-album-toolbar [items]="[]" />
 
-      <app-virtual-thumbnail-grid [items]="response.data()">
+      <app-virtual-thumbnail-grid class="min-h-0 flex-1" [items]="response.data() ?? []">
         <ng-template let-album>
           <app-album-thumbnail [album]="album" />
         </ng-template>
@@ -38,5 +35,6 @@ export class AlbumAll {
   response = injectQuery(() => ({
     queryKey: [CacheKey.AlbumsAll],
     queryFn: async () => this.trpc.album.getUsersAlbums.query(),
+    refetchInterval: 5000, // Refresh to update importing status
   }));
 }

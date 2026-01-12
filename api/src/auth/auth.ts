@@ -1,7 +1,7 @@
 // auth.ts
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   AuthSchema,
@@ -22,7 +22,7 @@ const parsedOrigins = rawOrigins
   : ["*"];
 
 export const auth = betterAuth({
-  database: drizzleAdapter(db, { provider: "pg", schema: AuthSchema }),
+  database: drizzleAdapter(db, { provider: "sqlite", schema: AuthSchema }),
 
   // keep role/type server-controlled
   user: {
@@ -41,14 +41,20 @@ export const auth = betterAuth({
     user: {
       create: {
         after: async (u) => {
-          await db.transaction(async (tx) => {
-            await tx.execute(sql`SELECT pg_advisory_xact_lock(42)`);
-            await tx.execute(sql`
-            UPDATE "user"
-            SET "type" = 'admin'
-            WHERE "id" = ${u.id} AND NOT EXISTS (SELECT 1 FROM "user" WHERE "type" = 'admin')
-          `);
-          });
+          // SQLite transactions are serialized, so we don't need advisory locks
+          // Check if there's already an admin, if not promote this user
+          const [existingAdmin] = await db
+            .select({ id: UserTable.id })
+            .from(UserTable)
+            .where(eq(UserTable.type, "admin"))
+            .limit(1);
+
+          if (!existingAdmin) {
+            await db
+              .update(UserTable)
+              .set({ type: "admin" })
+              .where(eq(UserTable.id, u.id));
+          }
 
           await db.insert(LibraryTable).values({ userId: u.id });
 

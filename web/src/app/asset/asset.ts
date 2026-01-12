@@ -171,10 +171,10 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                   data.imageMetadata.cameraMake ||
                   data.imageMetadata.cameraModel ||
                   data.imageMetadata.lensModel ||
-                  data.imageMetadata.iso != null ||
+                  data.imageMetadata.iso !== null ||
                   data.imageMetadata.exposureTime ||
                   data.imageMetadata.fNumber ||
-                  data.imageMetadata.focalLength != null)
+                  data.imageMetadata.focalLength !== null)
               ) {
                 <div class="border-border border-t pt-6">
                   <section>
@@ -283,6 +283,30 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                   </div>
                 </section>
               </div>
+
+              <!-- On Disk Section -->
+              <div class="border-border border-t pt-6">
+                <section>
+                  <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
+                    On Disk
+                  </h4>
+                  <div
+                    class="bg-secondary/30 text-muted-foreground hover:bg-secondary/50 group relative rounded-md border p-3 font-mono text-[11px] break-all transition-colors"
+                  >
+                    {{ f.dir }}/{{ f.name }}
+                    <button
+                      hlmBtn
+                      variant="ghost"
+                      size="icon"
+                      class="absolute top-1 right-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
+                      (click)="copyToClipboard(f.dir + '/' + f.name)"
+                      title="Copy path"
+                    >
+                      <ng-icon hlm name="lucideCopy" size="sm" />
+                    </button>
+                  </div>
+                </section>
+              </div>
             </div>
           </div>
         </aside>
@@ -303,6 +327,8 @@ export class Asset implements OnDestroy {
 
   protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
   protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
+  protected readonly cameraMake = this.route.snapshot.queryParamMap.get('cameraMake');
+  protected readonly cameraModel = this.route.snapshot.queryParamMap.get('cameraModel');
 
   protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
@@ -346,13 +372,16 @@ export class Asset implements OnDestroy {
       if (!data) return;
 
       const albumId = this.albumId ?? undefined;
+      const cameraMake = this.cameraMake ?? undefined;
+      const cameraModel = this.cameraModel ?? undefined;
 
       const prefetch = async (id: string | null) => {
         if (!id) return;
-        const key: [string, string, string | null] = [CacheKey.AssetSingle, id, this.albumId];
+        const key = [CacheKey.AssetSingle, id, this.albumId, this.cameraMake, this.cameraModel];
         await this.queryClient.prefetchQuery({
           queryKey: key,
-          queryFn: () => this.trpc.files.viewFile.query({ fileId: id, albumId }),
+          queryFn: () =>
+            this.trpc.files.viewFile.query({ fileId: id, albumId, cameraMake, cameraModel }),
           staleTime: 60_000,
         });
 
@@ -390,11 +419,16 @@ export class Asset implements OnDestroy {
   id = input.required<string>();
 
   file = injectQuery(() => ({
-    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId],
+    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId, this.cameraMake, this.cameraModel],
     staleTime: Infinity,
     networkMode: 'offlineFirst',
     queryFn: async () =>
-      this.trpc.files.viewFile.query({ fileId: this.id(), albumId: this.albumId ?? undefined }),
+      this.trpc.files.viewFile.query({
+        fileId: this.id(),
+        albumId: this.albumId ?? undefined,
+        cameraMake: this.cameraMake ?? undefined,
+        cameraModel: this.cameraModel ?? undefined,
+      }),
   }));
 
   // No direct query here; we rely on UiSettingsService
@@ -403,6 +437,8 @@ export class Asset implements OnDestroy {
     const qp: Record<string, string> = {};
     if (this.albumId) qp['albumId'] = this.albumId;
     if (this.backLink) qp['from'] = this.backLink;
+    if (this.cameraMake) qp['cameraMake'] = this.cameraMake;
+    if (this.cameraModel) qp['cameraModel'] = this.cameraModel;
     return Object.keys(qp).length ? qp : null;
   }
 
@@ -579,6 +615,7 @@ export class Asset implements OnDestroy {
     if (!container || this.map) return;
 
     // Fix Leaflet's default icon path issue in bundled apps
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (L.Icon.Default.prototype as any)._getIconUrl;
     L.Icon.Default.mergeOptions({
       iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',

@@ -11,13 +11,14 @@ export const imageMetadataRouter = router({
         fileId: z.string().uuid(),
         width: z.number().int().positive(),
         height: z.number().int().positive(),
+        blurhash: z.string().nullable().optional(),
         takenAt: z.coerce.date().nullable().optional(),
         cameraMake: z.string().nullable().optional(),
         cameraModel: z.string().nullable().optional(),
         lensModel: z.string().nullable().optional(),
         iso: z.number().int().nullable().optional(),
         exposureTime: z.string().nullable().optional(),
-        focalLength: z.number().int().nullable().optional(),
+        focalLength: z.number().nullable().optional(),
         fNumber: z.string().nullable().optional(),
       })
     )
@@ -34,15 +35,17 @@ export const imageMetadataRouter = router({
           .set({
             width: input.width,
             height: input.height,
-            takenAt: input.takenAt ?? null,
+            blurhash: input.blurhash ?? null,
+            takenAt: input.takenAt?.toISOString() ?? null,
             cameraMake: input.cameraMake ?? null,
             cameraModel: input.cameraModel ?? null,
             lensModel: input.lensModel ?? null,
             iso: input.iso ?? null,
             exposureTime: input.exposureTime ?? null,
-            focalLength: input.focalLength ?? null,
+            focalLength:
+              input.focalLength != null ? Math.round(input.focalLength) : null,
             fNumber: input.fNumber ?? null,
-            updatedAt: new Date(),
+            updatedAt: new Date().toISOString(),
           })
           .where(eq(ImageMetadataTable.fileId, input.fileId))
           .returning();
@@ -55,13 +58,15 @@ export const imageMetadataRouter = router({
           fileId: input.fileId,
           width: input.width,
           height: input.height,
-          takenAt: input.takenAt ?? null,
+          blurhash: input.blurhash ?? null,
+          takenAt: input.takenAt?.toISOString() ?? null,
           cameraMake: input.cameraMake ?? null,
           cameraModel: input.cameraModel ?? null,
           lensModel: input.lensModel ?? null,
           iso: input.iso ?? null,
           exposureTime: input.exposureTime ?? null,
-          focalLength: input.focalLength ?? null,
+          focalLength:
+            input.focalLength != null ? Math.round(input.focalLength) : null,
           fNumber: input.fNumber ?? null,
         })
         .returning();

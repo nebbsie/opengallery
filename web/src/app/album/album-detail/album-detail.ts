@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { AlbumThumbnail } from '@core/components/album-thumbnail/album-thumbnail';
 import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
+import { LoadingThumbnail } from '@core/components/loading-thumbnail/loading-thumbnail';
 import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
@@ -20,11 +21,13 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     ThumbnailGrid,
     AlbumToolbar,
     VirtualThumbnailGrid,
+    LoadingThumbnail,
   ],
+  host: { class: 'flex flex-col h-full' },
   template: `
-    @if (response.isPending()) {
+    @if (response.isPending() && !response.data()) {
       <hlm-spinner />
-    } @else if (response.isError()) {
+    } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error()" />
     } @else {
       @let data = response.data()!;
@@ -39,18 +42,22 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         </app-thumbnail-grid>
       }
 
-      @if (data.files.length) {
+      @if (data.files.length || data.album.pendingTasks) {
         @if (data.children.length !== 0) {
           <p class="mb-4 text-sm">Items</p>
         }
 
-        <app-virtual-thumbnail-grid [items]="data.files">
-          <ng-template let-asset>
-            <app-asset-thumbnail
-              [from]="'/albums/' + data.album.id"
-              [asset]="asset"
-              [albumId]="data.album.id"
-            />
+        <app-virtual-thumbnail-grid class="min-h-0 flex-1" [items]="allItems()">
+          <ng-template let-item>
+            @if (item.loading) {
+              <app-loading-thumbnail />
+            } @else {
+              <app-asset-thumbnail
+                [from]="'/albums/' + data.album.id"
+                [asset]="item"
+                [albumId]="data.album.id"
+              />
+            }
           </ng-template>
         </app-virtual-thumbnail-grid>
       }
@@ -65,5 +72,28 @@ export class AlbumDetail {
   response = injectQuery(() => ({
     queryKey: [CacheKey.AlbumSingle, this.id()],
     queryFn: () => this.trpc.album.getAlbumInfo.query(this.id()),
+    refetchInterval: 5000, // Refresh to update importing status
   }));
+
+  allItems = computed(() => {
+    const data = this.response.data();
+    if (!data) return [];
+
+    const files = data.files.map(
+      (f: { type: 'image' | 'video'; id: string; blurhash?: string | null }) => ({
+        ...f,
+        loading: false,
+      }),
+    );
+    const pendingCount = data.album.pendingTasks ?? 0;
+
+    // Add placeholder items for pending files
+    const placeholders = Array.from({ length: pendingCount }, (_, i) => ({
+      id: `loading-${i}`,
+      type: 'image' as const,
+      loading: true,
+    }));
+
+    return [...files, ...placeholders];
+  });
 }

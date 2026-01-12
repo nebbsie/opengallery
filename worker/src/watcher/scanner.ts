@@ -1,6 +1,7 @@
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
+import { computeFileHash } from '../utils/hash.js';
 import { logger } from '../utils/logger.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
 
@@ -182,21 +183,34 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     }
 
     // Filter out files that are already in the database.
-    const filesToAdd: CreateFilesInput = files
-      .filter((f) => !alreadySavedPaths.has(getFullPath(f)))
-      .map((f) => ({
-        dir: toHostPath(folder),
-        type: f.type,
-        mime: f.mime,
-        name: f.name,
-        size: f.size,
-      }));
+    const newFiles = files.filter((f) => !alreadySavedPaths.has(getFullPath(f)));
 
-    if (!filesToAdd.length) {
+    if (!newFiles.length) {
       continue;
     }
 
-    logger.info(`Adding ${filesToAdd.length} new files for folder: ${folder}`);
+    logger.info(`Adding ${newFiles.length} new files for folder: ${folder}`);
+
+    // Compute content hashes for new files (for deduplication)
+    const filesToAdd: CreateFilesInput = await Promise.all(
+      newFiles.map(async (f) => {
+        const filePath = join(folder, f.name);
+        let contentHash: string | undefined;
+        try {
+          contentHash = await computeFileHash(filePath);
+        } catch (err) {
+          logger.warn(`Failed to compute hash for ${filePath}: ${err}`);
+        }
+        return {
+          dir: toHostPath(folder),
+          type: f.type,
+          mime: f.mime,
+          name: f.name,
+          size: f.size,
+          contentHash,
+        };
+      }),
+    );
 
     // Actually add all new files that aren't already in the DB.
     const fileCreateResult = (await trpc.files.create.mutate(filesToAdd)) as Array<{

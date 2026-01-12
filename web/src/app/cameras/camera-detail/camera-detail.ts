@@ -10,29 +10,33 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 @Component({
   selector: 'app-camera-detail',
   imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid],
+  host: { class: 'flex flex-col h-full' },
   template: `
-    @if (files.isPending()) {
+    @if (files.isPending() && !files.data()) {
       <hlm-spinner />
-    }
-
-    @if (files.isError()) {
+    } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
-    }
-
-    @if (files.isSuccess()) {
-      <div class="mb-6">
+    } @else {
+      <div class="mb-6 shrink-0">
         <h1 class="text-foreground mb-2 text-2xl font-bold">{{ make() }}</h1>
         <p class="text-muted-foreground text-sm">{{ model() }}</p>
       </div>
 
       <app-virtual-thumbnail-grid
+        class="min-h-0 flex-1"
         [items]="allItems()"
         [hasMore]="files.hasNextPage()"
         [isLoadingMore]="files.isFetchingNextPage()"
+        [scrollKey]="scrollKey()"
         (loadMore)="loadMore()"
       >
         <ng-template let-asset>
-          <app-asset-thumbnail [from]="fromPath()" [asset]="asset" />
+          <app-asset-thumbnail
+            [from]="fromPath()"
+            [asset]="asset"
+            [cameraMake]="make()"
+            [cameraModel]="model()"
+          />
         </ng-template>
       </app-virtual-thumbnail-grid>
     }
@@ -46,6 +50,7 @@ export class CameraDetail {
   private readonly trpc = injectTrpc();
 
   fromPath = computed(() => `/cameras/${this.make()}/${this.model()}`);
+  scrollKey = computed(() => `camera-${this.make()}-${this.model()}`);
 
   files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.CameraSingle, this.make(), this.model()],

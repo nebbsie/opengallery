@@ -3,6 +3,7 @@ import { RouterOutlet } from '@angular/router';
 
 @Component({
   selector: 'app-gallery',
+  host: { class: 'block h-full' },
   template: ` <router-outlet />`,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterOutlet],

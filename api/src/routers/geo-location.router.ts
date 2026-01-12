@@ -9,11 +9,21 @@ export const geoLocationRouter = router({
     .input(
       z.object({
         fileId: z.string(),
-        lat: z.number().min(-90).max(90),
-        lon: z.number().min(-180).max(180),
+        lat: z.number(),
+        lon: z.number(),
       })
     )
     .mutation(async ({ input }) => {
+      // Skip invalid coordinates (malformed EXIF GPS data)
+      if (
+        input.lat < -90 ||
+        input.lat > 90 ||
+        input.lon < -180 ||
+        input.lon > 180
+      ) {
+        return null;
+      }
+
       const existing = await db
         .select()
         .from(GeoLocationTable)
@@ -23,7 +33,7 @@ export const geoLocationRouter = router({
       if (existing[0]) {
         const [updated] = await db
           .update(GeoLocationTable)
-          .set({ lat: input.lat.toString(), lon: input.lon.toString() })
+          .set({ lat: input.lat, lon: input.lon })
           .where(eq(GeoLocationTable.fileId, input.fileId))
           .returning();
         return updated;
@@ -33,8 +43,8 @@ export const geoLocationRouter = router({
         .insert(GeoLocationTable)
         .values({
           fileId: input.fileId,
-          lat: input.lat.toString(),
-          lon: input.lon.toString(),
+          lat: input.lat,
+          lon: input.lon,
         })
         .returning();
       return created;

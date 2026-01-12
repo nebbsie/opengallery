@@ -1,0 +1,28 @@
+name: opengallery
+services:
+  opengallery:
+    build:
+      context: .
+      dockerfile: Dockerfile.unified
+    # Or use pre-built image:
+    # image: ghcr.io/nebbsie/opengallery:latest
+    restart: unless-stopped
+    ports:
+      - "3219:3219"  # API
+      - "4321:4321"  # Web UI
+    environment:
+      NODE_ENV: production
+      API_PORT: 3219
+      WEB_PORT: 4321
+      DATABASE_PATH: /data/opengallery.db
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-changeme}
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-*}
+      DEFAULT_UPLOAD_PATH: /data/uploads
+      HOST_ROOT_PREFIX: /host
+    volumes:
+      - opengallery-data:/data
+      - /var/log/opengallery:/var/log/opengallery
+      - /:/host:ro
+
+volumes:
+  opengallery-data:

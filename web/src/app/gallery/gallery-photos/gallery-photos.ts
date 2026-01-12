@@ -10,20 +10,18 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 @Component({
   selector: 'app-gallery-photos',
   imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid],
+  host: { class: 'block h-full' },
   template: `
-    @if (files.isPending()) {
+    @if (files.isPending() && !files.data()) {
       <hlm-spinner />
-    }
-
-    @if (files.isError()) {
+    } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
-    }
-
-    @if (files.isSuccess()) {
+    } @else {
       <app-virtual-thumbnail-grid
         [items]="allItems()"
         [hasMore]="files.hasNextPage()"
         [isLoadingMore]="files.isFetchingNextPage()"
+        [scrollKey]="'gallery-photos'"
         (loadMore)="loadMore()"
       >
         <ng-template let-asset>
@@ -40,7 +38,7 @@ export class GalleryPhotos {
   files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.GalleryPhotos],
     queryFn: async ({ pageParam }) =>
-      this.trpc.files.getUsersFiles.query({ kind: 'image', limit: 60, cursor: pageParam }),
+      this.trpc.files.getUsersFiles.query({ kind: 'image', limit: 200, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   }));

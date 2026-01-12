@@ -1,10 +1,10 @@
 import "dotenv/config";
 
 export default {
-  out: "./drizzle",
+  out: "../migrations",
   schema: ["./src/db/schema.ts"],
-  dialect: "postgresql",
+  dialect: "sqlite",
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
+    url: process.env.DATABASE_PATH!,
   },
 };

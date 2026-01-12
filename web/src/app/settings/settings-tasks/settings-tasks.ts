@@ -93,6 +93,6 @@ export class SettingsTasks {
   taskCount = computed(() => {
     const data = this.tasks.data();
     if (!data) return 0;
-    return data.reduce((acc, item) => acc + item.tasks.length, 0);
+    return data.reduce((acc: number, item: { tasks: unknown[] }) => acc + item.tasks.length, 0);
   });
 }

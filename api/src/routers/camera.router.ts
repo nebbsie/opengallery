@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
@@ -22,7 +22,7 @@ export const cameraRouter = router({
       .select({
         cameraMake: ImageMetadataTable.cameraMake,
         cameraModel: ImageMetadataTable.cameraModel,
-        count: sql<number>`count(distinct ${FileTable.id})::int`,
+        count: sql<number>`count(distinct ${FileTable.id})`,
       })
       .from(ImageMetadataTable)
       .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
@@ -67,18 +67,18 @@ export const cameraRouter = router({
       if (cursor) {
         const [cursorRecord] = await db
           .select({
-            sortTs: sql<Date>`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+            sortTs: ImageMetadataTable.takenAt,
           })
           .from(FileTable)
-          .leftJoin(
+          .innerJoin(
             ImageMetadataTable,
             eq(ImageMetadataTable.fileId, FileTable.id)
           )
           .where(eq(FileTable.id, cursor))
           .limit(1);
 
-        if (cursorRecord) {
-          cursorCondition = sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${cursorRecord.sortTs}`;
+        if (cursorRecord?.sortTs) {
+          cursorCondition = sql`${ImageMetadataTable.takenAt} < ${cursorRecord.sortTs}`;
         }
       }
 
@@ -101,6 +101,8 @@ export const cameraRouter = router({
             isNull(LibraryFileTable.deletedAt),
             eq(ImageMetadataTable.cameraMake, make),
             eq(ImageMetadataTable.cameraModel, model),
+            // Only include files that have an actual takenAt date
+            isNotNull(ImageMetadataTable.takenAt),
             // Only include files that have BOTH thumbnail and optimised variants
             sql`EXISTS (
               SELECT 1 FROM ${FileVariantTable}
@@ -115,11 +117,7 @@ export const cameraRouter = router({
             ...(cursorCondition ? [cursorCondition] : [])
           )
         )
-        .orderBy(
-          desc(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
-          )
-        )
+        .orderBy(desc(ImageMetadataTable.takenAt))
         .limit(limit + 1);
 
       const data = rows.map((r) => ({

@@ -50,63 +50,58 @@ export const usersRouter = router({
         });
       }
 
-      const [deletedUser] = await db.transaction(async (tx) => {
-        // Clean up user-scoped settings/data
-        await tx
-          .delete(SharedItemTable)
-          .where(eq(SharedItemTable.sharedToUserId, input.id));
-        await tx
-          .delete(MediaPathTable)
-          .where(eq(MediaPathTable.userId, input.id));
-        await tx
-          .delete(MediaSettingsTable)
-          .where(eq(MediaSettingsTable.userId, input.id));
-        await tx
-          .delete(UiSettingsTable)
-          .where(eq(UiSettingsTable.userId, input.id));
-        await tx
-          .delete(EventLogTable)
-          .where(eq(EventLogTable.userId, input.id));
+      // Clean up user-scoped settings/data
+      await db
+        .delete(SharedItemTable)
+        .where(eq(SharedItemTable.sharedToUserId, input.id));
+      await db
+        .delete(MediaPathTable)
+        .where(eq(MediaPathTable.userId, input.id));
+      await db
+        .delete(MediaSettingsTable)
+        .where(eq(MediaSettingsTable.userId, input.id));
+      await db
+        .delete(UiSettingsTable)
+        .where(eq(UiSettingsTable.userId, input.id));
+      await db.delete(EventLogTable).where(eq(EventLogTable.userId, input.id));
 
-        // Find libraries owned by the user
-        const libs = await tx
-          .select({ id: LibraryTable.id })
-          .from(LibraryTable)
-          .where(eq(LibraryTable.userId, input.id));
-        const libIds = libs.map((l) => l.id);
+      // Find libraries owned by the user
+      const libs = await db
+        .select({ id: LibraryTable.id })
+        .from(LibraryTable)
+        .where(eq(LibraryTable.userId, input.id));
+      const libIds = libs.map((l) => l.id);
 
-        if (libIds.length > 0) {
-          // Delete albums and their files for these libraries
-          const albums = await tx
-            .select({ id: AlbumTable.id })
-            .from(AlbumTable)
-            .where(inArray(AlbumTable.libraryId, libIds));
-          const albumIds = albums.map((a) => a.id);
-          if (albumIds.length > 0) {
-            await tx
-              .delete(AlbumFileTable)
-              .where(inArray(AlbumFileTable.albumId, albumIds));
-          }
-          await tx
-            .delete(AlbumTable)
-            .where(inArray(AlbumTable.libraryId, libIds));
-
-          // Remove library_file links
-          await tx
-            .delete(LibraryFileTable)
-            .where(inArray(LibraryFileTable.libraryId, libIds));
-
-          // Finally delete libraries
-          await tx.delete(LibraryTable).where(inArray(LibraryTable.id, libIds));
+      if (libIds.length > 0) {
+        // Delete albums and their files for these libraries
+        const albums = await db
+          .select({ id: AlbumTable.id })
+          .from(AlbumTable)
+          .where(inArray(AlbumTable.libraryId, libIds));
+        const albumIds = albums.map((a) => a.id);
+        if (albumIds.length > 0) {
+          await db
+            .delete(AlbumFileTable)
+            .where(inArray(AlbumFileTable.albumId, albumIds));
         }
+        await db
+          .delete(AlbumTable)
+          .where(inArray(AlbumTable.libraryId, libIds));
 
-        // Delete user (accounts/sessions have ON DELETE CASCADE)
-        const [u] = await tx
-          .delete(UserTable)
-          .where(eq(UserTable.id, input.id))
-          .returning();
-        return [u];
-      });
+        // Remove library_file links
+        await db
+          .delete(LibraryFileTable)
+          .where(inArray(LibraryFileTable.libraryId, libIds));
+
+        // Finally delete libraries
+        await db.delete(LibraryTable).where(inArray(LibraryTable.id, libIds));
+      }
+
+      // Delete user (accounts/sessions have ON DELETE CASCADE)
+      const [deletedUser] = await db
+        .delete(UserTable)
+        .where(eq(UserTable.id, input.id))
+        .returning();
 
       if (!deletedUser) {
         throw new TRPCError({

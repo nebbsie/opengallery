@@ -6,6 +6,7 @@ import {
   AlbumFileTable,
   AlbumTable,
   FileTable,
+  FileTaskTable,
   FileVariantTable,
   ImageMetadataTable,
   LibraryTable,
@@ -185,67 +186,109 @@ export const albumRouter = router({
       >;
 
     // Count items per album
-    const itemsRes = await db.execute(
-      sql<{
-        album_id: string;
-        items: number;
-      }>`
-        SELECT af.album_id, COUNT(*)::int AS items
-        FROM ${AlbumFileTable} af
-        JOIN ${FileTable} f ON f.id = af.file_id
-        WHERE af.album_id IN (${sql.join(albumIds, sql`, `)})
-          AND EXISTS (
-            SELECT 1 FROM ${FileVariantTable} fv
-            WHERE fv.original_file_id = f.id AND fv.type = 'thumbnail'
+    const itemsRes = await db
+      .select({
+        albumId: AlbumFileTable.albumId,
+        items: sql<number>`COUNT(*)`,
+      })
+      .from(AlbumFileTable)
+      .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+      .where(
+        and(
+          inArray(AlbumFileTable.albumId, albumIds),
+          exists(
+            db
+              .select()
+              .from(FileVariantTable)
+              .where(
+                and(
+                  eq(FileVariantTable.originalFileId, FileTable.id),
+                  eq(FileVariantTable.type, "thumbnail")
+                )
+              )
+          ),
+          exists(
+            db
+              .select()
+              .from(FileVariantTable)
+              .where(
+                and(
+                  eq(FileVariantTable.originalFileId, FileTable.id),
+                  eq(FileVariantTable.type, "optimised")
+                )
+              )
           )
-          AND EXISTS (
-            SELECT 1 FROM ${FileVariantTable} fv2
-            WHERE fv2.original_file_id = f.id AND fv2.type = 'optimised'
-          )
-        GROUP BY af.album_id
-      `
-    );
+        )
+      )
+      .groupBy(AlbumFileTable.albumId);
     const itemsByAlbum = Object.fromEntries(
-      itemsRes.rows.map((r) => [r["album_id"], Number(r["items"])])
+      itemsRes.map((r) => [r.albumId, Number(r.items)])
     ) as Record<string, number>;
 
     // Compute cover per album: prefer explicit cover, else first image file id with thumbnail ready
-    const coverRes = await db.execute(
-      sql<{
-        album_id: string;
-        cover: string | null;
-      }>`
-        SELECT a.id AS album_id,
-               COALESCE(
-                 a.cover,
-                 (
-                   SELECT f.id
-                   FROM ${AlbumFileTable} af
-                   JOIN ${FileTable} f ON f.id = af.file_id
-                   WHERE af.album_id = a.id AND f.type = 'image'
-                     AND EXISTS (
-                       SELECT 1 FROM ${FileVariantTable} fv
-                       WHERE fv.original_file_id = f.id AND fv.type = 'thumbnail'
-                     )
-                   ORDER BY f.created_at ASC
-                   LIMIT 1
-                 )
-               ) AS cover
-        FROM ${AlbumTable} a
-        WHERE a.id IN (${sql.join(albumIds, sql`, `)})
-      `
-    );
-    const coverByAlbum = Object.fromEntries(
-      coverRes.rows.map((r) => [
-        r["album_id"],
-        (r["cover"] as string | null) ?? null,
-      ])
-    ) as Record<string, string | null>;
+    const albumsWithCovers = await db
+      .select({ id: AlbumTable.id, cover: AlbumTable.cover })
+      .from(AlbumTable)
+      .where(inArray(AlbumTable.id, albumIds));
+
+    const coverByAlbum: Record<string, string | null> = {};
+    for (const album of albumsWithCovers) {
+      if (album.cover) {
+        coverByAlbum[album.id] = album.cover;
+      } else {
+        // Find first image file with thumbnail
+        const [firstImage] = await db
+          .select({ fileId: FileTable.id })
+          .from(AlbumFileTable)
+          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+          .where(
+            and(
+              eq(AlbumFileTable.albumId, album.id),
+              eq(FileTable.type, "image"),
+              exists(
+                db
+                  .select()
+                  .from(FileVariantTable)
+                  .where(
+                    and(
+                      eq(FileVariantTable.originalFileId, FileTable.id),
+                      eq(FileVariantTable.type, "thumbnail")
+                    )
+                  )
+              )
+            )
+          )
+          .orderBy(FileTable.createdAt)
+          .limit(1);
+        coverByAlbum[album.id] = firstImage?.fileId ?? null;
+      }
+    }
+
+    // Count pending tasks per album (files with non-succeeded encode tasks)
+    const pendingTasksRes = await db
+      .select({
+        albumId: AlbumFileTable.albumId,
+        pendingCount: sql<number>`COUNT(DISTINCT ${FileTaskTable.fileId})`,
+      })
+      .from(AlbumFileTable)
+      .innerJoin(FileTaskTable, eq(FileTaskTable.fileId, AlbumFileTable.fileId))
+      .where(
+        and(
+          inArray(AlbumFileTable.albumId, albumIds),
+          inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
+          sql`${FileTaskTable.attempts} < 3`
+        )
+      )
+      .groupBy(AlbumFileTable.albumId);
+    const pendingByAlbum = Object.fromEntries(
+      pendingTasksRes.map((r) => [r.albumId, Number(r.pendingCount)])
+    ) as Record<string, number>;
 
     return rows.map((r) => ({
       ...r.album,
       items: itemsByAlbum[r.album.id] ?? 0,
       cover: coverByAlbum[r.album.id] ?? r.album.cover ?? null,
+      pendingTasks: pendingByAlbum[r.album.id] ?? 0,
     }));
   }),
 
@@ -332,46 +375,53 @@ export const albumRouter = router({
         throw new TRPCError({ code: "FORBIDDEN" });
 
       // best matching user media root (longest prefix of dir)
-      const rootQ = sql<{ path: string }>`
-      SELECT mp.path
-      FROM ${MediaPathTable} mp
-      WHERE mp.user_id = ${userId}
-        AND ${albumRow.dir} LIKE mp.path || '%'
-      ORDER BY length(mp.path) DESC
-      LIMIT 1
-    `;
-      const rootMatch = await db.execute<{ path: string }>(rootQ);
-      const rootPath = normalize(rootMatch.rows[0]?.path ?? "");
+      const mediaPaths = await db
+        .select({ path: MediaPathTable.path })
+        .from(MediaPathTable)
+        .where(eq(MediaPathTable.userId, userId));
+
+      // Find longest matching prefix
+      let rootPath = "";
+      for (const mp of mediaPaths) {
+        const normalizedMp = normalize(mp.path);
+        if (
+          normalize(albumRow.dir).startsWith(normalizedMp) &&
+          normalizedMp.length > rootPath.length
+        ) {
+          rootPath = normalizedMp;
+        }
+      }
       const encodedRoot = rootPath ? b64url(rootPath) : "";
 
       // lineage: root->...->current (ancestors incl. current)
-      const lineageQ = sql<{
+      // Build lineage by walking up the parent chain
+      const ancestors: Array<{
         id: string;
-        parent_id: string | null;
         name: string;
+        parentId: string | null;
         dir: string;
-      }>`
-      WITH RECURSIVE chain AS (
-        SELECT a.id, a.parent_id, a.name, a.dir
-        FROM ${AlbumTable} a
-        WHERE a.id = ${albumId}
-        UNION ALL
-        SELECT p.id, p.parent_id, p.name, p.dir
-        FROM ${AlbumTable} p
-        JOIN chain c ON p.id = c.parent_id
-      )
-      SELECT * FROM chain
-    `;
-      const lineageRes = await db.execute(lineageQ);
-      const lineage = lineageRes.rows.reverse(); // root -> current
-
-      // ensure array of simple POJOs with camelCase keys
-      const ancestors = lineage.map((l) => ({
-        id: l["id"] as string,
-        name: l["name"] as string,
-        parentId: l["parent_id"] as string,
-        dir: l["dir"] as string,
-      }));
+      }> = [];
+      let currentId: string | null = albumId;
+      while (currentId) {
+        const [album] = await db
+          .select({
+            id: AlbumTable.id,
+            parentId: AlbumTable.parentId,
+            name: AlbumTable.name,
+            dir: AlbumTable.dir,
+          })
+          .from(AlbumTable)
+          .where(eq(AlbumTable.id, currentId))
+          .limit(1);
+        if (!album) break;
+        ancestors.unshift({
+          id: album.id,
+          name: album.name,
+          parentId: album.parentId,
+          dir: album.dir,
+        });
+        currentId = album.parentId;
+      }
 
       // relative segments from filesystem view
       const rel = stripPrefix(normalize(albumRow.dir), rootPath);
@@ -446,52 +496,50 @@ export const albumRouter = router({
         (typeof children)[number] & { items?: number }
       >;
       if (childIds.length > 0) {
-        const childItemsRes = await db.execute(
-          sql<{
-            album_id: string;
-            items: number;
-          }>`
-            SELECT af.album_id, COUNT(*)::int AS items
-            FROM ${AlbumFileTable} af
-            WHERE af.album_id IN (${sql.join(childIds, sql`, `)})
-            GROUP BY af.album_id
-          `
-        );
+        const childItemsRes = await db
+          .select({
+            albumId: AlbumFileTable.albumId,
+            items: sql<number>`COUNT(*)`,
+          })
+          .from(AlbumFileTable)
+          .where(inArray(AlbumFileTable.albumId, childIds))
+          .groupBy(AlbumFileTable.albumId);
         const childItemsMap = Object.fromEntries(
-          childItemsRes.rows.map((r) => [r["album_id"], Number(r["items"])])
+          childItemsRes.map((r) => [r.albumId, Number(r.items)])
         ) as Record<string, number>;
 
-        const childCoverRes = await db.execute(
-          sql<{
-            album_id: string;
-            cover: string | null;
-          }>`
-            SELECT a.id AS album_id,
-                   COALESCE(
-                     a.cover,
-                     (
-                       SELECT f.id
-                       FROM ${AlbumFileTable} af
-                       JOIN ${FileTable} f ON f.id = af.file_id
-                       WHERE af.album_id = a.id AND f.type = 'image'
-                         AND EXISTS (
-                           SELECT 1 FROM ${FileVariantTable} fv
-                           WHERE fv.original_file_id = f.id AND fv.type = 'thumbnail'
-                         )
-                       ORDER BY f.created_at ASC
-                       LIMIT 1
-                     )
-                   ) AS cover
-            FROM ${AlbumTable} a
-            WHERE a.id IN (${sql.join(childIds, sql`, `)})
-          `
-        );
-        const childCoverMap = Object.fromEntries(
-          childCoverRes.rows.map((r) => [
-            r["album_id"],
-            (r["cover"] as string | null) ?? null,
-          ])
-        ) as Record<string, string | null>;
+        // Compute covers for children
+        const childCoverMap: Record<string, string | null> = {};
+        for (const child of children) {
+          if (child.cover) {
+            childCoverMap[child.id] = child.cover;
+          } else {
+            const [firstImage] = await db
+              .select({ fileId: FileTable.id })
+              .from(AlbumFileTable)
+              .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+              .where(
+                and(
+                  eq(AlbumFileTable.albumId, child.id),
+                  eq(FileTable.type, "image"),
+                  exists(
+                    db
+                      .select()
+                      .from(FileVariantTable)
+                      .where(
+                        and(
+                          eq(FileVariantTable.originalFileId, FileTable.id),
+                          eq(FileVariantTable.type, "thumbnail")
+                        )
+                      )
+                  )
+                )
+              )
+              .orderBy(FileTable.createdAt)
+              .limit(1);
+            childCoverMap[child.id] = firstImage?.fileId ?? null;
+          }
+        }
 
         childrenWithMeta = children.map((c) => ({
           ...c,
@@ -499,6 +547,25 @@ export const albumRouter = router({
           cover: childCoverMap[c.id] ?? c.cover ?? null,
         }));
       }
+
+      // Count pending tasks for this album (files with non-succeeded encode tasks)
+      const pendingTasksRes = await db
+        .select({
+          pendingCount: sql<number>`COUNT(DISTINCT ${FileTaskTable.fileId})`,
+        })
+        .from(AlbumFileTable)
+        .innerJoin(
+          FileTaskTable,
+          eq(FileTaskTable.fileId, AlbumFileTable.fileId)
+        )
+        .where(
+          and(
+            eq(AlbumFileTable.albumId, albumId),
+            inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
+            sql`${FileTaskTable.attempts} < 3`
+          )
+        );
+      const pendingTasks = Number(pendingTasksRes[0]?.pendingCount ?? 0);
 
       return {
         album: {
@@ -508,6 +575,7 @@ export const albumRouter = router({
           parentId: albumRow.parentId,
           libraryId: albumRow.libraryId,
           items: files.length,
+          pendingTasks,
         },
         files: files.map((r) => r.file),
         children: childrenWithMeta,

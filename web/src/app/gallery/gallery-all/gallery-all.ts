@@ -42,6 +42,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
           [items]="allItems()"
           [hasMore]="files.hasNextPage()"
           [isLoadingMore]="files.isFetchingNextPage()"
+          [scrollKey]="'gallery-all'"
           (loadMore)="loadMore()"
         >
           <ng-template let-asset>
@@ -59,7 +60,7 @@ export class GalleryAll {
   files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.GalleryAll],
     queryFn: async ({ pageParam }) =>
-      this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 100, cursor: pageParam }),
+      this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 200, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   }));

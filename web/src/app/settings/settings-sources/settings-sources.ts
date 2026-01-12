@@ -134,10 +134,10 @@ export class SettingsSources {
                   {
                     id: tempId,
                     path,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
                     userId: 'temp-id',
-                  },
+                  } as any,
                 ],
               }
             : old,

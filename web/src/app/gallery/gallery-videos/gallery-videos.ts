@@ -18,20 +18,18 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     }),
   ],
   imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid],
+  host: { class: 'block h-full' },
   template: `
-    @if (files.isPending()) {
+    @if (files.isPending() && !files.data()) {
       <hlm-spinner />
-    }
-
-    @if (files.isError()) {
+    } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
-    }
-
-    @if (files.isSuccess()) {
+    } @else {
       <app-virtual-thumbnail-grid
         [items]="allItems()"
         [hasMore]="files.hasNextPage()"
         [isLoadingMore]="files.isFetchingNextPage()"
+        [scrollKey]="'gallery-videos'"
         (loadMore)="loadMore()"
       >
         <ng-template let-asset>
@@ -48,7 +46,7 @@ export class GalleryVideos {
   files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.GalleryVideos],
     queryFn: async ({ pageParam }) =>
-      this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 60, cursor: pageParam }),
+      this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 200, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   }));

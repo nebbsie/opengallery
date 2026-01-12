@@ -1,75 +1,61 @@
+import { randomUUID } from "crypto";
 import { relations } from "drizzle-orm";
 import {
-  bigint,
-  boolean,
-  decimal,
-  foreignKey,
   integer,
-  jsonb,
-  pgEnum,
-  pgTable,
+  real,
+  sqliteTable,
   text,
-  timestamp,
   uniqueIndex,
-  uuid,
-} from "drizzle-orm/pg-core";
+} from "drizzle-orm/sqlite-core";
 
 const createdAt = () =>
-  timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+  text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString());
 
 const updatedAt = () =>
-  timestamp("updatedAt", { withTimezone: true }).notNull().defaultNow();
+  text("updatedAt")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString());
 
-const id = () => uuid("id").primaryKey().defaultRandom();
+const id = () =>
+  text("id")
+    .primaryKey()
+    .$defaultFn(() => randomUUID());
 
-export const FileTypeEnum = pgEnum("file_type", ["image", "video"]);
-export const SharedItemTypeEnum = pgEnum("shared_item_type", [
-  "library",
-  "album",
-  "file",
-]);
-export const FileVariantTypeEnum = pgEnum("file_variant_type", [
-  "thumbnail",
-  "optimised",
-]);
-export const ShareTypeEnum = pgEnum("share_type", ["user", "public"]);
-export const SharedAccessLevelEnum = pgEnum("shared_access_level_type", [
-  "view",
-  "add",
-  "edit",
-]);
-export const LogEnum = pgEnum("log_type", ["error", "info", "warn", "debug"]);
-// Legacy enum used by deprecated ProcessingIssueTable (removed).
-export const ProcessingStageEnum = pgEnum("processing_stage", [
-  "import",
-  "encode",
-  "metadata",
-  "geolocation",
-  "variants",
-  "ffmpeg",
-]);
-
-export const FileTaskTypeEnum = pgEnum("file_task_type", [
-  "encode_thumbnail",
-  "encode_optimised",
-  "video_poster",
-]);
-
+// SQLite doesn't support enums natively, using text columns with type hints
+export type FileType = "image" | "video";
+export type SharedItemType = "library" | "album" | "file";
+export type FileVariantType = "thumbnail" | "optimised";
+export type ShareType = "user" | "public";
+export type SharedAccessLevel = "view" | "add" | "edit";
+export type LogType = "error" | "info" | "warn" | "debug";
+export type ProcessingStage =
+  | "import"
+  | "encode"
+  | "metadata"
+  | "geolocation"
+  | "variants"
+  | "ffmpeg";
+export type FileTaskType =
+  | "encode_thumbnail"
+  | "encode_optimised"
+  | "video_poster";
 // FileTaskStatusEnum semantics:
 // - pending: queued to be processed, not yet started
 // - in_progress: worker picked it up and is running
 // - succeeded: completed successfully (idempotent; safe to skip next runs)
 // - failed: last attempt failed; may be retried based on policy
 // - skipped: intentionally not applicable (e.g., unsupported format)
-export const FileTaskStatusEnum = pgEnum("file_task_status", [
-  "pending",
-  "in_progress",
-  "succeeded",
-  "failed",
-  "skipped",
-]);
+export type FileTaskStatus =
+  | "pending"
+  | "in_progress"
+  | "succeeded"
+  | "failed"
+  | "skipped";
+export type UserType = "user" | "admin";
 
-export const LibraryTable = pgTable("library", {
+export const LibraryTable = sqliteTable("library", {
   id: id(),
   userId: text("user_id")
     .notNull()
@@ -79,43 +65,44 @@ export const LibraryTable = pgTable("library", {
   updatedAt: updatedAt(),
 });
 
-export const FileTable = pgTable(
+export const FileTable = sqliteTable(
   "file",
   {
     id: id(),
     dir: text("dir").notNull(),
     name: text("name").notNull(),
-    type: FileTypeEnum("type").notNull(),
+    type: text("type").$type<FileType>().notNull(),
     mime: text("mime").notNull(),
-    size: bigint("size", { mode: "number" }).notNull(),
+    size: integer("size").notNull(),
+    contentHash: text("content_hash"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)]
 );
 
-export const LibraryFileTable = pgTable("library_file", {
+export const LibraryFileTable = sqliteTable("library_file", {
   id: id(),
-  libraryId: uuid("library_id")
+  libraryId: text("library_id")
     .notNull()
     .references(() => LibraryTable.id),
-  fileId: uuid("file_id")
+  fileId: text("file_id")
     .notNull()
     .references(() => FileTable.id),
-  deletedAt: timestamp("deleted_at"),
+  deletedAt: text("deleted_at"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
-export const AlbumTable = pgTable(
+export const AlbumTable = sqliteTable(
   "album",
   {
     id: id(),
     name: text("name").notNull(),
     desc: text("desc"),
-    cover: uuid("cover").references(() => FileTable.id),
-    parentId: uuid("parent_id"),
-    libraryId: uuid("library_id")
+    cover: text("cover").references(() => FileTable.id),
+    parentId: text("parent_id"),
+    libraryId: text("library_id")
       .notNull()
       .references(() => LibraryTable.id),
     dir: text("dir").notNull(),
@@ -123,11 +110,6 @@ export const AlbumTable = pgTable(
     updatedAt: updatedAt(),
   },
   (table) => [
-    foreignKey({
-      columns: [table.parentId],
-      foreignColumns: [table.id],
-      name: "album_parent_fk", // custom constraint name
-    }),
     uniqueIndex("album_library_dir_uidx").on(table.libraryId, table.dir),
   ]
 );
@@ -140,60 +122,57 @@ export const AlbumRelations = relations(AlbumTable, ({ one, many }) => ({
   children: many(AlbumTable),
 }));
 
-export const AlbumFileTable = pgTable("album_file", {
+export const AlbumFileTable = sqliteTable("album_file", {
   id: id(),
-  albumId: uuid("album_id")
+  albumId: text("album_id")
     .notNull()
     .references(() => AlbumTable.id),
-  fileId: uuid("file_id")
+  fileId: text("file_id")
     .notNull()
     .references(() => FileTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
-export const SharedItemTable = pgTable("shared_item", {
+export const SharedItemTable = sqliteTable("shared_item", {
   id: id(),
-  sourceType: SharedItemTypeEnum("source_type").notNull(),
-  sourceId: uuid("source_id").notNull(),
-  shareType: ShareTypeEnum("share_type").notNull(),
-  accessLevel: SharedAccessLevelEnum("access_level").notNull(),
+  sourceType: text("source_type").$type<SharedItemType>().notNull(),
+  sourceId: text("source_id").notNull(),
+  shareType: text("share_type").$type<ShareType>().notNull(),
+  accessLevel: text("access_level").$type<SharedAccessLevel>().notNull(),
   sharedToUserId: text("shared_to_user_id").references(() => UserTable.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
-export const FileVariantTable = pgTable(
+export const FileVariantTable = sqliteTable(
   "file_variant",
   {
     id: id(),
-    type: FileVariantTypeEnum("type").notNull(),
-    originalFileId: uuid("original_file_id")
+    type: text("type").$type<FileVariantType>().notNull(),
+    originalFileId: text("original_file_id")
       .notNull()
       .references(() => FileTable.id),
-    fileId: uuid("file_id")
+    fileId: text("file_id")
       .notNull()
       .references(() => FileTable.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => ({
-    uniqFileType: uniqueIndex("file_variant_fileid_type_idx").on(
-      t.originalFileId,
-      t.type
-    ),
-  })
+  (t) => [
+    uniqueIndex("file_variant_fileid_type_idx").on(t.originalFileId, t.type),
+  ]
 );
 
-export const ImageMetadataTable = pgTable("image_metadata", {
+export const ImageMetadataTable = sqliteTable("image_metadata", {
   id: id(),
-  fileId: uuid("file_id")
+  fileId: text("file_id")
     .notNull()
     .references(() => FileTable.id),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
   blurhash: text("blurhash"),
-  takenAt: timestamp("taken_at"),
+  takenAt: text("taken_at"),
   cameraMake: text("camera_make"),
   cameraModel: text("camera_model"),
   lensModel: text("lens_model"),
@@ -205,14 +184,14 @@ export const ImageMetadataTable = pgTable("image_metadata", {
   updatedAt: updatedAt(),
 });
 
-export const VideoMetadataTable = pgTable("video_metadata", {
+export const VideoMetadataTable = sqliteTable("video_metadata", {
   id: id(),
-  fileId: uuid("file_id")
+  fileId: text("file_id")
     .notNull()
     .references(() => FileTable.id),
   width: integer("width").notNull(),
   height: integer("height").notNull(),
-  poster: uuid("poster")
+  poster: text("poster")
     .notNull()
     .references(() => FileVariantTable.id),
   runtime: integer("runtime").notNull(),
@@ -223,74 +202,73 @@ export const VideoMetadataTable = pgTable("video_metadata", {
   updatedAt: updatedAt(),
 });
 
-export const GeoLocationTable = pgTable("geo_location", {
+export const GeoLocationTable = sqliteTable("geo_location", {
   id: id(),
-  fileId: uuid("file_id")
+  fileId: text("file_id")
     .notNull()
     .references(() => FileTable.id),
-  lat: decimal("lat").notNull(),
-  lon: decimal("lon").notNull(),
+  lat: real("lat").notNull(),
+  lon: real("lon").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
 
-export const MediaPathTable = pgTable(
+export const MediaPathTable = sqliteTable(
   "media_path",
   {
     id: id(),
     path: text("path").notNull(),
     userId: text("user_id")
       .notNull()
-      .references(() => UserTable.id)
-      .notNull(),
+      .references(() => UserTable.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => {
-    return [uniqueIndex().on(table.userId, table.path)];
-  }
+  (table) => [
+    uniqueIndex("media_path_user_path_uidx").on(table.userId, table.path),
+  ]
 );
 
-export const MediaSettingsTable = pgTable(
+export const MediaSettingsTable = sqliteTable(
   "media_settings",
   {
     id: id(),
-    autoImportAlbums: boolean("auto_import_albums").notNull().default(true),
-    userId: text("user_id")
-      .notNull()
-      .references(() => UserTable.id)
-      .notNull(),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => {
-    return [uniqueIndex().on(table.userId)];
-  }
-);
-
-export const UiSettingsTable = pgTable(
-  "ui_settings",
-  {
-    id: id(),
-    autoCloseSidebarOnAssetOpen: boolean("auto_close_sidebar_on_asset_open")
+    autoImportAlbums: integer("auto_import_albums", { mode: "boolean" })
       .notNull()
       .default(true),
     userId: text("user_id")
       .notNull()
-      .references(() => UserTable.id)
-      .notNull(),
+      .references(() => UserTable.id),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => {
-    return [uniqueIndex().on(table.userId)];
-  }
+  (table) => [uniqueIndex("media_settings_user_uidx").on(table.userId)]
 );
 
-export const SystemSettingsTable = pgTable("system_settings", {
+export const UiSettingsTable = sqliteTable(
+  "ui_settings",
+  {
+    id: id(),
+    autoCloseSidebarOnAssetOpen: integer("auto_close_sidebar_on_asset_open", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(true),
+    userId: text("user_id")
+      .notNull()
+      .references(() => UserTable.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [uniqueIndex("ui_settings_user_uidx").on(table.userId)]
+);
+
+export const SystemSettingsTable = sqliteTable("system_settings", {
   id: id(),
   uploadPath: text("upload_path").notNull(),
-  allowsSelfRegistration: boolean("allows_self_registration")
+  allowsSelfRegistration: integer("allows_self_registration", {
+    mode: "boolean",
+  })
     .notNull()
     .default(false),
   encodingConcurrency: integer("encoding_concurrency").notNull().default(5),
@@ -298,100 +276,105 @@ export const SystemSettingsTable = pgTable("system_settings", {
   updatedAt: updatedAt(),
 });
 
-export const EventLogTable = pgTable("event_log", {
+export const EventLogTable = sqliteTable("event_log", {
   id: id(),
   type: text("type").notNull(),
   userId: text("user_id")
     .notNull()
-    .references(() => UserTable.id)
-    .notNull(),
+    .references(() => UserTable.id),
   message: text("message").notNull(),
-  extra: jsonb("extra"),
+  extra: text("extra", { mode: "json" }),
   createdAt: createdAt(),
 });
 
-export const userTypeEnum = pgEnum("user_type", ["user", "admin"]);
-
-export const UserTable = pgTable("user", {
+export const UserTable = sqliteTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  emailVerified: boolean("email_verified")
-    .$defaultFn(() => false)
-    .notNull(),
+  emailVerified: integer("email_verified", { mode: "boolean" })
+    .notNull()
+    .default(false),
   image: text("image"),
-  type: userTypeEnum("type").notNull().default("user"),
-  createdAt: timestamp("created_at")
+  type: text("type").$type<UserType>().notNull().default("user"),
+  createdAt: integer("created_at", { mode: "timestamp" })
     .$defaultFn(() => new Date())
     .notNull(),
-  updatedAt: timestamp("updated_at")
+  updatedAt: integer("updated_at", { mode: "timestamp" })
     .$defaultFn(() => new Date())
     .notNull(),
 });
 
-export const SessionTable = pgTable("session", {
+export const SessionTable = sqliteTable("session", {
   id: text("id").primaryKey(),
-  expiresAt: timestamp("expires_at").notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   token: text("token").notNull().unique(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
   userId: text("user_id")
     .notNull()
-    .references(() => UserTable.id, { onDelete: "cascade" }),
+    .references(() => UserTable.id),
 });
 
-export const AccountTable = pgTable("account", {
+export const AccountTable = sqliteTable("account", {
   id: text("id").primaryKey(),
   accountId: text("account_id").notNull(),
   providerId: text("provider_id").notNull(),
   userId: text("user_id")
     .notNull()
-    .references(() => UserTable.id, { onDelete: "cascade" }),
+    .references(() => UserTable.id),
   accessToken: text("access_token"),
   refreshToken: text("refresh_token"),
   idToken: text("id_token"),
-  accessTokenExpiresAt: timestamp("access_token_expires_at"),
-  refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+  accessTokenExpiresAt: integer("access_token_expires_at", {
+    mode: "timestamp",
+  }),
+  refreshTokenExpiresAt: integer("refresh_token_expires_at", {
+    mode: "timestamp",
+  }),
   scope: text("scope"),
   password: text("password"),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
-export const VerificationTable = pgTable("verification", {
+export const VerificationTable = sqliteTable("verification", {
   id: text("id").primaryKey(),
   identifier: text("identifier").notNull(),
   value: text("value").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-  updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(
+    () => new Date()
+  ),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(
+    () => new Date()
+  ),
 });
 
-export const LogTable = pgTable("log", {
+export const LogTable = sqliteTable("log", {
   id: id(),
-  type: LogEnum("type").notNull(),
+  type: text("type").$type<LogType>().notNull(),
   value: text("value").notNull(),
   service: text("service").notNull(),
-  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+  createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
 });
 
-export const FileTaskTable = pgTable(
+export const FileTaskTable = sqliteTable(
   "file_task",
   {
     id: id(),
-    fileId: uuid("file_id")
+    fileId: text("file_id")
       .notNull()
-      .references(() => FileTable.id, { onDelete: "cascade" }),
-    type: FileTaskTypeEnum("type").notNull(),
+      .references(() => FileTable.id),
+    type: text("type").$type<FileTaskType>().notNull(),
     version: integer("version").notNull().default(1),
-    status: FileTaskStatusEnum("status").notNull().default("pending"),
+    status: text("status").$type<FileTaskStatus>().notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
     priority: integer("priority").notNull().default(0),
-    scheduledAt: timestamp("scheduled_at"),
-    startedAt: timestamp("started_at"),
-    finishedAt: timestamp("finished_at"),
+    scheduledAt: text("scheduled_at"),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
     lastError: text("last_error"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

@@ -3,7 +3,7 @@ import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideFolder, lucideImages } from '@ng-icons/lucide';
+import { lucideFolder, lucideHardDrive, lucideImages } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
@@ -22,6 +22,7 @@ function formatBytes(bytes: number): string {
     provideIcons({
       lucideFolder,
       lucideImages,
+      lucideHardDrive,
     }),
   ],
   imports: [HlmSpinner, ErrorAlert, NgIcon, HlmIcon],
@@ -29,7 +30,7 @@ function formatBytes(bytes: number): string {
     class: 'w-full',
   },
   template: `
-    @if (stats.isPending()) {
+    @if (stats.isPending() || settings.isPending()) {
       <hlm-spinner />
     }
 
@@ -37,7 +38,27 @@ function formatBytes(bytes: number): string {
       <app-error-alert [error]="stats.error()" />
     }
 
-    @if (stats.isSuccess()) {
+    @if (stats.isSuccess() && settings.isSuccess()) {
+      <!-- Storage Location -->
+      <div class="bg-card mb-4 rounded-lg border p-4">
+        <div class="flex items-center gap-3">
+          <div class="rounded-lg bg-purple-500/10 p-2 text-purple-500">
+            <ng-icon hlm size="lg" name="lucideHardDrive" />
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-muted-foreground text-sm">Storage Location</p>
+            <p class="text-foreground truncate font-mono text-sm">
+              {{ settings.data().uploadPath }}
+            </p>
+          </div>
+        </div>
+        <p class="text-muted-foreground mt-2 text-xs">
+          Encoded images stored in <code class="bg-muted rounded px-1">images/YYYY/MM/DD/</code> and
+          videos in
+          <code class="bg-muted rounded px-1">videos/YYYY/MM/DD/</code>
+        </p>
+      </div>
+
       <div class="grid gap-4 md:grid-cols-2">
         <!-- Raw Storage Card -->
         <div class="bg-card rounded-lg border p-4">
@@ -77,6 +98,11 @@ export class SettingsStorage {
   stats = injectQuery(() => ({
     queryKey: [CacheKey.StorageStats],
     queryFn: async () => this.trpc.settings.getStorageStats.query(),
+  }));
+
+  settings = injectQuery(() => ({
+    queryKey: [CacheKey.SystemSettings],
+    queryFn: async () => this.trpc.settings.get.query(),
   }));
 
   originalSize = computed(() => formatBytes(this.stats.data()?.original.totalSize ?? 0));

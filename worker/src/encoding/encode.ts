@@ -1,5 +1,7 @@
+import { encode as encodeBlurhash } from 'blurhash';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
 import { getExifInfo } from '../utils/exif.js';
@@ -9,7 +11,20 @@ import { type RouterOutputs, trpc } from '../utils/trpc.js';
 
 type File = RouterOutputs['files']['getFileById']['raw'];
 
-async function encodeImage(file: File) {
+// Get a stable identifier for encoding folder names.
+// Prefers contentHash (true deduplication) if available, falls back to path hash.
+// This stays consistent even if the DB is reset and file gets a new UUID.
+function getFileStableHash(file: File): string {
+  // Use content hash if available (true deduplication across duplicate files)
+  if (file.contentHash) {
+    return file.contentHash.slice(0, 16);
+  }
+  // Fall back to path hash (stable across DB resets, but no deduplication)
+  const fullPath = join(file.dir, file.name);
+  return createHash('sha256').update(fullPath).digest('hex').slice(0, 16);
+}
+
+async function encodeImage(file: File, existingVariants?: { thumbPath: string; optPath: string }) {
   // Get upload path from settings
   const settings = await trpc.settings.get.query();
   const uploadDir = settings?.uploadPath;
@@ -34,12 +49,29 @@ async function encodeImage(file: File) {
   const width = metadata.width ?? null;
   const height = metadata.height ?? null;
 
-  const dt = new Date(file.createdAt || Date.now());
-  const yyyy = String(dt.getUTCFullYear());
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  // Generate blurhash from a small version of the image
+  let blurhash: string | null = null;
+  try {
+    const smallImg = await sharp(input)
+      .rotate()
+      .resize(32, 32, { fit: 'inside' })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    blurhash = encodeBlurhash(
+      new Uint8ClampedArray(smallImg.data),
+      smallImg.info.width,
+      smallImg.info.height,
+      4,
+      3,
+    );
+  } catch (e) {
+    logger.warn(`[encode:image] blurhash generation failed for id=${fileId}`, e as Error);
+  }
 
-  const destDir = join(uploadDir, 'images', yyyy, mm, dd, file.id);
+  // Use path hash for stable folder naming across DB resets
+  const pathHash = getFileStableHash(file);
+  const destDir = join(uploadDir, 'images', pathHash);
   mkdirSync(destDir, { recursive: true });
 
   const base = basename(file.name, extname(file.name));
@@ -48,32 +80,44 @@ async function encodeImage(file: File) {
   const thumbPath = join(destDir, thumbName);
   const optPath = join(destDir, optName);
 
-  let thumb;
-  try {
-    thumb = await sharp(input)
-      .rotate()
-      .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
-      .avif({ quality: 45, effort: 4 })
-      .toBuffer({ resolveWithObject: true });
-  } catch (e) {
-    logger.error(`[encode:image] thumbnail failed for id=${fileId}`, e as Error);
-    throw e;
-  }
+  // If variants already exist on disk, reuse them instead of re-encoding
+  let thumb: { data: Buffer; info: { size: number } };
+  let opt: { data: Buffer; info: { size: number } };
 
-  let opt;
-  try {
-    opt = await sharp(input)
-      .rotate()
-      .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
-      .avif({ quality: 50, effort: 4 })
-      .toBuffer({ resolveWithObject: true });
-  } catch (e) {
-    logger.error(`[encode:image] optimise failed for id=${fileId}`, e as Error);
-    throw e;
-  }
+  if (existingVariants) {
+    logger.info(`[encode:image] reusing existing variants on disk for id=${fileId}`);
+    const thumbData = readFileSync(existingVariants.thumbPath);
+    const optData = readFileSync(existingVariants.optPath);
+    thumb = { data: thumbData, info: { size: thumbData.length } };
+    opt = { data: optData, info: { size: optData.length } };
+  } else {
+    try {
+      const thumbResult = await sharp(input)
+        .rotate()
+        .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
+        .avif({ quality: 45, effort: 4 })
+        .toBuffer({ resolveWithObject: true });
+      thumb = { data: thumbResult.data, info: { size: thumbResult.data.length } };
+    } catch (e) {
+      logger.error(`[encode:image] thumbnail failed for id=${fileId}`, e as Error);
+      throw e;
+    }
 
-  writeFileSync(thumbPath, thumb.data);
-  writeFileSync(optPath, opt.data);
+    try {
+      const optResult = await sharp(input)
+        .rotate()
+        .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
+        .avif({ quality: 50, effort: 4 })
+        .toBuffer({ resolveWithObject: true });
+      opt = { data: optResult.data, info: { size: optResult.data.length } };
+    } catch (e) {
+      logger.error(`[encode:image] optimise failed for id=${fileId}`, e as Error);
+      throw e;
+    }
+
+    writeFileSync(thumbPath, thumb.data);
+    writeFileSync(optPath, opt.data);
+  }
 
   logger.debug(
     `[encode:image] saving variants for id=${fileId} thumbBytes=${thumb.data.length} optBytes=${opt.data.length}`,
@@ -113,18 +157,17 @@ async function encodeImage(file: File) {
     fNumber,
   } = await getExifInfo(path);
 
-  // Save image metadata (width, height, takenAt). If no EXIF takenAt, fall back to file.createdAt
+  // Save image metadata (width, height, takenAt). Only use real EXIF takenAt, do not default
   if (width && height) {
-    const takenAtFinal =
-      takenAt ?? (file.createdAt ? new Date(file.createdAt as unknown as string) : new Date());
     logger.debug(
-      `[encode:image] saving metadata id=${fileId} width=${width} height=${height} takenAt=${takenAtFinal?.toISOString?.() ?? 'null'}`,
+      `[encode:image] saving metadata id=${fileId} width=${width} height=${height} takenAt=${takenAt?.toISOString?.() ?? 'null'}`,
     );
     await trpc.imageMetadata.save.mutate({
       fileId,
       width,
       height,
-      takenAt: takenAtFinal,
+      blurhash,
+      takenAt: takenAt ?? null,
       cameraMake: cameraMake ?? null,
       cameraModel: cameraModel ?? null,
       lensModel: lensModel ?? null,
@@ -153,7 +196,12 @@ export async function encode(fileId: string) {
   const startedAt = Date.now();
   const fileResult = await trpc.files.getFileById.query(fileId);
   const file = fileResult.raw;
-  // If both required variants already exist, mark tasks as succeeded and skip work
+
+  // Get upload path from settings for filesystem checks
+  const settings = await trpc.settings.get.query();
+  const uploadDir = settings?.uploadPath;
+
+  // If both required variants already exist in DB, mark tasks as succeeded and skip work
   const hasThumb = !!fileResult.thumbnail;
   const hasOpt = !!fileResult.optimized;
   if (file.type === 'image' && hasThumb && hasOpt) {
@@ -180,7 +228,22 @@ export async function encode(fileId: string) {
         { fileId, type: 'encode_thumbnail', status: 'in_progress' },
         { fileId, type: 'encode_optimised', status: 'in_progress' },
       ]);
-      await encodeImage(file);
+
+      // Check if encoded files already exist on disk (DB may have been reset)
+      let existingVariants: { thumbPath: string; optPath: string } | undefined;
+      if (uploadDir) {
+        const pathHash = getFileStableHash(file);
+        const destDir = join(uploadDir, 'images', pathHash);
+        const base = basename(file.name, extname(file.name));
+        const thumbPath = join(destDir, `${base}__thumb.avif`);
+        const optPath = join(destDir, `${base}__opt.avif`);
+        if (existsSync(thumbPath) && existsSync(optPath)) {
+          logger.info(`[encode] found existing encoded files on disk for image id=${fileId}`);
+          existingVariants = { thumbPath, optPath };
+        }
+      }
+
+      await encodeImage(file, existingVariants);
       await trpc.fileTask.setManyStatusByFileAndType.mutate([
         { fileId, type: 'encode_thumbnail', status: 'succeeded' },
         { fileId, type: 'encode_optimised', status: 'succeeded' },
@@ -222,7 +285,22 @@ export async function encode(fileId: string) {
         { fileId, type: 'video_poster', status: 'in_progress' },
         { fileId, type: 'encode_optimised', status: 'in_progress' },
       ]);
-      await encodeVideo(file);
+
+      // Check if encoded files already exist on disk (DB may have been reset)
+      let existingVideoVariants: { thumbPath: string; optPath: string } | undefined;
+      if (uploadDir) {
+        const pathHash = getFileStableHash(file);
+        const destDir = join(uploadDir, 'videos', pathHash);
+        const base = basename(file.name, extname(file.name));
+        const thumbPath = join(destDir, `${base}__thumb.jpg`);
+        const optPath = join(destDir, `${base}__opt.mp4`);
+        if (existsSync(thumbPath) && existsSync(optPath)) {
+          logger.info(`[encode] found existing encoded files on disk for video id=${fileId}`);
+          existingVideoVariants = { thumbPath, optPath };
+        }
+      }
+
+      await encodeVideo(file, existingVideoVariants);
       await trpc.fileTask.setManyStatusByFileAndType.mutate([
         { fileId, type: 'video_poster', status: 'succeeded' },
         { fileId, type: 'encode_optimised', status: 'succeeded' },
@@ -274,7 +352,7 @@ async function runFfmpeg(args: string[], label: string) {
   });
 }
 
-async function encodeVideo(file: File) {
+async function encodeVideo(file: File, existingVariants?: { thumbPath: string; optPath: string }) {
   const settings = await trpc.settings.get.query();
   const uploadDir = settings?.uploadPath;
   if (!uploadDir) {
@@ -289,12 +367,10 @@ async function encodeVideo(file: File) {
         : `${containerRootPrefix}${p}`
       : p;
   const inputPath = toContainerPath(join(file.dir, file.name));
-  const dt = new Date(file.createdAt || Date.now());
-  const yyyy = String(dt.getUTCFullYear());
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getUTCDate()).padStart(2, '0');
 
-  const destDir = join(uploadDir, 'videos', yyyy, mm, dd, file.id);
+  // Use path hash for stable folder naming across DB resets
+  const pathHash = getFileStableHash(file);
+  const destDir = join(uploadDir, 'videos', pathHash);
   mkdirSync(destDir, { recursive: true });
 
   const base = basename(file.name, extname(file.name));
@@ -307,60 +383,77 @@ async function encodeVideo(file: File) {
   const { width, height, takenAt, lat, lon, cameraMake, cameraModel, lensModel } =
     await getVideoMetadata(inputPath);
 
-  // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
-  await runFfmpeg(
-    [
-      '-y',
-      '-i',
-      inputPath,
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-crf',
-      '23',
-      '-profile:v',
-      'high',
-      '-level',
-      '4.1',
-      '-pix_fmt',
-      'yuv420p',
-      '-vf',
-      "scale='min(1920,iw)':'-2'",
-      '-c:a',
-      'aac',
-      '-b:a',
-      '128k',
-      '-ac',
-      '2',
-      '-movflags',
-      '+faststart',
-      optPath,
-    ],
-    'optimise',
-  );
+  let thumbSize: number;
+  let optSize: number;
 
-  // Poster frame (~1s in), scaled to width 320px
-  await runFfmpeg(
-    [
-      '-y',
-      '-ss',
-      '00:00:01',
-      '-i',
-      inputPath,
-      '-frames:v',
-      '1',
-      '-vf',
-      "scale='320':'-2'",
-      '-q:v',
-      '2',
-      thumbPath,
-    ],
-    'thumbnail',
-  );
+  // If variants already exist on disk, reuse them instead of re-encoding
+  if (existingVariants) {
+    logger.info(`[encode:video] reusing existing variants on disk for id=${file.id}`);
+    thumbSize = statSync(existingVariants.thumbPath).size;
+    optSize = statSync(existingVariants.optPath).size;
+  } else {
+    // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
+    await runFfmpeg(
+      [
+        '-y',
+        '-i',
+        inputPath,
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '23',
+        '-profile:v',
+        'high',
+        '-level',
+        '4.1',
+        '-pix_fmt',
+        'yuv420p',
+        '-vf',
+        "scale='min(1920,iw)':'-2'",
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-ac',
+        '2',
+        '-movflags',
+        '+faststart',
+        optPath,
+      ],
+      'optimise',
+    );
 
-  const thumbSize = statSync(thumbPath).size;
-  const optSize = statSync(optPath).size;
+    // Poster frame (first frame), scaled to width 320px
+    await runFfmpeg(
+      ['-y', '-i', inputPath, '-frames:v', '1', '-vf', "scale='320':'-2'", '-q:v', '2', thumbPath],
+      'thumbnail',
+    );
+
+    thumbSize = statSync(thumbPath).size;
+    optSize = statSync(optPath).size;
+  }
+
+  // Generate blurhash from the poster frame
+  let blurhash: string | null = null;
+  try {
+    const thumbInput = readFileSync(thumbPath);
+    const smallImg = await sharp(thumbInput)
+      .resize(32, 32, { fit: 'inside' })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    blurhash = encodeBlurhash(
+      new Uint8ClampedArray(smallImg.data),
+      smallImg.info.width,
+      smallImg.info.height,
+      4,
+      3,
+    );
+  } catch (e) {
+    logger.warn(`[encode:video] blurhash generation failed for id=${file.id}`, e as Error);
+  }
 
   logger.debug(
     `[encode:video] saving variants for id=${file.id} thumbBytes=${thumbSize} optBytes=${optSize}`,
@@ -387,18 +480,17 @@ async function encodeVideo(file: File) {
     ],
   });
 
-  // Save video metadata (width, height, takenAt). If no takenAt via tags, fall back to createdAt
+  // Save video metadata (width, height, takenAt). Only use real takenAt from video tags, do not default
   if (width && height) {
-    const takenAtFinal =
-      takenAt ?? (file.createdAt ? new Date(file.createdAt as unknown as string) : new Date());
     logger.debug(
-      `[encode:video] saving metadata id=${file.id} width=${width} height=${height} takenAt=${takenAtFinal?.toISOString?.() ?? 'null'}`,
+      `[encode:video] saving metadata id=${file.id} width=${width} height=${height} takenAt=${takenAt?.toISOString?.() ?? 'null'}`,
     );
     await trpc.imageMetadata.save.mutate({
       fileId: file.id,
       width,
       height,
-      takenAt: takenAtFinal,
+      blurhash,
+      takenAt: takenAt ?? null,
       cameraMake: cameraMake ?? null,
       cameraModel: cameraModel ?? null,
       lensModel: lensModel ?? null,

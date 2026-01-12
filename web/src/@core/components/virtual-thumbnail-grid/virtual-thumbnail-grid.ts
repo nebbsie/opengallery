@@ -7,6 +7,7 @@ import {
   ContentChild,
   ElementRef,
   EventEmitter,
+  NgZone,
   OnDestroy,
   Output,
   TemplateRef,
@@ -17,6 +18,7 @@ import {
   input,
   signal,
 } from '@angular/core';
+import { ScrollPosition } from '@core/services/scroll-position/scroll-position';
 
 @Component({
   selector: 'app-virtual-thumbnail-grid',
@@ -27,22 +29,26 @@ import {
   },
   styles: `
     :host .cdk-virtual-scroll-viewport {
-      /* Never show horizontal scrollbar */
       overflow-x: hidden;
-      /* Show a thin, unobtrusive vertical scrollbar */
-      scrollbar-width: thin; /* Firefox */
-      scrollbar-color: rgba(0, 0, 0, 0.35) transparent; /* Firefox */
+      scrollbar-width: thin;
+      scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
+      padding-right: 24px;
     }
     :host .cdk-virtual-scroll-viewport::-webkit-scrollbar {
-      width: 8px; /* vertical */
-      height: 0; /* horizontal hidden */
+      width: 6px;
+      height: 0;
     }
     :host .cdk-virtual-scroll-viewport::-webkit-scrollbar-thumb {
-      background-color: rgba(0, 0, 0, 0.35);
+      background-color: hsl(var(--muted-foreground) / 0.3);
       border-radius: 9999px;
+      transition: background-color 0.15s ease;
+    }
+    :host .cdk-virtual-scroll-viewport::-webkit-scrollbar-thumb:hover {
+      background-color: hsl(var(--muted-foreground) / 0.5);
     }
     :host .cdk-virtual-scroll-viewport::-webkit-scrollbar-track {
       background: transparent;
+      margin: 4px 0;
     }
   `,
   template: `
@@ -69,11 +75,18 @@ import {
 })
 export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestroy {
   private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly scrollPosition = inject(ScrollPosition);
+  private readonly ngZone = inject(NgZone);
+  private scrollRestoreState: 'pending' | 'restoring' | 'done' = 'pending';
+  private targetScrollPosition: number | null = null;
+  private restoreAttempts = 0;
+  private readonly MAX_RESTORE_ATTEMPTS = 10;
 
   items = input<readonly T[] | null>([]);
   minTilePx = input(200); // approximate min tile width
   hasMore = input(false);
   isLoadingMore = input(false);
+  scrollKey = input<string | null>(null);
 
   @Output() loadMore = new EventEmitter<void>();
 
@@ -84,10 +97,38 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   private resizeObs: ResizeObserver | null = null;
 
   constructor() {
+    // Effect to handle scroll restoration when items load
     effect(() => {
       const rows = this.rows();
+      const key = this.scrollKey();
+
       if (this.viewport && rows.length > 0) {
         this.viewport.checkViewportSize();
+
+        // Only attempt restoration if we haven't started yet
+        if (this.scrollRestoreState === 'pending' && key) {
+          this.initScrollRestoration(key);
+        }
+
+        // Check if we need to load more to fill the viewport
+        this.checkIfNeedsMoreContent();
+      }
+    });
+  }
+
+  private checkIfNeedsMoreContent(): void {
+    if (!this.hasMore() || this.isLoadingMore() || !this.viewport) return;
+
+    // Use RAF to ensure layout is complete before measuring
+    requestAnimationFrame(() => {
+      if (!this.viewport) return;
+
+      const viewportHeight = this.viewport.getViewportSize();
+      const contentHeight = this.rows().length * this.rowHeight();
+
+      // If content doesn't fill the viewport, load more
+      if (contentHeight < viewportHeight * 1.2) {
+        this.loadMore.emit();
       }
     });
   }
@@ -99,9 +140,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     return cols;
   });
 
-  gridTemplateColumns = computed(
-    () => `repeat(${this.columns()}, minmax(${this.minTilePx()}px, 1fr))`,
-  );
+  gridTemplateColumns = computed(() => `repeat(${this.columns()}, 1fr)`);
 
   // Assume square tiles; include gap (approx 8px) for row height
   rowHeight = computed(() => {
@@ -142,33 +181,119 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
       const cr = entry?.contentRect as DOMRect | undefined;
       const w = cr?.width ?? this.host.nativeElement.clientWidth;
       this.width.set(w);
+      // Notify viewport of size change (e.g., when sidebar opens/closes)
+      if (this.viewport) {
+        this.viewport.checkViewportSize();
+      }
     });
     this.resizeObs.observe(this.host.nativeElement);
   }
 
-  onScrollIndexChange(index: number): void {
-    if (!this.hasMore() || this.isLoadingMore()) return;
-    const totalRows = this.rows().length;
-    // Load more when within 3 rows of the end
-    if (index >= totalRows - 3) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onScrollIndexChange(_index: number): void {
+    // Handled by onScroll for better control
+  }
+
+  onScroll(): void {
+    // Don't save scroll position while restoring
+    const key = this.scrollKey();
+    if (key && this.viewport && this.scrollRestoreState === 'done') {
+      this.scrollPosition.save(key, this.viewport.measureScrollOffset('top'));
+    }
+
+    // Don't load if already loading or no more items
+    if (!this.hasMore() || this.isLoadingMore() || !this.viewport) return;
+
+    // Measure scroll progress
+    const scrollTop = this.viewport.measureScrollOffset('top');
+    const totalHeight =
+      this.viewport.measureScrollOffset('top') + this.viewport.measureScrollOffset('bottom');
+
+    // Trigger when scrolled past 50% of content
+    const scrollProgress = totalHeight > 0 ? scrollTop / totalHeight : 0;
+
+    if (scrollProgress > 0.5) {
       this.loadMore.emit();
     }
   }
 
-  onScroll(): void {
-    // Don't load if already loading or no more items
-    if (!this.hasMore() || this.isLoadingMore() || !this.viewport) return;
+  private initScrollRestoration(key: string): void {
+    const savedPosition = this.scrollPosition.get(key);
 
-    // Measure distance from bottom
-    const distanceFromBottom = this.viewport.measureScrollOffset('bottom');
-    const viewportSize = this.viewport.getViewportSize();
-
-    // Trigger when within 2 viewport heights from bottom
-    const threshold = viewportSize * 2;
-
-    if (distanceFromBottom < threshold) {
-      this.loadMore.emit();
+    if (savedPosition === null || savedPosition <= 0) {
+      this.scrollRestoreState = 'done';
+      return;
     }
+
+    this.targetScrollPosition = savedPosition;
+    this.scrollRestoreState = 'restoring';
+    this.restoreAttempts = 0;
+    this.attemptScrollRestore();
+  }
+
+  private attemptScrollRestore(): void {
+    if (
+      this.scrollRestoreState !== 'restoring' ||
+      !this.viewport ||
+      this.targetScrollPosition === null
+    ) {
+      return;
+    }
+
+    this.restoreAttempts++;
+
+    // Run outside Angular zone to avoid triggering change detection during restoration
+    this.ngZone.runOutsideAngular(() => {
+      // Use double RAF to ensure layout is complete
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!this.viewport || this.targetScrollPosition === null) {
+            this.scrollRestoreState = 'done';
+            return;
+          }
+
+          // Check if we have enough content to scroll to target position
+          const totalScrollable =
+            this.viewport.measureScrollOffset('top') + this.viewport.measureScrollOffset('bottom');
+
+          // Scroll to target position instantly (no animation)
+          this.viewport.scrollToOffset(this.targetScrollPosition, 'instant');
+
+          // Verify scroll position after a short delay
+          setTimeout(() => {
+            if (!this.viewport || this.targetScrollPosition === null) {
+              this.scrollRestoreState = 'done';
+              return;
+            }
+
+            const currentPosition = this.viewport.measureScrollOffset('top');
+            const tolerance = 5; // Allow 5px tolerance
+
+            // Check if we're close enough to target or if we've reached max attempts
+            if (
+              Math.abs(currentPosition - this.targetScrollPosition) <= tolerance ||
+              this.restoreAttempts >= this.MAX_RESTORE_ATTEMPTS
+            ) {
+              this.ngZone.run(() => {
+                this.scrollRestoreState = 'done';
+                // Save the final position
+                const key = this.scrollKey();
+                if (key) {
+                  this.scrollPosition.save(key, currentPosition);
+                }
+              });
+            } else if (totalScrollable < this.targetScrollPosition && this.hasMore()) {
+              // Not enough content yet, wait for more to load
+              // The effect will re-trigger when more items arrive
+              this.scrollRestoreState = 'pending';
+            } else {
+              // Try again
+              this.attemptScrollRestore();
+            }
+          }, 50);
+        });
+      });
+    });
   }
 
   ngOnDestroy(): void {

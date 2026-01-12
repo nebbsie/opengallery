@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import { FileTaskTable } from "../db/schema.js";
@@ -6,22 +6,30 @@ import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
 export const issuesRouter = router({
   list: privateProcedure.query(async () => {
-    const rows = await db.execute(
-      sql<{
-        file_id: string;
-        attempts: number;
-      }>`
-        SELECT ft.file_id, MAX(ft.attempts)::int AS attempts
-        FROM ${FileTaskTable} ft
-        WHERE ft.type IN ('encode_thumbnail','encode_optimised','video_poster')
-          AND ft.attempts >= 3
-        GROUP BY ft.file_id
-        ORDER BY attempts DESC
-      `
-    );
-    return rows.rows.map((r) => ({
-      fileId: r["file_id"],
-      attempts: Number(r["attempts"]),
+    const encodeTypes = [
+      "encode_thumbnail",
+      "encode_optimised",
+      "video_poster",
+    ] as const;
+
+    const rows = await db
+      .select({
+        fileId: FileTaskTable.fileId,
+        attempts: sql<number>`MAX(${FileTaskTable.attempts})`,
+      })
+      .from(FileTaskTable)
+      .where(
+        and(
+          inArray(FileTaskTable.type, [...encodeTypes]),
+          sql`${FileTaskTable.attempts} >= 3`
+        )
+      )
+      .groupBy(FileTaskTable.fileId)
+      .orderBy(desc(sql`MAX(${FileTaskTable.attempts})`));
+
+    return rows.map((r) => ({
+      fileId: r.fileId,
+      attempts: Number(r.attempts),
     }));
   }),
 
@@ -47,12 +55,28 @@ export const issuesRouter = router({
   retry: privateProcedure
     .input(z.object({ fileId: z.string().uuid() }))
     .mutation(async ({ input }) => {
-      await db.execute(sql`
-        UPDATE ${FileTaskTable}
-        SET status = 'pending', attempts = 0, last_error = NULL, "updatedAt" = now(), started_at = NULL, finished_at = NULL
-        WHERE file_id = ${input.fileId}
-          AND type IN ('encode_thumbnail','encode_optimised','video_poster')
-      `);
+      const encodeTypes = [
+        "encode_thumbnail",
+        "encode_optimised",
+        "video_poster",
+      ] as const;
+
+      await db
+        .update(FileTaskTable)
+        .set({
+          status: "pending",
+          attempts: 0,
+          lastError: null,
+          updatedAt: new Date().toISOString(),
+          startedAt: null,
+          finishedAt: null,
+        })
+        .where(
+          and(
+            eq(FileTaskTable.fileId, input.fileId),
+            inArray(FileTaskTable.type, [...encodeTypes])
+          )
+        );
       return { ok: true } as const;
     }),
 });

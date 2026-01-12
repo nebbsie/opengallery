@@ -13,6 +13,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   selector: 'app-cameras-list',
   providers: [provideIcons({ lucideCamera })],
   imports: [ErrorAlert, HlmSpinner, NgIcon, HlmIcon, RouterLink],
+  host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (cameras.isPending()) {
       <hlm-spinner />

@@ -4,6 +4,7 @@ import { RouterOutlet } from '@angular/router';
 @Component({
   selector: 'app-cameras',
   imports: [RouterOutlet],
+  host: { class: 'block h-full' },
   template: `<router-outlet />`,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
