@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { prefetchAlbumsAll } from '../prefetch-guards';
 
 export const routes: Routes = [
   {
@@ -12,6 +13,7 @@ export const routes: Routes = [
       },
       {
         path: '',
+        canActivate: [prefetchAlbumsAll],
         loadComponent: () => import('./album-all/album-all').then((c) => c.AlbumAll),
       },
       {

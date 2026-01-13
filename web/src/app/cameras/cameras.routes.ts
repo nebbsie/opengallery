@@ -1,4 +1,5 @@
 import { Routes } from '@angular/router';
+import { prefetchCamerasAll } from '../prefetch-guards';
 
 export const routes: Routes = [
   {
@@ -7,6 +8,7 @@ export const routes: Routes = [
     children: [
       {
         path: '',
+        canActivate: [prefetchCamerasAll],
         loadComponent: () => import('./cameras-list/cameras-list').then((c) => c.CamerasList),
       },
       {

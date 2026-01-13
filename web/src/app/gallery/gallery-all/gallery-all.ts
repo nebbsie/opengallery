@@ -21,15 +21,11 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
   ],
   imports: [HlmSpinner, ErrorAlert, AssetThumbnail, RouterLink, HlmButton, VirtualThumbnailGrid],
   template: `
-    @if (files.isPending()) {
+    @if (files.isPending() && !files.data()) {
       <hlm-spinner />
-    }
-
-    @if (files.isError()) {
+    } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
-    }
-
-    @if (files.isSuccess()) {
+    } @else {
       @if (!allItems().length) {
         <div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
           <p class="text-muted-foreground text-sm">

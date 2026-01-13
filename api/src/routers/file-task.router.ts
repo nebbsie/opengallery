@@ -184,7 +184,7 @@ export const fileTaskRouter = router({
       .select({ encodingConcurrency: SystemSettingsTable.encodingConcurrency })
       .from(SystemSettingsTable)
       .limit(1);
-    const desired = s?.encodingConcurrency ?? 5;
+    const desired = Math.max(1, Math.min(64, s?.encodingConcurrency ?? 5));
 
     const now = new Date().toISOString();
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();

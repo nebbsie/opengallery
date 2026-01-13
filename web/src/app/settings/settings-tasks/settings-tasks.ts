@@ -40,7 +40,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
             <div class="font-bold">File ID</div>
             <div class="text-right font-bold">Tasks</div>
             @for (item of tasks.data(); track item.fileId) {
-              <div class="truncate">{{ item.fileId }}</div>
+              <div class="truncate" [title]="item.fileId">{{ item.fileId }}</div>
               <div class="text-right">
                 @for (t of item.tasks; track t.type) {
                   @if (t.status === 'pending') {

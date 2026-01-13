@@ -11,7 +11,14 @@ import { privateProcedure, publicProcedure, router } from "../trpc.js";
 export const settingsRouter = router({
   get: privateProcedure.query(async () => {
     const [res] = await db.select().from(SystemSettingsTable).limit(1);
-    return res;
+    return res ?? {
+      id: '',
+      uploadPath: '',
+      allowsSelfRegistration: false,
+      encodingConcurrency: 5,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
   }),
 
   allowsSelfRegistration: publicProcedure.query(async () => {

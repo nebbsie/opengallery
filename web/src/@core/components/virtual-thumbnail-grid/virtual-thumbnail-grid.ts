@@ -83,7 +83,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   private readonly MAX_RESTORE_ATTEMPTS = 10;
 
   items = input<readonly T[] | null>([]);
-  minTilePx = input(200); // approximate min tile width
+  minTilePx = input(100); // approximate min tile width
   hasMore = input(false);
   isLoadingMore = input(false);
   scrollKey = input<string | null>(null);
@@ -135,7 +135,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
 
   columns = computed(() => {
     const w = this.width();
-    const min = Math.max(120, this.minTilePx());
+    const min = w < 640 ? 100 : w < 1024 ? 160 : 200;
     const cols = Math.max(1, Math.floor(w / min));
     return cols;
   });

@@ -32,11 +32,13 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
     }
 
     @if (settings.isSuccess() && users.isSuccess()) {
-      <h1 class="text-foreground mb-2 block text-lg font-bold">User Management</h1>
-      <p class="text-muted-foreground mb-6 text-sm">
-        Manage user account settings and control how new users can register and access the
-        application.
-      </p>
+      <div>
+        <h1 class="text-foreground mb-2 block text-lg font-bold">User Management</h1>
+        <p class="text-muted-foreground mb-6 text-sm">
+          Manage user account settings and control how new users can register and access
+          application.
+        </p>
+      </div>
 
       <label class="hover:bg-accent/50 mb-10 flex max-w-lg items-start gap-3 rounded-lg border p-3">
         <hlm-checkbox
@@ -52,8 +54,13 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
         </div>
       </label>
 
-      <div class="mb-6 flex items-center justify-between">
-        <h2 class="text-foreground text-lg font-bold">Users</h2>
+      <div class="mb-3 flex items-center justify-between gap-4">
+        <div>
+          <h2 class="text-foreground text-lg font-bold">Users</h2>
+          <p class="text-muted-foreground text-sm">
+            Manage registered users and their roles.
+          </p>
+        </div>
         <div class="flex gap-2">
           @if (isAdmin()) {
             <button hlmBtn variant="outline" (click)="openCreateUserDialog()">

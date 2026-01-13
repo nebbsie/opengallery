@@ -20,8 +20,10 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
     }
 
     @if (settings.isSuccess()) {
-      <h1 class="text-foreground mb-2 block text-lg font-bold">Encoding Options</h1>
-      <p class="text-muted-foreground mb-6 text-sm">Tune background encoding performance.</p>
+      <div>
+        <h1 class="text-foreground mb-2 block text-lg font-bold">Encoding Options</h1>
+        <p class="text-muted-foreground mb-6 text-sm">Tune background encoding performance.</p>
+      </div>
 
       <div class="hover:bg-accent/50 mb-10 grid max-w-lg gap-3 rounded-lg border p-3">
         <div class="flex items-center justify-between">
@@ -71,7 +73,8 @@ export class SettingsEncoding {
   saveMutation = injectMutation(() => ({
     mutationFn: async (value: number) =>
       this.trpc.settings.update.mutate({ encodingConcurrency: value }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (data?.encodingConcurrency) this.concurrency.set(data.encodingConcurrency);
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
     },
   }));

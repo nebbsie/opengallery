@@ -33,7 +33,12 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   },
   template: `
     <div class="mb-3 flex items-center justify-between gap-4">
-      <h1 class="text-foreground block text-lg font-bold">Logs</h1>
+      <div>
+        <h1 class="text-foreground block text-lg font-bold">Logs</h1>
+        <p class="text-muted-foreground text-sm">
+          View application logs and events.
+        </p>
+      </div>
 
       <div class="flex gap-2">
         <button

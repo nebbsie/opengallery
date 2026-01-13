@@ -28,6 +28,11 @@ export const routes: Routes = [
         loadComponent: () => import('./settings-ui/settings-ui').then((c) => c.SettingsUi),
       },
       {
+        path: 'profile',
+        loadComponent: () =>
+          import('./settings-profile/settings-profile').then((c) => c.SettingsProfile),
+      },
+      {
         path: 'issues',
         loadComponent: () =>
           import('./settings-issues/settings-issues').then((c) => c.SettingsIssues),

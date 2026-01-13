@@ -15,21 +15,17 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   imports: [ErrorAlert, HlmSpinner, NgIcon, HlmIcon, RouterLink],
   host: { class: 'block h-full overflow-y-auto' },
   template: `
-    @if (cameras.isPending()) {
+    @if (cameras.isPending() && !cameras.data()) {
       <hlm-spinner />
-    }
-
-    @if (cameras.isError()) {
+    } @else if (cameras.isError() && !cameras.data()) {
       <app-error-alert [error]="cameras.error()" />
-    }
-
-    @if (cameras.isSuccess()) {
+    } @else {
       <div class="mb-6">
         <h1 class="text-foreground mb-2 text-2xl font-bold">Cameras</h1>
-        <p class="text-muted-foreground text-sm">Browse photos by the camera that captured them</p>
+        <p class="text-muted-foreground text-sm">Browse photos by camera that captured them</p>
       </div>
 
-      @if (cameras.data().length === 0) {
+      @if (cameras.data()!.length === 0) {
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideCamera" class="mb-4" />
           <p>No cameras found</p>
@@ -37,7 +33,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         </div>
       } @else {
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          @for (camera of cameras.data(); track camera.make + camera.model) {
+          @for (camera of cameras.data()!; track camera.make + camera.model) {
             <a
               [routerLink]="['/cameras', camera.make, camera.model]"
               class="bg-card hover:bg-accent group rounded-lg border p-4 transition-colors"

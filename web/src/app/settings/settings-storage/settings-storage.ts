@@ -39,6 +39,13 @@ function formatBytes(bytes: number): string {
     }
 
     @if (stats.isSuccess() && settings.isSuccess()) {
+      <div>
+        <h1 class="text-foreground mb-2 block text-lg font-bold">Storage</h1>
+        <p class="text-muted-foreground mb-6 text-sm">
+          View storage usage and location information.
+        </p>
+      </div>
+
       <!-- Storage Location -->
       <div class="bg-card mb-4 rounded-lg border p-4">
         <div class="flex items-center gap-3">

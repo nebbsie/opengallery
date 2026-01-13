@@ -79,4 +79,32 @@ export const issuesRouter = router({
         );
       return { ok: true } as const;
     }),
+
+  retryAll: privateProcedure.mutation(async () => {
+    const encodeTypes = [
+      "encode_thumbnail",
+      "encode_optimised",
+      "video_poster",
+    ] as const;
+
+    const result = await db
+      .update(FileTaskTable)
+      .set({
+        status: "pending",
+        attempts: 0,
+        lastError: null,
+        updatedAt: new Date().toISOString(),
+        startedAt: null,
+        finishedAt: null,
+      })
+      .where(
+        and(
+          inArray(FileTaskTable.type, [...encodeTypes]),
+          sql`${FileTaskTable.attempts} >= 3`
+        )
+      )
+      .returning({ fileId: FileTaskTable.fileId });
+
+    return { ok: true, count: result.length } as const;
+  }),
 });

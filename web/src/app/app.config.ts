@@ -49,7 +49,7 @@ export const appConfig: ApplicationConfig = {
       }
       inject(Auth).initialize();
       const elapsed = performance.now() - timer;
-      console.log(`Auth initialized in ${elapsed.toFixed(2)} ms`);
+      console.log(`App initialized in ${elapsed.toFixed(2)} ms`);
     }),
   ],
 };

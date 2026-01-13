@@ -7,6 +7,7 @@ import {
   lucideHardDrive,
   lucideLogs,
   lucideMonitor,
+  lucideUser,
   lucideUsers,
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
@@ -23,6 +24,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
       lucideMonitor,
       lucideBadgeAlert,
       lucideActivity,
+      lucideUser,
     }),
   ],
   host: {
@@ -30,6 +32,20 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   },
   template: `
     <p class="mb-2 font-medium">Settings</p>
+
+    <a
+      class="mb-1"
+      hlmBtn
+      routerLink="/settings/profile"
+      routerLinkActive="active"
+      #rlaProfile="routerLinkActive"
+      [variant]="rlaProfile.isActive ? 'menu_active' : 'menu'"
+      [routerLinkActiveOptions]="{ exact: true }"
+      (click)="handleClicked()"
+    >
+      <ng-icon hlm size="sm" name="lucideUser" />
+      Profile
+    </a>
 
     <a
       class="mb-1"

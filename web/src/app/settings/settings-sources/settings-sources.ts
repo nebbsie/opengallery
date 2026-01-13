@@ -50,11 +50,13 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
     }
 
     @if (settings.isSuccess()) {
-      <h1 class="text-foreground mb-2 block text-lg font-bold">Folder Settings</h1>
-      <p class="text-muted-foreground mb-6 text-sm">
-        Specify how the application should handle scanning and importing media from the specified
-        folders.
-      </p>
+      <div>
+        <h1 class="text-foreground mb-2 block text-lg font-bold">Folder Settings</h1>
+        <p class="text-muted-foreground mb-6 text-sm">
+          Specify how application should handle scanning and importing media from specified
+          folders.
+        </p>
+      </div>
 
       <label class="hover:bg-accent/50 mb-10 flex max-w-lg items-start gap-3 rounded-lg border p-3">
         <hlm-checkbox
@@ -70,12 +72,15 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
         </div>
       </label>
 
-      <h1 class="text-foreground mb-2 block text-lg font-bold">Source Folders</h1>
-
-      <p class="text-muted-foreground mb-6 text-sm">
-        Specify the locations of the existing media you have. These will be ingested, the raw files
-        will not be moved or modified.
-      </p>
+      <div class="mb-3 flex items-center justify-between gap-4">
+        <div>
+          <h1 class="text-foreground block text-lg font-bold">Source Folders</h1>
+          <p class="text-muted-foreground text-sm">
+            Specify the locations of the existing media you have. These will be ingested, raw files
+            will not be moved or modified.
+          </p>
+        </div>
+      </div>
 
       @for (path of items(); track path.id) {
         <div class="mb-4 flex max-w-lg gap-x-2">
