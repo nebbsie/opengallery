@@ -2,6 +2,8 @@
   "name": "opengallery-monorepo",
   "private": true,
   "scripts": {
+    "dev": "./dev.sh",
+    "local": "./run-local.sh",
     "build": "npm run build --prefix packages/logger",
     "build:all": "npm run build --prefix packages/logger && npm run build --prefix api && npm run build --prefix watcher && npm run build --prefix worker"
   },
