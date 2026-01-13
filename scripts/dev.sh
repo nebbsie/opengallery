@@ -15,10 +15,12 @@ trap cleanup SIGINT SIGTERM
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the repo root (parent of scripts directory)
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Start API
 echo "Starting API..."
-(cd "$SCRIPT_DIR/api" && npm run start) &
+(cd "$REPO_ROOT/api" && npm run start) &
 API_PID=$!
 
 # Wait for API to start up
@@ -27,12 +29,12 @@ sleep 5
 
 # Start Worker
 echo "Starting Worker..."
-(cd "$SCRIPT_DIR/worker" && npm run dev) &
+(cd "$REPO_ROOT/worker" && npm run dev) &
 WORKER_PID=$!
 
 # Start Web
 echo "Starting Web..."
-(cd "$SCRIPT_DIR/web" && npm start) &
+(cd "$REPO_ROOT/web" && npm start) &
 WEB_PID=$!
 
 echo "All services started. Press Ctrl+C to stop."

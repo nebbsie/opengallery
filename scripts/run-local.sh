@@ -5,7 +5,7 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_NAME="opengallery-local"
 CONTAINER_NAME="opengallery-local"
 
@@ -23,11 +23,20 @@ echo ""
 # Create data directory if it doesn't exist
 mkdir -p "$DATA_DIR"
 
-# Stop and remove existing container if running
-if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Stopping existing container..."
-    docker stop "$CONTAINER_NAME" 2>/dev/null || true
-    docker rm "$CONTAINER_NAME" 2>/dev/null || true
+# Check if container is running or exists
+CONTAINER_EXISTS=$(docker ps -a --filter name="^${CONTAINER_NAME}$" --format "{{.Names}}" | wc -l)
+CONTAINER_RUNNING=$(docker ps --filter name="^${CONTAINER_NAME}$" --format "{{.Names}}" | wc -l)
+
+if [ "$CONTAINER_EXISTS" -gt 0 ]; then
+    echo "Found existing container: $CONTAINER_NAME"
+    if [ "$CONTAINER_RUNNING" -gt 0 ]; then
+        echo "Stopping running container..."
+        docker stop "$CONTAINER_NAME"
+        echo "Container stopped."
+    fi
+    echo "Removing existing container..."
+    docker rm "$CONTAINER_NAME"
+    echo "Container removed."
 fi
 
 # Build the unified image
@@ -38,7 +47,6 @@ echo ""
 echo "Starting container..."
 docker run -d \
     --name "$CONTAINER_NAME" \
-    -p 3219:3219 \
     -p 4321:4321 \
     -v "$DATA_DIR:/data" \
     -v "$MEDIA_DIR:/host/media:ro" \
@@ -52,7 +60,7 @@ echo "OpenGallery is starting!"
 echo "=========================================="
 echo ""
 echo "  Web UI:  http://localhost:4321"
-echo "  API:     http://localhost:3219"
+echo "  API:     http://localhost:4321/api"
 echo ""
 echo "  Media mounted from: $MEDIA_DIR"
 echo "  Data stored in: $DATA_DIR"

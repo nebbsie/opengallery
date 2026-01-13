@@ -124,73 +124,93 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   return reply.send(fs.createReadStream(abs));
 });
 
+// Auth handler shared by both routes
+const authHandler = async function (
+  request: import("fastify").FastifyRequest,
+  reply: import("fastify").FastifyReply
+) {
+  try {
+    // Preflight is handled by @fastify/cors already, but this keeps route unified.
+    if (request.method === "OPTIONS") {
+      return reply.status(204).send();
+    }
+
+    // Normalize URL to /api/auth/* format that better-auth expects
+    // - Dev mode: request.url is /api/auth/... (use as-is)
+    // - Nginx mode: request.url is /auth/... (add /api prefix)
+    const urlPath = request.url.startsWith("/api/auth")
+      ? request.url
+      : `/api${request.url}`;
+    const url = new URL(urlPath, `http://${request.headers.host}`);
+
+    // Build Headers for fetch request
+    const headers = new Headers();
+    Object.entries(request.headers).forEach(([key, value]) => {
+      if (value !== undefined) headers.append(key, String(value));
+    });
+
+    // Build fetch-compatible Request
+    // Using global WHATWG fetch types at runtime. Types may require // @ts-ignore
+    // if your tsconfig lacks "DOM".
+    // @ts-ignore
+    const req = new Request(url.toString(), {
+      method: request.method,
+      headers,
+      body:
+        request.body && typeof request.body !== "string"
+          ? JSON.stringify(request.body)
+          : (request.body as any),
+    });
+
+    // Delegate to your auth handler
+    const response = await auth.handler(req);
+
+    // Apply status
+    reply.status(response.status);
+
+    // Strip any upstream CORS headers to avoid conflicts with @fastify/cors
+    const strip = new Set([
+      "access-control-allow-origin",
+      "access-control-allow-credentials",
+      "access-control-allow-headers",
+      "access-control-allow-methods",
+      "access-control-expose-headers",
+      "access-control-max-age",
+      "vary",
+    ]);
+
+    // Forward only non-CORS headers, including Set-Cookie
+    response.headers.forEach((value, key) => {
+      if (!strip.has(key.toLowerCase())) {
+        // Fastify will collect multiple Set-Cookie headers into an array
+        reply.header(key, value);
+      }
+    });
+
+    // Forward body
+    const text = await response.text();
+    reply.send(text || null);
+  } catch (error) {
+    logger.error("Authentication Error:", error as Error);
+    reply.status(500).send({
+      error: "Internal authentication error",
+      code: "AUTH_FAILURE",
+    });
+  }
+};
+
+// Route for nginx mode (strips /api prefix)
+server.route({
+  method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  url: "/auth/*",
+  handler: authHandler,
+});
+
+// Route for dev mode (direct API access with /api prefix)
 server.route({
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   url: "/api/auth/*",
-  handler: async function (request, reply) {
-    try {
-      // Preflight is handled by @fastify/cors already, but this keeps route unified.
-      if (request.method === "OPTIONS") {
-        return reply.status(204).send();
-      }
-
-      const url = new URL(request.url, `http://${request.headers.host}`);
-
-      // Build Headers for fetch request
-      const headers = new Headers();
-      Object.entries(request.headers).forEach(([key, value]) => {
-        if (value !== undefined) headers.append(key, String(value));
-      });
-
-      // Build fetch-compatible Request
-      // Using global WHATWG fetch types at runtime. Types may require // @ts-ignore
-      // if your tsconfig lacks "DOM".
-      // @ts-ignore
-      const req = new Request(url.toString(), {
-        method: request.method,
-        headers,
-        body:
-          request.body && typeof request.body !== "string"
-            ? JSON.stringify(request.body)
-            : (request.body as any),
-      });
-
-      // Delegate to your auth handler
-      const response = await auth.handler(req);
-
-      // Apply status
-      reply.status(response.status);
-
-      // Strip any upstream CORS headers to avoid conflicts with @fastify/cors
-      const strip = new Set([
-        "access-control-allow-origin",
-        "access-control-allow-credentials",
-        "access-control-allow-headers",
-        "access-control-allow-methods",
-        "access-control-expose-headers",
-        "access-control-max-age",
-        "vary",
-      ]);
-
-      // Forward only non-CORS headers, including Set-Cookie
-      response.headers.forEach((value, key) => {
-        if (!strip.has(key.toLowerCase())) {
-          // Fastify will collect multiple Set-Cookie headers into an array
-          reply.header(key, value);
-        }
-      });
-
-      // Forward body
-      const text = await response.text();
-      reply.send(text || null);
-    } catch (error) {
-      logger.error("Authentication Error:", error as Error);
-      reply.status(500).send({
-        error: "Internal authentication error",
-        code: "AUTH_FAILURE",
-      });
-    }
-  },
+  handler: authHandler,
 });
 
 // tRPC

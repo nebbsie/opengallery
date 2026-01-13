@@ -79,7 +79,7 @@ RUN npm run build:prod
 FROM node:22-alpine AS runner
 
 # Install runtime dependencies
-RUN apk add --no-cache ffmpeg supervisor
+RUN apk add --no-cache ffmpeg supervisor nginx
 
 WORKDIR /app
 
@@ -117,13 +117,16 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY entrypoint.unified.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Expose ports
-EXPOSE 3219 4321
+# Copy nginx config
+COPY nginx.conf /etc/nginx/nginx.conf
+RUN mkdir -p /var/log/nginx
+
+# Expose port (nginx handles all routing)
+EXPOSE 4321
 
 # Environment defaults
 ENV NODE_ENV=production
 ENV API_PORT=3219
-ENV WEB_PORT=4321
 ENV DATABASE_PATH=/data/opengallery.db
 ENV DEFAULT_UPLOAD_PATH=/data/uploads
 ENV HOST_ROOT_PREFIX=/host
