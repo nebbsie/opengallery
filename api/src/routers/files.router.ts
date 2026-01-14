@@ -123,10 +123,12 @@ export const filesRouter = router({
         );
 
       // Finally delete the files themselves (originals and variants)
-      return db
+      const result = await db
         .delete(FileTable)
         .where(inArray(FileTable.id, idsToDelete))
         .returning({ id: FileTable.id });
+
+      return result;
     }),
 
   // Remove all files under a directory (recursively) for a specified user (internal only)
@@ -199,10 +201,12 @@ export const filesRouter = router({
           )
         );
 
-      return db
+      const result = await db
         .delete(FileTable)
-        .where(inArray(FileTable.id, idsToDelete))
+        .where(inArray(FileTable.id, fileIds))
         .returning({ id: FileTable.id });
+
+      return result;
     }),
 
   getAllFiles: internalProcedure.query(() => db.select().from(FileTable)),

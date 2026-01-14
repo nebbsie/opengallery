@@ -8,5 +8,6 @@ export const environment: Environment = {
   environment: 'production',
   api: {
     url: `${origin}/api`,
+    authUrl: origin,
   },
 };

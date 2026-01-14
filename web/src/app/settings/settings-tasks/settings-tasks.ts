@@ -1,15 +1,20 @@
-import { ChangeDetectionStrategy, Component, computed } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { injectTrpc } from '@core/services/trpc';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideChevronLeft, lucideChevronRight } from '@ng-icons/lucide';
+import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-tasks',
-  imports: [HlmSpinner, ErrorAlert],
-  host: { class: 'flex flex-col w-full h-full' },
+  imports: [HlmSpinner, ErrorAlert, HlmButton, HlmIcon, NgIcon],
+  providers: [provideIcons({ lucideChevronLeft, lucideChevronRight })],
+  host: { class: 'flex flex-col w-full h-full overflow-hidden' },
   template: `
-    <div class="mb-3 flex items-center justify-between gap-4">
+    <div class="flex shrink-0 items-center justify-between gap-4 pb-3">
       <div>
         <h1 class="text-foreground block text-lg font-bold">Outstanding Encoding Tasks</h1>
         <p class="text-muted-foreground text-sm">
@@ -18,7 +23,9 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       </div>
       @if (tasks.isSuccess()) {
         <div class="text-muted-foreground text-sm">
-          <span class="bg-muted rounded px-2 py-1 font-mono">{{ taskCount() }} tasks</span>
+          <span class="bg-muted rounded px-2 py-1 font-mono"
+            >{{ tasks.data().totalFiles }} files</span
+          >
         </div>
       }
     </div>
@@ -32,14 +39,14 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }
 
     @if (tasks.isSuccess()) {
-      @if (tasks.data().length === 0) {
+      @if (tasks.data().items.length === 0) {
         <p class="text-muted-foreground">No outstanding tasks 🎉</p>
       } @else {
-        <div class="flex-1 overflow-auto rounded border p-2">
+        <div class="min-h-0 flex-1 overflow-y-auto rounded border p-2">
           <div class="grid grid-cols-[1fr_auto] gap-2 font-mono text-sm">
             <div class="font-bold">File ID</div>
             <div class="text-right font-bold">Tasks</div>
-            @for (item of tasks.data(); track item.fileId) {
+            @for (item of tasks.data().items; track item.fileId) {
               <div class="truncate" [title]="item.fileId">{{ item.fileId }}</div>
               <div class="text-right">
                 @for (t of item.tasks; track t.type) {
@@ -76,6 +83,34 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
             }
           </div>
         </div>
+
+        <div class="flex shrink-0 items-center justify-between pt-3">
+          <span class="text-muted-foreground text-sm">
+            Page {{ page() }} of {{ tasks.data().totalPages }}
+          </span>
+          <div class="flex gap-2">
+            <button
+              hlmBtn
+              variant="outline"
+              size="sm"
+              [disabled]="page() <= 1"
+              (click)="prevPage()"
+            >
+              <ng-icon hlm size="sm" name="lucideChevronLeft" />
+              Previous
+            </button>
+            <button
+              hlmBtn
+              variant="outline"
+              size="sm"
+              [disabled]="page() >= tasks.data().totalPages"
+              (click)="nextPage()"
+            >
+              Next
+              <ng-icon hlm size="sm" name="lucideChevronRight" />
+            </button>
+          </div>
+        </div>
       }
     }
   `,
@@ -84,15 +119,29 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 export class SettingsTasks {
   private readonly trpc = injectTrpc();
 
+  page = signal(1);
+  pageSize = signal(50);
+
   tasks = injectQuery(() => ({
-    queryKey: ['fileTasks', 'outstanding'],
-    queryFn: () => this.trpc.fileTask.listOutstanding.query(),
+    queryKey: ['fileTasks', 'outstanding', this.page(), this.pageSize()],
+    queryFn: () =>
+      this.trpc.fileTask.listOutstanding.query({
+        page: this.page(),
+        pageSize: this.pageSize(),
+      }),
     refetchInterval: 5000,
   }));
 
-  taskCount = computed(() => {
+  prevPage(): void {
+    if (this.page() > 1) {
+      this.page.update((p) => p - 1);
+    }
+  }
+
+  nextPage(): void {
     const data = this.tasks.data();
-    if (!data) return 0;
-    return data.reduce((acc: number, item: { tasks: unknown[] }) => acc + item.tasks.length, 0);
-  });
+    if (data && this.page() < data.totalPages) {
+      this.page.update((p) => p + 1);
+    }
+  }
 }

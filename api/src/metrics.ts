@@ -1,6 +1,6 @@
+import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
 import { collectDefaultMetrics, Histogram, Registry } from "prom-client";
-import type { FastifyInstance } from "fastify";
 
 declare module "fastify" {
   interface FastifyRequest {

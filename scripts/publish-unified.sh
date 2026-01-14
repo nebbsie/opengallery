@@ -18,7 +18,7 @@ docker buildx inspect --bootstrap >/dev/null
 echo "Pushing OpenGallery image → $IMAGE"
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t "$IMAGE" \
-  -f ../Dockerfile.unified --push ..
+  -f Dockerfile.unified --push .
 
 echo "Done. Image pushed:"
 echo "$IMAGE"

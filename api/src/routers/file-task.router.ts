@@ -249,55 +249,107 @@ export const fileTaskRouter = router({
   }),
 
   // List outstanding encode-related tasks per file (attempts <3 and not succeeded)
-  listOutstanding: privateProcedure.query(async () => {
-    const encodeTypes = [
-      "encode_thumbnail",
-      "encode_optimised",
-      "video_poster",
-    ] as const;
+  listOutstanding: privateProcedure
+    .input(
+      z
+        .object({
+          page: z.number().int().min(1).default(1),
+          pageSize: z.number().int().min(1).max(100).default(50),
+        })
+        .optional()
+    )
+    .query(async ({ input }) => {
+      const page = input?.page ?? 1;
+      const pageSize = input?.pageSize ?? 50;
+      const offset = (page - 1) * pageSize;
 
-    const rows = await db
-      .select({
-        fileId: FileTaskTable.fileId,
-        type: FileTaskTable.type,
-        status: FileTaskTable.status,
-        attempts: FileTaskTable.attempts,
-        lastError: FileTaskTable.lastError,
-        updatedAt: FileTaskTable.updatedAt,
-      })
-      .from(FileTaskTable)
-      .where(
-        and(
-          inArray(FileTaskTable.type, [...encodeTypes]),
-          inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`
+      const encodeTypes = [
+        "encode_thumbnail",
+        "encode_optimised",
+        "video_poster",
+      ] as const;
+
+      // Get total count of distinct fileIds
+      const [countResult] = await db
+        .select({ count: sql<number>`COUNT(DISTINCT ${FileTaskTable.fileId})` })
+        .from(FileTaskTable)
+        .where(
+          and(
+            inArray(FileTaskTable.type, [...encodeTypes]),
+            inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
+            sql`${FileTaskTable.attempts} < 3`
+          )
+        );
+      const totalFiles = Number(countResult?.count ?? 0);
+      const totalPages = Math.ceil(totalFiles / pageSize);
+
+      // Get paginated distinct fileIds
+      const fileIdRows = await db
+        .selectDistinct({ fileId: FileTaskTable.fileId })
+        .from(FileTaskTable)
+        .where(
+          and(
+            inArray(FileTaskTable.type, [...encodeTypes]),
+            inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
+            sql`${FileTaskTable.attempts} < 3`
+          )
         )
-      )
-      .orderBy(FileTaskTable.updatedAt);
+        .orderBy(FileTaskTable.fileId)
+        .limit(pageSize)
+        .offset(offset);
 
-    // Group by fileId in JS
-    const grouped = new Map<
-      string,
-      Array<{
-        type: string;
-        status: string;
-        attempts: number;
-        lastError: string | null;
-      }>
-    >();
-    for (const r of rows) {
-      if (!grouped.has(r.fileId)) grouped.set(r.fileId, []);
-      grouped.get(r.fileId)!.push({
-        type: r.type!,
-        status: r.status!,
-        attempts: r.attempts,
-        lastError: r.lastError,
-      });
-    }
+      if (fileIdRows.length === 0) {
+        return { items: [], page, pageSize, totalFiles, totalPages };
+      }
 
-    return Array.from(grouped.entries()).map(([fileId, tasks]) => ({
-      fileId,
-      tasks,
-    }));
-  }),
+      const fileIds = fileIdRows.map((r) => r.fileId);
+
+      // Get tasks for those fileIds
+      const rows = await db
+        .select({
+          fileId: FileTaskTable.fileId,
+          type: FileTaskTable.type,
+          status: FileTaskTable.status,
+          attempts: FileTaskTable.attempts,
+          lastError: FileTaskTable.lastError,
+          updatedAt: FileTaskTable.updatedAt,
+        })
+        .from(FileTaskTable)
+        .where(
+          and(
+            inArray(FileTaskTable.fileId, fileIds),
+            inArray(FileTaskTable.type, [...encodeTypes]),
+            inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
+            sql`${FileTaskTable.attempts} < 3`
+          )
+        )
+        .orderBy(FileTaskTable.updatedAt);
+
+      // Group by fileId in JS
+      const grouped = new Map<
+        string,
+        Array<{
+          type: string;
+          status: string;
+          attempts: number;
+          lastError: string | null;
+        }>
+      >();
+      for (const r of rows) {
+        if (!grouped.has(r.fileId)) grouped.set(r.fileId, []);
+        grouped.get(r.fileId)!.push({
+          type: r.type!,
+          status: r.status!,
+          attempts: r.attempts,
+          lastError: r.lastError,
+        });
+      }
+
+      const items = Array.from(grouped.entries()).map(([fileId, tasks]) => ({
+        fileId,
+        tasks,
+      }));
+
+      return { items, page, pageSize, totalFiles, totalPages };
+    }),
 });

@@ -29,10 +29,10 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     }),
   ],
   host: {
-    class: 'flex flex-col w-full h-full',
+    class: 'flex flex-col w-full h-full overflow-hidden',
   },
   template: `
-    <div class="mb-3 flex items-center justify-between gap-4">
+    <div class="flex items-center justify-between gap-4 pb-3 shrink-0">
       <div>
         <h1 class="text-foreground block text-lg font-bold">Logs</h1>
         <p class="text-muted-foreground text-sm">
@@ -113,7 +113,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
     @if (logsResult.isSuccess()) {
       <div
-        class="flex flex-1 flex-col gap-1 overflow-auto rounded border px-1 py-2 font-mono text-sm"
+        class="flex flex-1 flex-col gap-1 overflow-y-auto rounded border px-1 py-2 font-mono text-sm min-h-0"
       >
         @for (log of logsResult.data(); track log.id) {
           <div

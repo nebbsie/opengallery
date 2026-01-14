@@ -1,15 +1,11 @@
-import { NgOptimizedImage } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { Auth } from '@core/services/auth/auth';
 import { Logo } from '@core/components/logo/logo';
+import { Auth } from '@core/services/auth/auth';
 import { ScreenSize } from '@core/services/screen-size/screen-size';
 import { Sidebar } from '@core/services/sidebar/sidebar';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideMenu,
-  lucideUpload,
-} from '@ng-icons/lucide';
+import { lucideMenu, lucideSettings, lucideUpload } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 
@@ -19,16 +15,10 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
     provideIcons({
       lucideUpload,
       lucideMenu,
+      lucideSettings,
     }),
   ],
-  imports: [
-    NgOptimizedImage,
-    HlmButton,
-    NgIcon,
-    HlmIcon,
-    RouterLink,
-    Logo,
-  ],
+  imports: [HlmButton, NgIcon, HlmIcon, RouterLink, Logo],
   host: {
     class: 'flex w-full items-center border-b p-4 space-x-4 sticky top-0 z-50 bg-background',
   },
@@ -41,20 +31,15 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
       <app-logo [size]="26" />
     </a>
 
-    <button class="text-foreground ml-auto" hlmBtn variant="ghost" size="sm">
-      <ng-icon hlm size="sm" name="lucideUpload" />
-      Upload
+    <button
+      class="text-foreground ml-auto"
+      (click)="clickProfile()"
+      hlmBtn
+      variant="ghost"
+      size="icon"
+    >
+      <ng-icon hlm name="lucideSettings" />
     </button>
-
-    <a routerLink="/settings/profile">
-      <img
-        class="cursor-pointer rounded-full border-b"
-        [ngSrc]="avatarUrl()"
-        [width]="32"
-        [height]="32"
-        alt="Profile image"
-      />
-    </a>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -72,6 +57,14 @@ export class Nav {
   clickLogo() {
     if (this.size.isMobile()) {
       this.sidebar.close();
+    }
+  }
+
+  clickProfile() {
+    if (this.size.isMobile()) {
+      this.sidebar.toggle();
+    } else {
+      this.sidebar.open();
     }
   }
 }

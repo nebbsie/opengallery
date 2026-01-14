@@ -90,8 +90,7 @@ const InternalMiddleware = t.middleware(({ ctx, next }) => {
   return next({ ctx: ctx as InternalContext });
 });
 
-// Timing with dev slowdown
-const TimingMiddleware = t.middleware(async ({ next, path }) => {
+const TimingMiddleware = t.middleware(async ({ next, path, input }) => {
   const start = Date.now();
 
   if (t._config.isDev && false) {
@@ -101,7 +100,14 @@ const TimingMiddleware = t.middleware(async ({ next, path }) => {
 
   const result = await next();
   const end = Date.now();
-  logger.debug(`[TRPC] ${path} took ${end - start}ms`);
+  const duration = end - start;
+
+  if (duration > 200) {
+    logger.warn(`[TRPC] SLOW REQUEST ${path} took ${duration}ms`, {
+      input: JSON.stringify(input, null, 2),
+    });
+  }
+
   return result;
 });
 

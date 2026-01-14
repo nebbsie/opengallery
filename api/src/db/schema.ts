@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { relations } from "drizzle-orm";
 import {
+  index,
   integer,
   real,
   sqliteTable,
@@ -161,6 +162,7 @@ export const FileVariantTable = sqliteTable(
   },
   (t) => [
     uniqueIndex("file_variant_fileid_type_idx").on(t.originalFileId, t.type),
+    index("file_variant_file_id_idx").on(t.fileId),
   ]
 );
 

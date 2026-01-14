@@ -39,7 +39,7 @@ export const appConfig: ApplicationConfig = {
       new QueryClient(),
       withDevtools(() => ({ loadDevtools: 'auto' })),
     ),
-    provideBetterAuthClient(environment.api.url),
+    provideBetterAuthClient(environment.api.authUrl),
     provideAppInitializer(() => {
       const timer = performance.now();
       // Apply theme before app renders (client-only)

@@ -9,9 +9,9 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
 @Component({
   selector: 'app-settings-issues',
   imports: [HlmSpinner, ErrorAlert, HlmButton],
-  host: { class: 'flex flex-col w-full h-full' },
+  host: { class: 'flex flex-col w-full h-full overflow-hidden' },
   template: `
-    <div class="mb-3 flex items-center justify-between gap-4">
+    <div class="flex items-center justify-between gap-4 pb-3 shrink-0">
       <div>
         <h1 class="text-foreground block text-lg font-bold">Import/Encoding Issues</h1>
         <p class="text-muted-foreground text-sm">
@@ -43,7 +43,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
       @if (issues.data().length === 0) {
         <p class="text-muted-foreground">No issues found.</p>
       } @else {
-        <div class="flex-1 overflow-auto rounded border p-2">
+        <div class="flex-1 overflow-y-auto rounded border p-2 min-h-0">
           <div class="grid grid-cols-[1fr_auto_auto] gap-2 font-mono text-sm">
             <div class="font-bold">File ID</div>
             <div class="text-right font-bold">Attempts</div>

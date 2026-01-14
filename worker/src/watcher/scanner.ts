@@ -40,6 +40,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
   const byFolder = new Map<string, TempFile[]>();
 
   const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
+  const skipAlbumForHostPath = toHostPath(skipAlbumFor);
 
   function walk(dir: string) {
     folders.push(dir);
@@ -102,7 +103,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
   // Ensure an album (and its parent chain) exists for a directory
   async function ensureAlbumForDir(dir: string, libraryId: string): Promise<string | null> {
-    if (!dir || dir === skipAlbumFor) return null;
+    if (!dir || dir === skipAlbumForHostPath) return null;
 
     const [existing] = await trpc.album.getAlbumByDir.query(dir);
     if (existing && existing.id) return existing.id;
@@ -112,7 +113,9 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
     const parentDir = dirname(dir);
     const parentId =
-      parentDir && parentDir !== dir ? await ensureAlbumForDir(parentDir, libraryId) : null;
+      parentDir && parentDir !== dir && parentDir.startsWith(skipAlbumForHostPath)
+        ? await ensureAlbumForDir(parentDir, libraryId)
+        : null;
 
     await trpc.album.create.mutate({
       userId,
@@ -234,9 +237,8 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     //if not album, generate one first for this folder dir
     await trpc.album.getAlbumByDir.query(toHostPath(folder));
 
-    const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
     // Ensure album exists for this folder (this will also ensure parents exist)
-    if (folder !== skipAlbumFor) {
+    if (toHostPath(folder) !== skipAlbumForHostPath) {
       const ensuredAlbumId = await ensureAlbumForDir(toHostPath(folder), libraryId);
       if (ensuredAlbumId) {
         logger.info(`Album ensured for folder: ${folder}`);

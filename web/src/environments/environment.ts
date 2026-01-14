@@ -6,5 +6,6 @@ export const environment: Environment = {
   environment: 'development',
   api: {
     url: 'http://localhost:3000',
+    authUrl: 'http://localhost:3000',
   },
 };
