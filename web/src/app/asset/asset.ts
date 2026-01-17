@@ -13,10 +13,7 @@ import {
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
-import { ScreenSize } from '@core/services/screen-size/screen-size';
-import { Sidebar } from '@core/services/sidebar/sidebar';
 import { injectTrpc } from '@core/services/trpc';
-import { UiSettingsService } from '@core/services/ui-settings/ui-settings';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
@@ -51,7 +48,9 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
     @if (file.isSuccess() && file.data(); as data) {
       <div
-        class="mx-auto flex w-full items-center {{ backLink ? ' justify-between' : 'justify-end' }}"
+        class="mx-auto flex w-full items-center {{
+          backLink ? ' justify-between' : 'justify-end'
+        }} mb-1"
       >
         @if (backLink) {
           <a hlmBtn variant="ghost" size="icon" [routerLink]="backLink">
@@ -82,6 +81,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                 class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
                 controls
                 playsInline
+                autoplay
               ></video>
             }
 
@@ -89,7 +89,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               <a
                 [routerLink]="'/asset/' + data.prevId"
                 [queryParams]="getNavQueryParams()"
-                class="absolute top-1/2 left-2 -translate-y-1/2 bg-black/60"
+                class="absolute top-1/2 left-3 -translate-y-1/2 bg-neutral-800/60"
                 hlmBtn
                 variant="ghost"
                 size="icon"
@@ -101,7 +101,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               <a
                 [routerLink]="'/asset/' + data.nextId"
                 [queryParams]="getNavQueryParams()"
-                class="absolute top-1/2 right-2 -translate-y-1/2 bg-black/60"
+                class="absolute top-1/2 right-3 -translate-y-1/2 bg-neutral-800/60"
                 hlmBtn
                 variant="ghost"
                 size="icon"
@@ -325,10 +325,7 @@ export class Asset implements OnDestroy {
   protected readonly trpc = injectTrpc();
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
-  private readonly sidebar = inject(Sidebar);
-  private readonly uiSettings = inject(UiSettingsService);
   private readonly queryClient = inject(QueryClient);
-  private readonly screenSize = inject(ScreenSize);
 
   protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
   protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
@@ -337,23 +334,10 @@ export class Asset implements OnDestroy {
 
   protected readonly infoOpen = signal(false);
 
-  private wasSideBarOpen: boolean;
-  private hasAutoClosedSidebar = false;
   private map: L.Map | null = null;
   protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
   constructor() {
-    this.wasSideBarOpen = this.sidebar.isOpen();
-    // Defer auto-close behavior to UI setting loaded via service
-    effect(() => {
-      const autoClose = this.uiSettings.autoCloseSidebarOnAssetOpen();
-      if (autoClose === null) return; // not yet loaded
-      if (autoClose && this.wasSideBarOpen && this.sidebar.isOpen() && !this.hasAutoClosedSidebar) {
-        this.sidebar.close();
-        this.hasAutoClosedSidebar = true;
-      }
-    });
-
     // Initialize map when data and container are available
     effect(() => {
       const data = this.file.data();
@@ -609,9 +593,6 @@ export class Asset implements OnDestroy {
     if (this.map) {
       this.map.remove();
       this.map = null;
-    }
-    if (this.wasSideBarOpen) {
-      this.sidebar.open();
     }
   }
 

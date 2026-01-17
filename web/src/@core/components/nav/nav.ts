@@ -30,16 +30,6 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
     <a routerLink="/" (click)="clickLogo()">
       <app-logo [size]="26" />
     </a>
-
-    <button
-      class="text-foreground ml-auto"
-      (click)="clickProfile()"
-      hlmBtn
-      variant="ghost"
-      size="icon"
-    >
-      <ng-icon hlm name="lucideSettings" />
-    </button>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -48,8 +38,6 @@ export class Nav {
   private readonly sidebar = inject(Sidebar);
   private readonly size = inject(ScreenSize);
 
-  avatarUrl = computed(() => this.auth.user()?.image ?? 'profile_placeholder.png');
-
   toggleSideNav() {
     this.sidebar.toggle();
   }
@@ -57,14 +45,6 @@ export class Nav {
   clickLogo() {
     if (this.size.isMobile()) {
       this.sidebar.close();
-    }
-  }
-
-  clickProfile() {
-    if (this.size.isMobile()) {
-      this.sidebar.toggle();
-    } else {
-      this.sidebar.open();
     }
   }
 }

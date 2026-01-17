@@ -37,7 +37,13 @@ export const fileTaskRouter = router({
     )
     .mutation(async ({ input }) => {
       const now = new Date().toISOString();
-      const update: any = { status: input.status, updatedAt: now };
+      const update: {
+        status: typeof input.status;
+        updatedAt: string;
+        startedAt?: string;
+        finishedAt?: string;
+        lastError?: string;
+      } = { status: input.status, updatedAt: now };
       if (input.status === "in_progress") update.startedAt = now;
       if (
         input.status === "succeeded" ||
@@ -92,7 +98,14 @@ export const fileTaskRouter = router({
     )
     .mutation(async ({ input }) => {
       const now = new Date().toISOString();
-      const update: any = { status: input.status, updatedAt: now };
+      const update: {
+        status: typeof input.status;
+        updatedAt: string;
+        startedAt?: string;
+        finishedAt?: string;
+        lastError?: string;
+        attempts?: ReturnType<typeof sql>;
+      } = { status: input.status, updatedAt: now };
       if (input.status === "in_progress") update.startedAt = now;
       if (
         input.status === "succeeded" ||
@@ -102,7 +115,7 @@ export const fileTaskRouter = router({
         update.finishedAt = now;
       if (input.error) update.lastError = input.error;
       if (input.incrementAttempts)
-        update.attempts = sql`${FileTaskTable.attempts} + 1` as any;
+        update.attempts = sql`${FileTaskTable.attempts} + 1`;
 
       const [row] = await db
         .update(FileTaskTable)
@@ -140,20 +153,89 @@ export const fileTaskRouter = router({
       )
     )
     .mutation(async ({ input }) => {
+      if (input.length === 0) return [];
+
+      // Group items by status to batch updates where possible
+      const now = new Date().toISOString();
       const results: Array<{ id: string; status: string } | null> = [];
-      for (const item of input) {
-        const now = new Date().toISOString();
-        const update: any = { status: item.status, updatedAt: now };
-        if (item.status === "in_progress") update.startedAt = now;
+
+      // Group items with same status and no special fields for batch update
+      const simpleSucceeded = input.filter(
+        (i) => i.status === "succeeded" && !i.error && !i.incrementAttempts
+      );
+      const simpleFailed = input.filter(
+        (i) => i.status === "failed" && !i.error && !i.incrementAttempts
+      );
+      const simpleSkipped = input.filter(
+        (i) => i.status === "skipped" && !i.error && !i.incrementAttempts
+      );
+      const complex = input.filter(
+        (i) =>
+          i.error ||
+          i.incrementAttempts ||
+          (i.status !== "succeeded" &&
+            i.status !== "failed" &&
+            i.status !== "skipped")
+      );
+
+      // Batch update succeeded items
+      if (simpleSucceeded.length > 0) {
+        const conditions = simpleSucceeded.map(
+          (i) =>
+            sql`(${FileTaskTable.fileId} = ${i.fileId} AND ${FileTaskTable.type} = ${i.type})`
+        );
+        const batchResults = await db
+          .update(FileTaskTable)
+          .set({ status: "succeeded", finishedAt: now, updatedAt: now })
+          .where(sql`${sql.join(conditions, sql` OR `)}`)
+          .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
+        results.push(...batchResults);
+      }
+
+      // Batch update failed items
+      if (simpleFailed.length > 0) {
+        const conditions = simpleFailed.map(
+          (i) =>
+            sql`(${FileTaskTable.fileId} = ${i.fileId} AND ${FileTaskTable.type} = ${i.type})`
+        );
+        const batchResults = await db
+          .update(FileTaskTable)
+          .set({ status: "failed", finishedAt: now, updatedAt: now })
+          .where(sql`${sql.join(conditions, sql` OR `)}`)
+          .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
+        results.push(...batchResults);
+      }
+
+      // Batch update skipped items
+      if (simpleSkipped.length > 0) {
+        const conditions = simpleSkipped.map(
+          (i) =>
+            sql`(${FileTaskTable.fileId} = ${i.fileId} AND ${FileTaskTable.type} = ${i.type})`
+        );
+        const batchResults = await db
+          .update(FileTaskTable)
+          .set({ status: "skipped", finishedAt: now, updatedAt: now })
+          .where(sql`${sql.join(conditions, sql` OR `)}`)
+          .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
+        results.push(...batchResults);
+      }
+
+      // Handle complex items individually (those with error or incrementAttempts)
+      for (const item of complex) {
+        const update: Record<string, unknown> = {
+          status: item.status,
+          updatedAt: now,
+        };
+        if (item.status === "in_progress") update["startedAt"] = now;
         if (
           item.status === "succeeded" ||
           item.status === "failed" ||
           item.status === "skipped"
         )
-          update.finishedAt = now;
-        if (item.error) update.lastError = item.error;
+          update["finishedAt"] = now;
+        if (item.error) update["lastError"] = item.error;
         if (item.incrementAttempts)
-          update.attempts = sql`${FileTaskTable.attempts} + 1` as any;
+          update["attempts"] = sql`${FileTaskTable.attempts} + 1`;
 
         const [row] = await db
           .update(FileTaskTable)
@@ -167,6 +249,7 @@ export const fileTaskRouter = router({
           .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
         results.push(row ?? null);
       }
+
       return results;
     }),
 

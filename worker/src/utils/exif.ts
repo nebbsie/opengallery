@@ -1,4 +1,6 @@
 import exifr from 'exifr';
+import { logger } from './logger.js';
+import type { ExifData } from '../types/exif-data.js';
 
 export async function getExifInfo(path: string): Promise<{
   takenAt: Date | undefined;
@@ -17,7 +19,8 @@ export async function getExifInfo(path: string): Promise<{
     let lat: number | undefined;
     let lon: number | undefined;
 
-    const exif = await exifr.parse(path, { tiff: true, ifd0: true, exif: true, gps: true });
+    const exif = await exifr.parse(path, { tiff: true, ifd0: true, exif: true, gps: true }) as ExifData | undefined;
+
     const dateVal: unknown = exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate;
 
     if (dateVal instanceof Date) {
@@ -34,23 +37,23 @@ export async function getExifInfo(path: string): Promise<{
       lon = exif.longitude;
     }
 
-    const cameraMake = (exif as any)?.Make ?? null;
-    const cameraModel = (exif as any)?.Model ?? null;
-    const lensModel = (exif as any)?.LensModel ?? null;
-    const iso = typeof (exif as any)?.ISO === 'number' ? ((exif as any)?.ISO as number) : null;
-    const exposureTime = (exif as any)?.ExposureTime
-      ? String((exif as any)?.ExposureTime)
-      : (exif as any)?.ExposureTimeValue
-        ? String((exif as any)?.ExposureTimeValue)
+    const cameraMake = exif?.Make ?? null;
+    const cameraModel = exif?.Model ?? null;
+    const lensModel = exif?.LensModel ?? null;
+    const iso = typeof exif?.ISO === 'number' ? exif.ISO : null;
+    const exposureTime = exif?.ExposureTime
+      ? String(exif.ExposureTime)
+      : exif?.ExposureTimeValue
+        ? String(exif.ExposureTimeValue)
         : null;
     const focalLength =
-      typeof (exif as any)?.FocalLengthIn35mmFormat === 'number'
-        ? ((exif as any)?.FocalLengthIn35mmFormat as number)
-        : typeof (exif as any)?.FocalLength === 'number'
-          ? ((exif as any)?.FocalLength as number)
+      typeof exif?.FocalLengthIn35mmFormat === 'number'
+        ? exif.FocalLengthIn35mmFormat
+        : typeof exif?.FocalLength === 'number'
+          ? exif.FocalLength
           : null;
     const fNumber =
-      typeof (exif as any)?.FNumber === 'number' ? ((exif as any)?.FNumber as number) : null;
+      typeof exif?.FNumber === 'number' ? exif.FNumber : null;
 
     return {
       takenAt,
@@ -64,7 +67,8 @@ export async function getExifInfo(path: string): Promise<{
       focalLength,
       fNumber,
     };
-  } catch {
+  } catch (error) {
+    logger.debug('EXIF parse failed', { path, error });
     return { lat: undefined, lon: undefined, takenAt: undefined };
   }
 }

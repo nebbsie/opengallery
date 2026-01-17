@@ -18,6 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Get the repo root (parent of scripts directory)
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+
+npm run migrate
+
 # Start API
 echo "Starting API..."
 (cd "$REPO_ROOT/api" && npm run start) &

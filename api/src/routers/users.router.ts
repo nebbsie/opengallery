@@ -22,7 +22,12 @@ export const usersRouter = router({
     return res === undefined;
   }),
 
-  getAll: privateProcedure.query(async () => {
+  getAll: privateProcedure.query(async ({ ctx }) => {
+    const { session } = ctx;
+    const currentType = session?.user?.type;
+    if (currentType !== "admin") {
+      throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
+    }
     const users = await db.select().from(UserTable);
     return users;
   }),

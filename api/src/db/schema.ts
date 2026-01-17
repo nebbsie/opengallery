@@ -82,18 +82,25 @@ export const FileTable = sqliteTable(
   (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)]
 );
 
-export const LibraryFileTable = sqliteTable("library_file", {
-  id: id(),
-  libraryId: text("library_id")
-    .notNull()
-    .references(() => LibraryTable.id),
-  fileId: text("file_id")
-    .notNull()
-    .references(() => FileTable.id),
-  deletedAt: text("deleted_at"),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const LibraryFileTable = sqliteTable(
+  "library_file",
+  {
+    id: id(),
+    libraryId: text("library_id")
+      .notNull()
+      .references(() => LibraryTable.id),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    deletedAt: text("deleted_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("library_file_library_id_idx").on(t.libraryId),
+    index("library_file_file_id_idx").on(t.fileId),
+  ]
+);
 
 export const AlbumTable = sqliteTable(
   "album",
@@ -123,17 +130,24 @@ export const AlbumRelations = relations(AlbumTable, ({ one, many }) => ({
   children: many(AlbumTable),
 }));
 
-export const AlbumFileTable = sqliteTable("album_file", {
-  id: id(),
-  albumId: text("album_id")
-    .notNull()
-    .references(() => AlbumTable.id),
-  fileId: text("file_id")
-    .notNull()
-    .references(() => FileTable.id),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const AlbumFileTable = sqliteTable(
+  "album_file",
+  {
+    id: id(),
+    albumId: text("album_id")
+      .notNull()
+      .references(() => AlbumTable.id),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("album_file_album_id_idx").on(t.albumId),
+    index("album_file_file_id_idx").on(t.fileId),
+  ]
+);
 
 export const SharedItemTable = sqliteTable("shared_item", {
   id: id(),
@@ -166,25 +180,33 @@ export const FileVariantTable = sqliteTable(
   ]
 );
 
-export const ImageMetadataTable = sqliteTable("image_metadata", {
-  id: id(),
-  fileId: text("file_id")
-    .notNull()
-    .references(() => FileTable.id),
-  width: integer("width").notNull(),
-  height: integer("height").notNull(),
-  blurhash: text("blurhash"),
-  takenAt: text("taken_at"),
-  cameraMake: text("camera_make"),
-  cameraModel: text("camera_model"),
-  lensModel: text("lens_model"),
-  iso: integer("iso"),
-  exposureTime: text("exposure_time"),
-  focalLength: integer("focal_length"),
-  fNumber: text("f_number"),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const ImageMetadataTable = sqliteTable(
+  "image_metadata",
+  {
+    id: id(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    blurhash: text("blurhash"),
+    takenAt: text("taken_at"),
+    cameraMake: text("camera_make"),
+    cameraModel: text("camera_model"),
+    lensModel: text("lens_model"),
+    iso: integer("iso"),
+    exposureTime: text("exposure_time"),
+    focalLength: integer("focal_length"),
+    fNumber: text("f_number"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("image_metadata_file_id_idx").on(t.fileId),
+    index("image_metadata_taken_at_idx").on(t.takenAt),
+    index("image_metadata_camera_idx").on(t.cameraMake, t.cameraModel),
+  ]
+);
 
 export const VideoMetadataTable = sqliteTable("video_metadata", {
   id: id(),
@@ -204,16 +226,20 @@ export const VideoMetadataTable = sqliteTable("video_metadata", {
   updatedAt: updatedAt(),
 });
 
-export const GeoLocationTable = sqliteTable("geo_location", {
-  id: id(),
-  fileId: text("file_id")
-    .notNull()
-    .references(() => FileTable.id),
-  lat: real("lat").notNull(),
-  lon: real("lon").notNull(),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const GeoLocationTable = sqliteTable(
+  "geo_location",
+  {
+    id: id(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    lat: real("lat").notNull(),
+    lon: real("lon").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("geo_location_file_id_idx").on(t.fileId)]
+);
 
 export const MediaPathTable = sqliteTable(
   "media_path",
@@ -354,13 +380,20 @@ export const VerificationTable = sqliteTable("verification", {
   ),
 });
 
-export const LogTable = sqliteTable("log", {
-  id: id(),
-  type: text("type").$type<LogType>().notNull(),
-  value: text("value").notNull(),
-  service: text("service").notNull(),
-  createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
-});
+export const LogTable = sqliteTable(
+  "log",
+  {
+    id: id(),
+    type: text("type").$type<LogType>().notNull(),
+    value: text("value").notNull(),
+    service: text("service").notNull(),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("log_created_at_idx").on(t.createdAt),
+    index("log_service_idx").on(t.service),
+  ]
+);
 
 export const FileTaskTable = sqliteTable(
   "file_task",
@@ -381,7 +414,11 @@ export const FileTaskTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("file_task_unique").on(t.fileId, t.type, t.version)]
+  (t) => [
+    uniqueIndex("file_task_unique").on(t.fileId, t.type, t.version),
+    index("file_task_status_idx").on(t.status),
+    index("file_task_file_id_idx").on(t.fileId),
+  ]
 );
 
 export const AuthSchema = {

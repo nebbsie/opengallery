@@ -5,8 +5,10 @@
     "dev": "./scripts/dev.sh",
     "publish": "./scripts/publish-unified.sh",
     "local": "./scripts/run-local.sh",
-    "build": "npm run build --prefix packages/logger",
-    "build:all": "npm run build --prefix packages/logger && npm run build --prefix api && npm run build --prefix watcher && npm run build --prefix worker"
+    "migrate": "npm run db:migrate --prefix api",
+    "generate": "npm run db:generate --prefix api",
+    "reset": "./scripts/reset.sh",
+    "build": "npm run build --prefix packages/logger"
   },
   "workspaces": [
     "api",

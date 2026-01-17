@@ -1,12 +1,14 @@
 import { encode as encodeBlurhash } from 'blurhash';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
 import { getExifInfo } from '../utils/exif.js';
 import { getVideoMetadata } from '../utils/ffprobe.js';
 import { logger } from '../utils/logger.js';
+import { toContainerPath } from '../utils/paths.js';
 import { type RouterOutputs, trpc } from '../utils/trpc.js';
 
 type File = RouterOutputs['files']['getFileById']['raw'];
@@ -32,27 +34,23 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
     throw new Error('uploadPath missing from settings');
   }
 
-  const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
-  const toContainerPath = (p: string) =>
-    containerRootPrefix && containerRootPrefix.trim() !== ''
-      ? p === '/'
-        ? containerRootPrefix
-        : `${containerRootPrefix}${p}`
-      : p;
   const hostPath = join(file.dir, file.name);
   const path = toContainerPath(hostPath);
-  const input = readFileSync(path);
   const fileId = file.id;
 
+  // Use Sharp's file path input instead of loading entire file into memory
+  // This is more memory efficient for large images (RAW files can be 50MB+)
+  const sharpInstance = sharp(path);
+
   // Extract metadata (width/height) early using sharp
-  const metadata = await sharp(input).metadata();
+  const metadata = await sharpInstance.metadata();
   const width = metadata.width ?? null;
   const height = metadata.height ?? null;
 
   // Generate blurhash from a small version of the image
   let blurhash: string | null = null;
   try {
-    const smallImg = await sharp(input)
+    const smallImg = await sharp(path)
       .rotate()
       .resize(32, 32, { fit: 'inside' })
       .ensureAlpha()
@@ -72,7 +70,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   // Use path hash for stable folder naming across DB resets
   const pathHash = getFileStableHash(file);
   const destDir = join(uploadDir, 'images', pathHash);
-  mkdirSync(destDir, { recursive: true });
+  await mkdir(destDir, { recursive: true });
 
   const base = basename(file.name, extname(file.name));
   const thumbName = `${base}__thumb.avif`;
@@ -86,13 +84,16 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
 
   if (existingVariants) {
     logger.info(`[encode:image] reusing existing variants on disk for id=${fileId}`);
-    const thumbData = readFileSync(existingVariants.thumbPath);
-    const optData = readFileSync(existingVariants.optPath);
+    const [thumbData, optData] = await Promise.all([
+      readFile(existingVariants.thumbPath),
+      readFile(existingVariants.optPath),
+    ]);
     thumb = { data: thumbData, info: { size: thumbData.length } };
     opt = { data: optData, info: { size: optData.length } };
   } else {
     try {
-      const thumbResult = await sharp(input)
+      // Use file path input for Sharp (more memory efficient)
+      const thumbResult = await sharp(path)
         .rotate()
         .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
         .avif({ quality: 45, effort: 4 })
@@ -104,7 +105,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
     }
 
     try {
-      const optResult = await sharp(input)
+      const optResult = await sharp(path)
         .rotate()
         .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
         .avif({ quality: 50, effort: 4 })
@@ -115,8 +116,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       throw e;
     }
 
-    writeFileSync(thumbPath, thumb.data);
-    writeFileSync(optPath, opt.data);
+    // Write files asynchronously
+    await Promise.all([writeFile(thumbPath, thumb.data), writeFile(optPath, opt.data)]);
   }
 
   logger.debug(
@@ -184,12 +185,9 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       logger.debug(`[encode:image] saving geolocation id=${fileId} lat=${lat} lon=${lon}`);
       await trpc.geoLocation.save.mutate({ fileId, lat, lon });
     } catch (e) {
-      console.warn('Failed to save geo location for', fileId, e);
+      logger.warn('Failed to save geo location', { fileId, error: e });
     }
   }
-  try {
-    await trpc.issues.resolveForFile.mutate({ fileId: file.id });
-  } catch {}
 }
 
 export async function encode(fileId: string) {
@@ -271,9 +269,6 @@ export async function encode(fileId: string) {
       } catch (statusErr) {
         logger.error('[encode] failed to mark image tasks failed', statusErr as Error);
       }
-      try {
-        // no-op (issues retired)
-      } catch {}
       return;
     }
     return;
@@ -328,9 +323,6 @@ export async function encode(fileId: string) {
       } catch (statusErr) {
         logger.error('[encode] failed to mark video tasks failed', statusErr as Error);
       }
-      try {
-        // no-op (issues retired)
-      } catch {}
       return;
     }
     return;
@@ -359,19 +351,12 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
     throw new Error('uploadPath missing from settings');
   }
 
-  const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
-  const toContainerPath = (p: string) =>
-    containerRootPrefix && containerRootPrefix.trim() !== ''
-      ? p === '/'
-        ? containerRootPrefix
-        : `${containerRootPrefix}${p}`
-      : p;
   const inputPath = toContainerPath(join(file.dir, file.name));
 
   // Use path hash for stable folder naming across DB resets
   const pathHash = getFileStableHash(file);
   const destDir = join(uploadDir, 'videos', pathHash);
-  mkdirSync(destDir, { recursive: true });
+  await mkdir(destDir, { recursive: true });
 
   const base = basename(file.name, extname(file.name));
   const thumbName = `${base}__thumb.jpg`;
@@ -389,8 +374,12 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
   // If variants already exist on disk, reuse them instead of re-encoding
   if (existingVariants) {
     logger.info(`[encode:video] reusing existing variants on disk for id=${file.id}`);
-    thumbSize = statSync(existingVariants.thumbPath).size;
-    optSize = statSync(existingVariants.optPath).size;
+    const [thumbStat, optStat] = await Promise.all([
+      stat(existingVariants.thumbPath),
+      stat(existingVariants.optPath),
+    ]);
+    thumbSize = thumbStat.size;
+    optSize = optStat.size;
   } else {
     // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
     await runFfmpeg(
@@ -431,15 +420,15 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
       'thumbnail',
     );
 
-    thumbSize = statSync(thumbPath).size;
-    optSize = statSync(optPath).size;
+    const [thumbStat, optStat] = await Promise.all([stat(thumbPath), stat(optPath)]);
+    thumbSize = thumbStat.size;
+    optSize = optStat.size;
   }
 
-  // Generate blurhash from the poster frame
+  // Generate blurhash from the poster frame using Sharp's file path input
   let blurhash: string | null = null;
   try {
-    const thumbInput = readFileSync(thumbPath);
-    const smallImg = await sharp(thumbInput)
+    const smallImg = await sharp(thumbPath)
       .resize(32, 32, { fit: 'inside' })
       .ensureAlpha()
       .raw()
@@ -503,10 +492,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
       logger.debug(`[encode:video] saving geolocation id=${file.id} lat=${lat} lon=${lon}`);
       await trpc.geoLocation.save.mutate({ fileId: file.id, lat, lon });
     } catch (e) {
-      console.warn('Failed to save geo location for', file.id, e);
+      logger.warn('Failed to save geo location', { fileId: file.id, error: e });
     }
   }
-  try {
-    await trpc.issues.resolveForFile.mutate({ fileId: file.id });
-  } catch {}
 }

@@ -5,101 +5,112 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon } from '@ng-icons/core';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
+import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
+import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-side-nav-default',
-  imports: [HlmButton, HlmIcon, NgIcon, RouterLink, RouterLinkActive],
+  imports: [
+    HlmButton,
+    HlmIcon,
+    NgIcon,
+    RouterLink,
+    RouterLinkActive,
+    HlmTooltipImports,
+    BrnTooltipImports,
+  ],
   host: {
-    class: 'flex flex-col w-full',
+    class: 'flex flex-col gap-1',
   },
   template: `
-    <p class="mb-2 font-medium">Gallery</p>
-
-    <a
-      class="mb-1"
-      hlmBtn
-      routerLink="/gallery"
-      routerLinkActive="active"
-      #rlaAll="routerLinkActive"
-      [variant]="rlaAll.isActive ? 'menu_active' : 'menu'"
-      [routerLinkActiveOptions]="{ exact: true }"
-      (click)="handleClicked()"
-    >
-      <ng-icon hlm size="sm" name="lucideLayoutDashboard" />
-      All
-    </a>
-
-    <a
-      class="mb-1"
-      hlmBtn
-      routerLink="/gallery/photos"
-      routerLinkActive="active"
-      #rlaPhotos="routerLinkActive"
-      [variant]="rlaPhotos.isActive ? 'menu_active' : 'menu'"
-      (click)="handleClicked()"
-    >
-      <ng-icon hlm size="sm" name="lucideCamera" />
-      Photos
-    </a>
-
-    <a
-      hlmBtn
-      routerLink="/gallery/videos"
-      routerLinkActive="active"
-      #rlaVideos="routerLinkActive"
-      [variant]="rlaVideos.isActive ? 'menu_active' : 'menu'"
-      (click)="handleClicked()"
-    >
-      <ng-icon hlm size="sm" name="lucideFilm" />
-      Videos
-    </a>
-
-    <hr class="my-2" />
-
-    <p class="mb-2 font-medium">Browse</p>
-
-    <a
-      class="mb-1"
-      hlmBtn
-      routerLink="/cameras"
-      routerLinkActive="active"
-      #rlaCameras="routerLinkActive"
-      [variant]="rlaCameras.isActive ? 'menu_active' : 'menu'"
-      (click)="handleClicked()"
-    >
-      <ng-icon hlm size="sm" name="lucideCamera" />
-      Cameras
-    </a>
-
-    <hr class="my-2" />
-
-    <div class="flex items-center justify-between">
-      <p class="font-medium">Albums</p>
-      <a class="text-xs text-blue-500" size="sm" hlmBtn variant="link" routerLink="/albums"
-        >View All</a
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/gallery"
+        routerLinkActive="active"
+        #rlaAll="routerLinkActive"
+        size="icon"
+        [variant]="rlaAll.isActive ? 'menu_active' : 'menu'"
+        [routerLinkActiveOptions]="{ exact: true }"
+        (click)="handleClicked()"
       >
-    </div>
+        <ng-icon hlm size="sm" name="lucideLayoutDashboard" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> All </span>
+    </hlm-tooltip>
 
-    @if (albums.isSuccess()) {
-      @for (album of albums.data().slice(0, 5); track album.id) {
-        <a
-          class="mb-1"
-          hlmBtn
-          variant="menu"
-          routerLinkActive="active"
-          #rlaAlbum="routerLinkActive"
-          [variant]="rlaAlbum.isActive ? 'menu_active' : 'menu'"
-          [routerLink]="'/albums/' + album.id"
-          (click)="handleClicked()"
-        >
-          <ng-icon hlm size="sm" name="lucideImages" />
-          {{ album.name }}
-        </a>
-      }
-    }
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/gallery/photos"
+        routerLinkActive="active"
+        size="icon"
+        #rlaPhotos="routerLinkActive"
+        [variant]="rlaPhotos.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideCamera" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Photos </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/gallery/videos"
+        routerLinkActive="active"
+        size="icon"
+        #rlaVideos="routerLinkActive"
+        [variant]="rlaVideos.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideFilm" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Videos </span>
+    </hlm-tooltip>
 
     <hr class="my-2" />
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/cameras"
+        routerLinkActive="active"
+        size="icon"
+        #rlaCameras="routerLinkActive"
+        [variant]="rlaCameras.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideCamera" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Cameras </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/albums"
+        routerLinkActive="active"
+        size="icon"
+        #rlaAlbums="routerLinkActive"
+        [variant]="rlaAlbums.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideImages" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Albums </span>
+    </hlm-tooltip>
   `,
 
   changeDetection: ChangeDetectionStrategy.OnPush,

@@ -23,53 +23,33 @@ export const imageMetadataRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const existing = await db
-        .select()
-        .from(ImageMetadataTable)
-        .where(eq(ImageMetadataTable.fileId, input.fileId))
-        .limit(1);
+      const values = {
+        width: input.width,
+        height: input.height,
+        blurhash: input.blurhash ?? null,
+        takenAt: input.takenAt?.toISOString() ?? null,
+        cameraMake: input.cameraMake ?? null,
+        cameraModel: input.cameraModel ?? null,
+        lensModel: input.lensModel ?? null,
+        iso: input.iso ?? null,
+        exposureTime: input.exposureTime ?? null,
+        focalLength:
+          input.focalLength != null ? Math.round(input.focalLength) : null,
+        fNumber: input.fNumber ?? null,
+      };
 
-      if (existing[0]) {
-        const [updated] = await db
-          .update(ImageMetadataTable)
-          .set({
-            width: input.width,
-            height: input.height,
-            blurhash: input.blurhash ?? null,
-            takenAt: input.takenAt?.toISOString() ?? null,
-            cameraMake: input.cameraMake ?? null,
-            cameraModel: input.cameraModel ?? null,
-            lensModel: input.lensModel ?? null,
-            iso: input.iso ?? null,
-            exposureTime: input.exposureTime ?? null,
-            focalLength:
-              input.focalLength != null ? Math.round(input.focalLength) : null,
-            fNumber: input.fNumber ?? null,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(ImageMetadataTable.fileId, input.fileId))
-          .returning();
-        return updated;
-      }
-
-      const [created] = await db
+      const [result] = await db
         .insert(ImageMetadataTable)
-        .values({
-          fileId: input.fileId,
-          width: input.width,
-          height: input.height,
-          blurhash: input.blurhash ?? null,
-          takenAt: input.takenAt?.toISOString() ?? null,
-          cameraMake: input.cameraMake ?? null,
-          cameraModel: input.cameraModel ?? null,
-          lensModel: input.lensModel ?? null,
-          iso: input.iso ?? null,
-          exposureTime: input.exposureTime ?? null,
-          focalLength:
-            input.focalLength != null ? Math.round(input.focalLength) : null,
-          fNumber: input.fNumber ?? null,
+        .values({ fileId: input.fileId, ...values })
+        .onConflictDoUpdate({
+          target: ImageMetadataTable.fileId,
+          set: {
+            ...values,
+            updatedAt: new Date().toISOString(),
+          },
         })
         .returning();
-      return created;
+
+      return result;
     }),
 });

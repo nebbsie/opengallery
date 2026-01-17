@@ -14,7 +14,6 @@ export const geoLocationRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      // Skip invalid coordinates (malformed EXIF GPS data)
       if (
         input.lat < -90 ||
         input.lat > 90 ||
@@ -24,29 +23,22 @@ export const geoLocationRouter = router({
         return null;
       }
 
-      const existing = await db
-        .select()
-        .from(GeoLocationTable)
-        .where(eq(GeoLocationTable.fileId, input.fileId))
-        .limit(1);
-
-      if (existing[0]) {
-        const [updated] = await db
-          .update(GeoLocationTable)
-          .set({ lat: input.lat, lon: input.lon })
-          .where(eq(GeoLocationTable.fileId, input.fileId))
-          .returning();
-        return updated;
-      }
-
-      const [created] = await db
+      const [result] = await db
         .insert(GeoLocationTable)
         .values({
           fileId: input.fileId,
           lat: input.lat,
           lon: input.lon,
         })
+        .onConflictDoUpdate({
+          target: GeoLocationTable.fileId,
+          set: {
+            lat: input.lat,
+            lon: input.lon,
+          },
+        })
         .returning();
-      return created;
+
+      return result;
     }),
 });

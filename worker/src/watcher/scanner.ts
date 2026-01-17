@@ -1,36 +1,18 @@
 import { lookup as mimeLookup } from 'mime-types';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
 import { logger } from '../utils/logger.js';
+import { ALLOWED_EXTENSIONS, type MediaType, getMediaType } from '../utils/media-types.js';
+import { getFullPath, toHostPath } from '../utils/paths.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
-
-type MediaType = 'image' | 'video';
-
-const imageExt = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']);
-const videoExt = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv']);
-const allowed = new Set([...imageExt, ...videoExt]);
-
-function getMediaType(ext: string): MediaType | null {
-  if (imageExt.has(ext)) return 'image';
-  if (videoExt.has(ext)) return 'video';
-  return null;
-}
-
-function getFullPath(file: { dir: string; name: string }) {
-  return join(file.dir, file.name);
-}
 
 type CreateFilesInput = RouterInputs['files']['create'];
 
 type TempFile = CreateFilesInput[0];
 
 export async function scan(rootDir: string, userId: string, options?: { skipAlbumFor?: string }) {
-  const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
-  const toHostPath = (p: string) =>
-    containerRootPrefix && p.startsWith(containerRootPrefix)
-      ? p.slice(containerRootPrefix.length) || '/'
-      : p;
   if (!existsSync(rootDir)) {
     logger.warn(`Scan skipped, path not found: ${rootDir}`);
     return { folders: [], totalFiles: 0, byFolder: new Map<string, TempFile[]>() };
@@ -42,32 +24,37 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
   const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
   const skipAlbumForHostPath = toHostPath(skipAlbumFor);
 
-  function walk(dir: string) {
+  // Async recursive directory walk - non-blocking
+  async function walk(dir: string): Promise<void> {
     folders.push(dir);
-    let entries: import('node:fs').Dirent<string>[];
+    let entries: import('node:fs').Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true, encoding: 'utf8' });
+      entries = await readdir(dir, { withFileTypes: true, encoding: 'utf8' });
     } catch (error) {
       logger.warn(`Failed to read directory during scan, skipping: ${dir}`);
       return;
     }
 
+    // Collect subdirectories to process
+    const subdirs: string[] = [];
+    const filesToStat: Array<{ entry: import('node:fs').Dirent; path: string; ext: string; type: MediaType }> = [];
+
     for (const entry of entries) {
       const path = join(dir, entry.name);
 
-      // If directory, recurse.
+      // If directory, add to queue for recursion
       if (entry.isDirectory()) {
-        walk(path);
+        subdirs.push(path);
         continue;
       }
 
-      // If not a file, skip.
+      // If not a file, skip
       if (!entry.isFile()) {
         continue;
       }
 
       const ext = extname(entry.name).slice(1).toLowerCase();
-      if (!allowed.has(ext)) {
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
         continue;
       }
 
@@ -76,14 +63,22 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
         continue;
       }
 
-      let stats: import('node:fs').Stats;
-      try {
-        stats = statSync(path);
-      } catch (error) {
-        logger.warn(`Failed to stat file during scan, skipping: ${path}`);
-        continue;
-      }
+      filesToStat.push({ entry, path, ext, type });
+    }
 
+    // Stat all files in parallel for this directory
+    const statResults = await Promise.allSettled(
+      filesToStat.map(async ({ entry, path, ext, type }) => {
+        const stats = await stat(path);
+        return { entry, path, ext, type, stats };
+      })
+    );
+
+    for (const result of statResults) {
+      if (result.status === 'rejected') {
+        continue; // Skip files that failed to stat
+      }
+      const { entry, ext, type, stats } = result.value;
       const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
 
       const arr: TempFile[] = byFolder.get(dir) ?? [];
@@ -97,9 +92,14 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       });
       byFolder.set(dir, arr);
     }
+
+    // Recurse into subdirectories (sequentially to avoid too many open handles)
+    for (const subdir of subdirs) {
+      await walk(subdir);
+    }
   }
 
-  walk(rootDir);
+  await walk(rootDir);
 
   // Ensure an album (and its parent chain) exists for a directory
   async function ensureAlbumForDir(dir: string, libraryId: string): Promise<string | null> {
@@ -143,7 +143,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       dir: string;
       name: string;
     }>;
-    const alreadySavedPaths = new Set(alreadySavedFiles.map(getFullPath));
+    const alreadySavedPaths = new Set(alreadySavedFiles.map((f) => getFullPath(f.dir, f.name)));
 
     // If no files to add and no files in the DB for this folder, skip.
     if (files.length === 0 && alreadySavedFiles.length === 0) {
@@ -169,8 +169,8 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     }
 
     // If a file is in the DB but not on disk, remove it from the DB.
-    const pathsOnDisk = new Set(files.map(getFullPath));
-    const orphanedFiles = alreadySavedFiles.filter((f) => !pathsOnDisk.has(getFullPath(f)));
+    const pathsOnDisk = new Set(files.map((f) => getFullPath(f.dir, f.name)));
+    const orphanedFiles = alreadySavedFiles.filter((f) => !pathsOnDisk.has(getFullPath(f.dir, f.name)));
     if (orphanedFiles.length > 0) {
       logger.info(`Removing ${orphanedFiles.length} orphaned files for folder: ${folder}`);
       await trpc.files.removeFilesById.mutate(orphanedFiles.map((f: { id: string }) => f.id));
@@ -186,7 +186,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     }
 
     // Filter out files that are already in the database.
-    const newFiles = files.filter((f) => !alreadySavedPaths.has(getFullPath(f)));
+    const newFiles = files.filter((f) => !alreadySavedPaths.has(getFullPath(f.dir, f.name)));
 
     if (!newFiles.length) {
       continue;

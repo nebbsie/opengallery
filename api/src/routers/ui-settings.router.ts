@@ -46,41 +46,21 @@ export const uiSettingsRouter = router({
       })
     )
     .mutation(async ({ ctx: { userId }, input }) => {
-      // Ensure row exists; create if missing with the provided value
-      const [existing] = await db
-        .select()
-        .from(UiSettingsTable)
-        .where(eq(UiSettingsTable.userId, userId))
-        .limit(1);
-
-      if (!existing) {
-        const [created] = await db
-          .insert(UiSettingsTable)
-          .values({
-            userId,
-            autoCloseSidebarOnAssetOpen: input.autoCloseSidebarOnAssetOpen,
-          })
-          .returning();
-        if (!created) {
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Failed to create UI settings",
-          });
-        }
-        return {
-          autoCloseSidebarOnAssetOpen: created.autoCloseSidebarOnAssetOpen,
-        };
-      }
-
-      const [updated] = await db
-        .update(UiSettingsTable)
-        .set({
+      const [result] = await db
+        .insert(UiSettingsTable)
+        .values({
+          userId,
           autoCloseSidebarOnAssetOpen: input.autoCloseSidebarOnAssetOpen,
         })
-        .where(eq(UiSettingsTable.userId, userId))
+        .onConflictDoUpdate({
+          target: UiSettingsTable.userId,
+          set: {
+            autoCloseSidebarOnAssetOpen: input.autoCloseSidebarOnAssetOpen,
+          },
+        })
         .returning();
 
-      if (!updated) {
+      if (!result) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: "Failed to update UI settings",
@@ -88,7 +68,7 @@ export const uiSettingsRouter = router({
       }
 
       return {
-        autoCloseSidebarOnAssetOpen: updated.autoCloseSidebarOnAssetOpen,
+        autoCloseSidebarOnAssetOpen: result.autoCloseSidebarOnAssetOpen,
       };
     }),
 });

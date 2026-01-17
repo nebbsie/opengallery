@@ -33,25 +33,6 @@ export const issuesRouter = router({
     }));
   }),
 
-  record: internalProcedure
-    .input(
-      z.object({
-        fileId: z.string().uuid(),
-        stage: z.string(),
-        message: z.string(),
-        extra: z.any().optional(),
-      })
-    )
-    .mutation(async () => {
-      return { ok: true } as const;
-    }),
-
-  resolveForFile: internalProcedure
-    .input(z.object({ fileId: z.string().uuid() }))
-    .mutation(async () => {
-      return { ok: true } as const;
-    }),
-
   retry: privateProcedure
     .input(z.object({ fileId: z.string().uuid() }))
     .mutation(async ({ input }) => {

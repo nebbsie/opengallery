@@ -16,30 +16,43 @@ export const logRouter = router({
     )
     .query(({ input }) => {
       const i = input;
-      const conditions: any[] = [];
+      let whereClause: ReturnType<typeof and>;
       if (i.types && i.types.length > 0) {
-        conditions.push(inArray(LogTable.type, i.types as any));
-      } else {
-        conditions.push(ne(LogTable.type, "debug"));
-      }
-      if (i.service) {
-        conditions.push(sql`${LogTable.service} = ${i.service}`);
-      }
-      if (i.search && i.search.trim() !== "") {
-        const q = `%${i.search.toLowerCase()}%`;
-        conditions.push(
-          or(
+        const typeCondition = inArray(LogTable.type, i.types);
+        if (i.service) {
+          whereClause = and(typeCondition, sql`${LogTable.service} = ${i.service}`);
+        } else {
+          whereClause = typeCondition as ReturnType<typeof and>;
+        }
+        if (i.search && i.search.trim() !== "") {
+          const q = `%${i.search.toLowerCase()}%`;
+          const searchCondition = or(
             sql`lower(${LogTable.value}) like ${q}`,
             sql`lower(${LogTable.service}) like ${q}`
-          )
-        );
+          );
+          whereClause = whereClause
+            ? and(whereClause, searchCondition)
+            : (searchCondition as ReturnType<typeof and>);
+        }
+      } else {
+        const baseCondition = ne(LogTable.type, "debug");
+        whereClause = baseCondition as ReturnType<typeof and>;
+        if (i.service) {
+          whereClause = and(whereClause, sql`${LogTable.service} = ${i.service}`);
+        }
+        if (i.search && i.search.trim() !== "") {
+          const q = `%${i.search.toLowerCase()}%`;
+          const searchCondition = or(
+            sql`lower(${LogTable.value}) like ${q}`,
+            sql`lower(${LogTable.service}) like ${q}`
+          );
+          whereClause = and(whereClause, searchCondition);
+        }
       }
-      const whereClause =
-        conditions.length > 0 ? and(...conditions) : undefined;
       return db
         .select()
         .from(LogTable)
-        .where(whereClause as any)
+        .where(whereClause)
         .orderBy(desc(LogTable.createdAt))
         .limit(i.limit ?? 200);
     }),

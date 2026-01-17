@@ -231,36 +231,53 @@ export const albumRouter = router({
       .from(AlbumTable)
       .where(inArray(AlbumTable.id, albumIds));
 
+    // Initialize covers from explicit covers
     const coverByAlbum: Record<string, string | null> = {};
+    const albumsNeedingCover: string[] = [];
     for (const album of albumsWithCovers) {
       if (album.cover) {
         coverByAlbum[album.id] = album.cover;
       } else {
-        // Find first image file with thumbnail
-        const [firstImage] = await db
-          .select({ fileId: FileTable.id })
-          .from(AlbumFileTable)
-          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .where(
-            and(
-              eq(AlbumFileTable.albumId, album.id),
-              eq(FileTable.type, "image"),
-              exists(
-                db
-                  .select()
-                  .from(FileVariantTable)
-                  .where(
-                    and(
-                      eq(FileVariantTable.originalFileId, FileTable.id),
-                      eq(FileVariantTable.type, "thumbnail")
-                    )
+        albumsNeedingCover.push(album.id);
+      }
+    }
+
+    // Batch fetch first image with thumbnail for albums without explicit cover
+    if (albumsNeedingCover.length > 0) {
+      const computedCovers = await db
+        .select({
+          albumId: AlbumFileTable.albumId,
+          fileId: sql<string>`MIN(${FileTable.id})`,
+        })
+        .from(AlbumFileTable)
+        .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .where(
+          and(
+            inArray(AlbumFileTable.albumId, albumsNeedingCover),
+            eq(FileTable.type, "image"),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "thumbnail")
                   )
-              )
+                )
             )
           )
-          .orderBy(FileTable.createdAt)
-          .limit(1);
-        coverByAlbum[album.id] = firstImage?.fileId ?? null;
+        )
+        .groupBy(AlbumFileTable.albumId);
+
+      for (const { albumId, fileId } of computedCovers) {
+        coverByAlbum[albumId] = fileId;
+      }
+      // Set null for albums that still don't have a cover
+      for (const albumId of albumsNeedingCover) {
+        if (!(albumId in coverByAlbum)) {
+          coverByAlbum[albumId] = null;
+        }
       }
     }
 
@@ -394,7 +411,19 @@ export const albumRouter = router({
       const encodedRoot = rootPath ? b64url(rootPath) : "";
 
       // lineage: root->...->current (ancestors incl. current)
-      // Build lineage by walking up the parent chain
+      // Fetch all albums for this library to build the ancestor chain in memory (avoids N+1)
+      const allLibraryAlbums = await db
+        .select({
+          id: AlbumTable.id,
+          parentId: AlbumTable.parentId,
+          name: AlbumTable.name,
+          dir: AlbumTable.dir,
+        })
+        .from(AlbumTable)
+        .where(eq(AlbumTable.libraryId, albumRow.libraryId));
+
+      const albumMap = new Map(allLibraryAlbums.map((a) => [a.id, a]));
+
       const ancestors: Array<{
         id: string;
         name: string;
@@ -403,16 +432,7 @@ export const albumRouter = router({
       }> = [];
       let currentId: string | null = albumId;
       while (currentId) {
-        const [album] = await db
-          .select({
-            id: AlbumTable.id,
-            parentId: AlbumTable.parentId,
-            name: AlbumTable.name,
-            dir: AlbumTable.dir,
-          })
-          .from(AlbumTable)
-          .where(eq(AlbumTable.id, currentId))
-          .limit(1);
+        const album = albumMap.get(currentId);
         if (!album) break;
         ancestors.unshift({
           id: album.id,
@@ -508,36 +528,53 @@ export const albumRouter = router({
           childItemsRes.map((r) => [r.albumId, Number(r.items)])
         ) as Record<string, number>;
 
-        // Compute covers for children
+        // Compute covers for children - batch query to avoid N+1
         const childCoverMap: Record<string, string | null> = {};
+        const childrenNeedingCover: string[] = [];
         for (const child of children) {
           if (child.cover) {
             childCoverMap[child.id] = child.cover;
           } else {
-            const [firstImage] = await db
-              .select({ fileId: FileTable.id })
-              .from(AlbumFileTable)
-              .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-              .where(
-                and(
-                  eq(AlbumFileTable.albumId, child.id),
-                  eq(FileTable.type, "image"),
-                  exists(
-                    db
-                      .select()
-                      .from(FileVariantTable)
-                      .where(
-                        and(
-                          eq(FileVariantTable.originalFileId, FileTable.id),
-                          eq(FileVariantTable.type, "thumbnail")
-                        )
+            childrenNeedingCover.push(child.id);
+          }
+        }
+
+        // Batch fetch first image with thumbnail for children without explicit cover
+        if (childrenNeedingCover.length > 0) {
+          const computedCovers = await db
+            .select({
+              albumId: AlbumFileTable.albumId,
+              fileId: sql<string>`MIN(${FileTable.id})`,
+            })
+            .from(AlbumFileTable)
+            .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+            .where(
+              and(
+                inArray(AlbumFileTable.albumId, childrenNeedingCover),
+                eq(FileTable.type, "image"),
+                exists(
+                  db
+                    .select()
+                    .from(FileVariantTable)
+                    .where(
+                      and(
+                        eq(FileVariantTable.originalFileId, FileTable.id),
+                        eq(FileVariantTable.type, "thumbnail")
                       )
-                  )
+                    )
                 )
               )
-              .orderBy(FileTable.createdAt)
-              .limit(1);
-            childCoverMap[child.id] = firstImage?.fileId ?? null;
+            )
+            .groupBy(AlbumFileTable.albumId);
+
+          for (const { albumId, fileId } of computedCovers) {
+            childCoverMap[albumId] = fileId;
+          }
+          // Set null for children that still don't have a cover
+          for (const childId of childrenNeedingCover) {
+            if (!(childId in childCoverMap)) {
+              childCoverMap[childId] = null;
+            }
           }
         }
 
@@ -612,21 +649,28 @@ export const albumRouter = router({
 
       if (candidates.length === 0) return { removed: 0 } as const;
 
-      let removed = 0;
-      for (const { id } of candidates) {
-        // Skip if album still has files linked
-        const hasFiles = await db
-          .select({ id: AlbumFileTable.id })
-          .from(AlbumFileTable)
-          .where(eq(AlbumFileTable.albumId, id))
-          .limit(1);
-        if (hasFiles.length > 0) continue;
+      const candidateIds = candidates.map((c) => c.id);
 
-        await db.delete(AlbumTable).where(eq(AlbumTable.id, id));
-        removed++;
-      }
+      // Batch query: find which albums have files (to exclude from deletion)
+      const albumsWithFiles = await db
+        .select({ albumId: AlbumFileTable.albumId })
+        .from(AlbumFileTable)
+        .where(inArray(AlbumFileTable.albumId, candidateIds))
+        .groupBy(AlbumFileTable.albumId);
 
-      return { removed } as const;
+      const albumsWithFilesSet = new Set(albumsWithFiles.map((r) => r.albumId));
+
+      // Filter to only empty albums (those not in the set)
+      const emptyAlbumIds = candidateIds.filter(
+        (id) => !albumsWithFilesSet.has(id)
+      );
+
+      if (emptyAlbumIds.length === 0) return { removed: 0 } as const;
+
+      // Batch delete all empty albums
+      await db.delete(AlbumTable).where(inArray(AlbumTable.id, emptyAlbumIds));
+
+      return { removed: emptyAlbumIds.length } as const;
     }),
 
   setParentByDir: internalProcedure

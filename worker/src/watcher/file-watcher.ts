@@ -4,6 +4,8 @@ import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
 import { basename, dirname, extname } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
+import { getMediaType, isSupportedFile, type MediaType } from '../utils/media-types.js';
+import { toContainerPath } from '../utils/paths.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
 
@@ -11,23 +13,6 @@ interface WatchedPath {
   id: string;
   path: string;
   watcher: chokidar.FSWatcher;
-}
-
-type MediaType = 'image' | 'video';
-
-const imageExt = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']);
-const videoExt = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv']);
-const allowed = new Set([...imageExt, ...videoExt]);
-
-function getMediaType(ext: string): MediaType | null {
-  if (imageExt.has(ext)) return 'image';
-  if (videoExt.has(ext)) return 'video';
-  return null;
-}
-
-function isSupportedFile(filePath: string): boolean {
-  const ext = extname(filePath).slice(1).toLowerCase();
-  return allowed.has(ext);
 }
 
 export class FileWatcherService {
@@ -65,13 +50,6 @@ export class FileWatcherService {
     }
 
     // Translate host path to container path if HOST_ROOT_PREFIX is set (Docker); else use as-is.
-    const containerRootPrefix = process.env['HOST_ROOT_PREFIX'];
-    const toContainerPath = (p: string) =>
-      containerRootPrefix && containerRootPrefix.trim() !== ''
-        ? p === '/'
-          ? containerRootPrefix
-          : `${containerRootPrefix}${p}`
-        : p;
     const containerPath = toContainerPath(path);
 
     // Do an initial scan, but don't crash if a path is missing or unreadable.
