@@ -1,12 +1,13 @@
-import { ChangeDetectionStrategy, Component, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, output } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { CacheKey } from '@core/services/cache-key.types';
+import { PrefetchService } from '@core/services/prefetch/prefetch';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon } from '@ng-icons/core';
+import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
-import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
@@ -35,6 +36,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         size="icon"
         [variant]="rlaAll.isActive ? 'menu_active' : 'menu'"
         [routerLinkActiveOptions]="{ exact: true }"
+        (mouseenter)="prefetchSvc.prefetchGalleryAll()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideLayoutDashboard" />
@@ -52,6 +54,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         size="icon"
         #rlaPhotos="routerLinkActive"
         [variant]="rlaPhotos.isActive ? 'menu_active' : 'menu'"
+        (mouseenter)="prefetchSvc.prefetchGalleryPhotos()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideCamera" />
@@ -69,6 +72,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         size="icon"
         #rlaVideos="routerLinkActive"
         [variant]="rlaVideos.isActive ? 'menu_active' : 'menu'"
+        (mouseenter)="prefetchSvc.prefetchGalleryVideos()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideFilm" />
@@ -88,6 +92,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         size="icon"
         #rlaCameras="routerLinkActive"
         [variant]="rlaCameras.isActive ? 'menu_active' : 'menu'"
+        (mouseenter)="prefetchSvc.prefetchCameras()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideCamera" />
@@ -105,6 +110,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         size="icon"
         #rlaAlbums="routerLinkActive"
         [variant]="rlaAlbums.isActive ? 'menu_active' : 'menu'"
+        (mouseenter)="prefetchSvc.prefetchAlbums()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideImages" />
@@ -134,6 +140,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 })
 export class SideNavDefault {
   clicked = output<void>();
+  readonly prefetchSvc = inject(PrefetchService);
 
   private readonly trpc = injectTrpc();
 

@@ -1,6 +1,7 @@
-import { ChangeDetectionStrategy, Component, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { BlurhashCanvas } from '@core/components/blurhash-canvas/blurhash-canvas';
+import { PrefetchService } from '@core/services/prefetch/prefetch';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
@@ -20,7 +21,12 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   },
   template: `
     @let _asset = asset();
-    <a [routerLink]="['/asset', _asset.id]" [queryParams]="queryParams()">
+    <a
+      [routerLink]="['/asset', _asset.id]"
+      [queryParams]="queryParams()"
+      (mouseenter)="onHover()"
+      (mouseleave)="onHoverEnd()"
+    >
       @if (_asset.blurhash && !imageLoaded()) {
         <app-blurhash-canvas
           class="absolute inset-0 h-full w-full"
@@ -55,6 +61,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 export class AssetThumbnail {
   protected readonly apiUrl = environment.api.url;
   protected readonly imageLoaded = signal(false);
+  private readonly prefetch = inject(PrefetchService);
 
   asset = input.required<{ type: 'image' | 'video'; id: string; blurhash?: string | null }>();
   from = input<string>();
@@ -75,5 +82,18 @@ export class AssetThumbnail {
 
   onImageLoad(): void {
     this.imageLoaded.set(true);
+  }
+
+  onHover(): void {
+    const a = this.asset();
+    this.prefetch.prefetchAsset(a.id, {
+      albumId: this.albumId(),
+      cameraMake: this.cameraMake(),
+      cameraModel: this.cameraModel(),
+    });
+  }
+
+  onHoverEnd(): void {
+    this.prefetch.cancelPrefetchAsset(this.asset().id);
   }
 }
