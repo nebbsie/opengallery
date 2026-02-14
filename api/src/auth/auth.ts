@@ -8,7 +8,6 @@ import {
   LibraryTable,
   MediaSettingsTable,
   SystemSettingsTable,
-  UiSettingsTable,
   UserTable,
 } from "../db/schema.js";
 
@@ -67,7 +66,7 @@ export const auth = betterAuth({
           if (user?.type === "admin") {
             if (!process.env["DEFAULT_UPLOAD_PATH"]) {
               throw new Error(
-                "DEFAULT_UPLOAD_PATH is not set in environment variables"
+                "DEFAULT_UPLOAD_PATH is not set in environment variables",
               );
             }
 
@@ -78,11 +77,6 @@ export const auth = betterAuth({
 
           await db.insert(MediaSettingsTable).values({
             autoImportAlbums: true,
-            userId: u.id,
-          });
-
-          await db.insert(UiSettingsTable).values({
-            autoCloseSidebarOnAssetOpen: true,
             userId: u.id,
           });
         },
