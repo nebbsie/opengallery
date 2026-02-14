@@ -30,7 +30,7 @@ function formatBytes(bytes: number): string {
     class: 'w-full',
   },
   template: `
-    @if (stats.isPending() || settings.isPending()) {
+    @if (stats.isPending() || settings.isPending() || sources.isPending()) {
       <hlm-spinner />
     }
 
@@ -38,7 +38,11 @@ function formatBytes(bytes: number): string {
       <app-error-alert [error]="stats.error()" />
     }
 
-    @if (stats.isSuccess() && settings.isSuccess()) {
+    @if (sources.isError()) {
+      <app-error-alert [error]="sources.error()" />
+    }
+
+    @if (stats.isSuccess() && settings.isSuccess() && sources.isSuccess()) {
       <div>
         <h1 class="text-foreground mb-2 block text-lg font-bold">Storage</h1>
         <p class="text-muted-foreground mb-6 text-sm">
@@ -46,25 +50,63 @@ function formatBytes(bytes: number): string {
         </p>
       </div>
 
-      <!-- Storage Location -->
+      <!-- Storage Locations -->
       <div class="bg-card mb-4 rounded-lg border p-4">
         <div class="flex items-center gap-3">
           <div class="rounded-lg bg-purple-500/10 p-2 text-purple-500">
             <ng-icon hlm size="lg" name="lucideHardDrive" />
           </div>
           <div class="min-w-0 flex-1">
-            <p class="text-muted-foreground text-sm">Storage Location</p>
+            <p class="text-muted-foreground text-sm">Uploads Location</p>
             <p class="text-foreground truncate font-mono text-sm">
               {{ settings.data().uploadPath }}
             </p>
           </div>
         </div>
         <p class="text-muted-foreground mt-2 text-xs">
-          Encoded images stored in <code class="bg-muted rounded px-1">images/YYYY/MM/DD/</code> and
-          videos in
-          <code class="bg-muted rounded px-1">videos/YYYY/MM/DD/</code>
+          Where new uploads will be stored.
         </p>
       </div>
+
+      @if (sources.data().paths.length > 0) {
+        @for (path of sources.data().paths; track path.id) {
+          <div class="bg-card mb-4 rounded-lg border p-4">
+            <div class="flex items-center gap-3">
+              <div class="rounded-lg bg-blue-500/10 p-2 text-blue-500">
+                <ng-icon hlm size="lg" name="lucideFolder" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-muted-foreground text-sm">Source Folder</p>
+                <p class="text-foreground truncate font-mono text-sm">
+                  {{ path.path }}
+                </p>
+              </div>
+            </div>
+            <p class="text-muted-foreground mt-2 text-xs">
+              Where existing media is scanned from.
+            </p>
+          </div>
+        }
+      }
+
+      @if (settings.data().variantsPath) {
+        <div class="bg-card mb-4 rounded-lg border p-4">
+          <div class="flex items-center gap-3">
+            <div class="rounded-lg bg-green-500/10 p-2 text-green-500">
+              <ng-icon hlm size="lg" name="lucideImages" />
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="text-muted-foreground text-sm">Encoded Files Location</p>
+              <p class="text-foreground truncate font-mono text-sm">
+                {{ settings.data().variantsPath }}
+              </p>
+            </div>
+          </div>
+          <p class="text-muted-foreground mt-2 text-xs">
+            Where thumbnails and optimized images are stored.
+          </p>
+        </div>
+      }
 
       <div class="grid gap-4 md:grid-cols-2">
         <!-- Raw Storage Card -->
@@ -110,6 +152,11 @@ export class SettingsStorage {
   settings = injectQuery(() => ({
     queryKey: [CacheKey.SystemSettings],
     queryFn: async () => this.trpc.settings.get.query(),
+  }));
+
+  sources = injectQuery(() => ({
+    queryKey: [CacheKey.MediaSourcesSettings],
+    queryFn: async () => this.trpc.mediaSourcesSettings.get.query(),
   }));
 
   originalSize = computed(() => formatBytes(this.stats.data()?.original.totalSize ?? 0));

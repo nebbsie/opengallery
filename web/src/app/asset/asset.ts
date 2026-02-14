@@ -20,6 +20,7 @@ import {
   lucideChevronLeft,
   lucideChevronRight,
   lucideCopy,
+  lucideDownload,
   lucideInfo,
   lucideX,
 } from '@ng-icons/lucide';
@@ -35,7 +36,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
   selector: 'app-asset',
   imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, HlmBadge, DatePipe],
   providers: [
-    provideIcons({ lucideChevronLeft, lucideChevronRight, lucideCopy, lucideInfo, lucideX }),
+    provideIcons({ lucideChevronLeft, lucideChevronRight, lucideCopy, lucideDownload, lucideInfo, lucideX }),
   ],
   host: {
     class: 'relative block h-full w-full overflow-hidden',
@@ -58,9 +59,22 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
           </a>
         }
 
-        <button hlmBtn variant="ghost" size="icon" (click)="infoOpen.set(!infoOpen())">
-          <ng-icon hlm name="lucideInfo" />
-        </button>
+        <div class="flex items-center gap-1">
+          <a
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            [href]="apiUrl + '/asset/' + data.file.id"
+            [download]="data.file.name"
+            title="Download original"
+          >
+            <ng-icon hlm name="lucideDownload" />
+          </a>
+
+          <button hlmBtn variant="ghost" size="icon" (click)="infoOpen.set(!infoOpen())">
+            <ng-icon hlm name="lucideInfo" />
+          </button>
+        </div>
       </div>
 
       @let f = data.file;

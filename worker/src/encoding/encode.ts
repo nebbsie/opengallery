@@ -10,6 +10,7 @@ import { getVideoMetadata } from '../utils/ffprobe.js';
 import { logger } from '../utils/logger.js';
 import { toContainerPath } from '../utils/paths.js';
 import { type RouterOutputs, trpc } from '../utils/trpc.js';
+import { throttleIo } from '../utils/io-throttle.js';
 
 type File = RouterOutputs['files']['getFileById']['raw'];
 
@@ -26,16 +27,19 @@ function getFileStableHash(file: File): string {
   return createHash('sha256').update(fullPath).digest('hex').slice(0, 16);
 }
 
-async function encodeImage(file: File, existingVariants?: { thumbPath: string; optPath: string }) {
+async function encodeImage(file: File, existingVariants?: { thumbPath: string; optPath: string; thumbQuality: number | undefined; optQuality: number | undefined }) {
   const timings: Record<string, number> = {};
   let stepStart = Date.now();
 
-  // Get upload path from settings
+  // Get variants path (or fall back to uploadPath for backwards compatibility)
   const settings = await trpc.settings.get.query();
-  const uploadDir = settings?.uploadPath;
-  if (!uploadDir) {
-    throw new Error('uploadPath missing from settings');
+  const variantsPath = settings?.variantsPath ?? settings?.uploadPath;
+  if (!variantsPath) {
+    throw new Error('variantsPath missing from settings');
   }
+
+  const thumbQuality = settings?.thumbnailQuality ?? 70;
+  const optQuality = settings?.optimizedQuality ?? 80;
 
   const hostPath = join(file.dir, file.name);
   const path = toContainerPath(hostPath);
@@ -76,7 +80,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
 
   // Use path hash for stable folder naming across DB resets
   const pathHash = getFileStableHash(file);
-  const destDir = join(uploadDir, 'images', pathHash);
+  const destDir = join(variantsPath, 'images', pathHash);
   await mkdir(destDir, { recursive: true });
 
   const base = basename(file.name, extname(file.name));
@@ -85,25 +89,34 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   const thumbPath = join(destDir, thumbName);
   const optPath = join(destDir, optName);
 
-  // If variants already exist on disk, reuse them instead of re-encoding
+  // If variants already exist on disk, check if quality matches - re-encode if not
+  const needsReencode = existingVariants && (
+    existingVariants.thumbQuality !== thumbQuality ||
+    existingVariants.optQuality !== optQuality
+  );
+
   let thumb: { data: Buffer; info: { size: number } };
   let opt: { data: Buffer; info: { size: number } };
 
-  if (existingVariants) {
+  if (existingVariants && !needsReencode) {
     logger.info(`[encode:image] reusing existing variants on disk for id=${fileId}`);
     const [thumbData, optData] = await Promise.all([
-      readFile(existingVariants.thumbPath),
-      readFile(existingVariants.optPath),
+      throttleIo(() => readFile(existingVariants.thumbPath)),
+      throttleIo(() => readFile(existingVariants.optPath)),
     ]);
     thumb = { data: thumbData, info: { size: thumbData.length } };
     opt = { data: optData, info: { size: optData.length } };
   } else {
+    if (needsReencode) {
+      logger.info(`[encode:image] re-encoding due to quality change: thumb ${existingVariants.thumbQuality}->${thumbQuality}, opt ${existingVariants.optQuality}->${optQuality} for id=${fileId}`);
+    }
+
     try {
       // Use file path input for Sharp (more memory efficient)
       const thumbResult = await sharp(path)
         .rotate()
         .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
-        .avif({ quality: 50, effort: 4 })
+        .avif({ quality: thumbQuality, effort: 4 })
         .toBuffer({ resolveWithObject: true });
       thumb = { data: thumbResult.data, info: { size: thumbResult.data.length } };
     } catch (e) {
@@ -118,7 +131,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       const optResult = await sharp(path)
         .rotate()
         .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
-        .avif({ quality: 50, effort: 2 })
+        .avif({ quality: optQuality, effort: 3 })
         .toBuffer({ resolveWithObject: true });
       opt = { data: optResult.data, info: { size: optResult.data.length } };
     } catch (e) {
@@ -128,8 +141,9 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
     timings['optimised'] = Date.now() - stepStart;
     stepStart = Date.now();
 
-    // Write files asynchronously
-    await Promise.all([writeFile(thumbPath, thumb.data), writeFile(optPath, opt.data)]);
+    // Write files sequentially with I/O throttling to reduce disk pressure
+    await throttleIo(() => writeFile(thumbPath, thumb.data));
+    await throttleIo(() => writeFile(optPath, opt.data));
     timings['write_files'] = Date.now() - stepStart;
     stepStart = Date.now();
   }
@@ -147,6 +161,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
         name: thumbName,
         mime: 'image/avif',
         size: thumb.data.length,
+        quality: thumbQuality,
       },
       {
         type: 'optimised',
@@ -155,6 +170,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
         name: optName,
         mime: 'image/avif',
         size: opt.data.length,
+        quality: optQuality,
       },
     ],
   });
@@ -223,14 +239,20 @@ export async function encode(fileId: string) {
   const fileResult = await trpc.files.getFileById.query(fileId);
   const file = fileResult.raw;
 
-  // Get upload path from settings for filesystem checks
+  // Get variants path from settings for filesystem checks (fall back to uploadPath)
   const settings = await trpc.settings.get.query();
-  const uploadDir = settings?.uploadPath;
+  const variantsPath = settings?.variantsPath ?? settings?.uploadPath;
 
-  // If both required variants already exist in DB, mark tasks as succeeded and skip work
+  const thumbQuality = settings?.thumbnailQuality ?? 70;
+  const optQuality = settings?.optimizedQuality ?? 80;
+
+  // If both required variants exist in DB and quality matches, skip encoding
   const hasThumb = !!fileResult.thumbnail;
   const hasOpt = !!fileResult.optimized;
-  if (file.type === 'image' && hasThumb && hasOpt) {
+  const thumbQualityMatches = fileResult.thumbnail?.quality === thumbQuality;
+  const optQualityMatches = fileResult.optimized?.quality === optQuality;
+  
+  if (file.type === 'image' && hasThumb && hasOpt && thumbQualityMatches && optQualityMatches) {
     await trpc.fileTask.setManyStatusByFileAndType.mutate([
       { fileId, type: 'encode_thumbnail', status: 'succeeded' },
       { fileId, type: 'encode_optimised', status: 'succeeded' },
@@ -238,6 +260,12 @@ export async function encode(fileId: string) {
     logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
     return;
   }
+  
+  // Log if quality changed and we need to re-encode
+  if (file.type === 'image' && hasThumb && hasOpt && (!thumbQualityMatches || !optQualityMatches)) {
+    logger.info(`[encode] re-encoding image due to quality change: thumb ${fileResult.thumbnail?.quality}->${thumbQuality}, opt ${fileResult.optimized?.quality}->${optQuality} for id=${fileId}`);
+  }
+  
   if (file.type === 'video' && hasThumb && hasOpt) {
     await trpc.fileTask.setManyStatusByFileAndType.mutate([
       { fileId, type: 'video_poster', status: 'succeeded' },
@@ -256,16 +284,22 @@ export async function encode(fileId: string) {
       ]);
 
       // Check if encoded files already exist on disk (DB may have been reset)
-      let existingVariants: { thumbPath: string; optPath: string } | undefined;
-      if (uploadDir) {
+      // Also check if quality matches current settings - if not, need to re-encode
+      let existingVariants: { thumbPath: string; optPath: string; thumbQuality: number | undefined; optQuality: number | undefined } | undefined;
+      if (variantsPath) {
         const pathHash = getFileStableHash(file);
-        const destDir = join(uploadDir, 'images', pathHash);
+        const destDir = join(variantsPath, 'images', pathHash);
         const base = basename(file.name, extname(file.name));
         const thumbPath = join(destDir, `${base}__thumb.avif`);
         const optPath = join(destDir, `${base}__opt.avif`);
         if (existsSync(thumbPath) && existsSync(optPath)) {
           logger.info(`[encode] found existing encoded files on disk for image id=${fileId}`);
-          existingVariants = { thumbPath, optPath };
+          existingVariants = { 
+            thumbPath, 
+            optPath,
+            thumbQuality: fileResult.thumbnail?.quality ?? undefined,
+            optQuality: fileResult.optimized?.quality ?? undefined,
+          };
         }
       }
 
@@ -310,9 +344,9 @@ export async function encode(fileId: string) {
 
       // Check if encoded files already exist on disk (DB may have been reset)
       let existingVideoVariants: { thumbPath: string; optPath: string } | undefined;
-      if (uploadDir) {
+      if (variantsPath) {
         const pathHash = getFileStableHash(file);
-        const destDir = join(uploadDir, 'videos', pathHash);
+        const destDir = join(variantsPath, 'videos', pathHash);
         const base = basename(file.name, extname(file.name));
         const thumbPath = join(destDir, `${base}__thumb.jpg`);
         const optPath = join(destDir, `${base}__opt.mp4`);
@@ -373,16 +407,16 @@ async function runFfmpeg(args: string[], label: string) {
 
 async function encodeVideo(file: File, existingVariants?: { thumbPath: string; optPath: string }) {
   const settings = await trpc.settings.get.query();
-  const uploadDir = settings?.uploadPath;
-  if (!uploadDir) {
-    throw new Error('uploadPath missing from settings');
+  const variantsPath = settings?.variantsPath ?? settings?.uploadPath;
+  if (!variantsPath) {
+    throw new Error('variantsPath missing from settings');
   }
 
   const inputPath = toContainerPath(join(file.dir, file.name));
 
   // Use path hash for stable folder naming across DB resets
   const pathHash = getFileStableHash(file);
-  const destDir = join(uploadDir, 'videos', pathHash);
+  const destDir = join(variantsPath, 'videos', pathHash);
   await mkdir(destDir, { recursive: true });
 
   const base = basename(file.name, extname(file.name));

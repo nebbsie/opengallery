@@ -6,7 +6,7 @@ import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCircleAlert, lucideInfo } from '@ng-icons/lucide';
+import { lucideCircleAlert, lucideInfo, lucideSettings } from '@ng-icons/lucide';
 import { HlmAlert, HlmAlertDescription, HlmAlertIcon, HlmAlertTitle } from '@spartan-ng/helm/alert';
 import { HlmButton } from '@spartan-ng/helm/button';
 import {
@@ -25,7 +25,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-register-form',
-  providers: [provideIcons({ lucideCircleAlert, lucideInfo })],
+  providers: [provideIcons({ lucideCircleAlert, lucideInfo, lucideSettings })],
   imports: [
     HlmCard,
     HlmCardHeader,
@@ -129,13 +129,27 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
         @if (error()) {
           <div hlmCardContent>
-            <div hlmAlert variant="destructive">
-              <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
-              <h4 hlmAlertTitle>Failed to register</h4>
-              <div hlmAlertDescription>
-                <p>Please check your details and try again.</p>
+            @if (isStoragePathError()) {
+              <div hlmAlert>
+                <ng-icon hlm hlmAlertIcon name="lucideSettings" class="text-amber-500" />
+                <h4 hlmAlertTitle>Server Configuration Required</h4>
+                <div hlmAlertDescription>
+                  <p class="mb-3">The server administrator needs to configure storage before creating the first account.</p>
+                  <div class="rounded-md bg-muted p-3 text-sm">
+                    <p class="font-medium">Required environment variable:</p>
+                    <code class="text-foreground">STORAGE_PATH=/path/to/storage</code>
+                  </div>
+                </div>
               </div>
-            </div>
+            } @else {
+              <div hlmAlert variant="destructive">
+                <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
+                <h4 hlmAlertTitle>Failed to register</h4>
+                <div hlmAlertDescription>
+                  <p>Please check your details and try again.</p>
+                </div>
+              </div>
+            }
           </div>
         }
       </section>
@@ -154,6 +168,8 @@ export class RegisterForm {
   }));
 
   error = signal(false);
+  errorMessage = signal<string | null>(null);
+  errorCode = signal<string | null>(null);
   loading = signal(false);
 
   emailControl = new FormControl<null | string>(null, [Validators.email, Validators.required]);
@@ -172,6 +188,54 @@ export class RegisterForm {
     name: this.nameControl,
   });
 
+  isStoragePathError() {
+    const msg = this.errorMessage();
+    const code = this.errorCode();
+    const isFirstUser = this.isFirstUser.data() ?? false;
+    return (msg?.includes('STORAGE_PATH') ?? false) || (code === 'FAILED_TO_CREATE_USER' && isFirstUser);
+  }
+
+  private extractErrorPayload(error: unknown) {
+    if (!error || typeof error !== 'object') {
+      return { message: null, code: null };
+    }
+
+    const anyError = error as {
+      message?: unknown;
+      code?: unknown;
+      error?: unknown;
+    };
+
+    const payload = {
+      message: null as string | null,
+      code: typeof anyError.code === 'string' ? anyError.code : null,
+    };
+
+    if (typeof anyError.error === 'string') {
+      payload.message = anyError.error;
+      return payload;
+    }
+
+    if (anyError.error && typeof anyError.error === 'object') {
+      const nested = anyError.error as { message?: unknown; code?: unknown };
+      const nestedMessage = nested.message;
+      if (!payload.code && typeof nested.code === 'string') {
+        payload.code = nested.code;
+      }
+      if (typeof nestedMessage === 'string') {
+        payload.message = nestedMessage;
+        return payload;
+      }
+    }
+
+    if (typeof anyError.message === 'string') {
+      payload.message = anyError.message;
+      return payload;
+    }
+
+    return payload;
+  }
+
   async register() {
     if (
       this.emailControl.value === null ||
@@ -182,6 +246,8 @@ export class RegisterForm {
     }
 
     this.error.set(false);
+    this.errorMessage.set(null);
+    this.errorCode.set(null);
     this.loading.set(true);
 
     const { error, data } = await this.auth.signUpEmail({
@@ -193,6 +259,9 @@ export class RegisterForm {
     if (error) {
       console.error('Register failed:', error);
       this.error.set(true);
+      const payload = this.extractErrorPayload(error);
+      this.errorMessage.set(payload.message);
+      this.errorCode.set(payload.code);
       this.loading.set(false);
       return;
     }

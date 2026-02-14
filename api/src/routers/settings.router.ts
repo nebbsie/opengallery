@@ -39,8 +39,12 @@ export const settingsRouter = router({
       res ?? {
         id: "",
         uploadPath: "",
+        variantsPath: null,
         allowsSelfRegistration: false,
-        encodingConcurrency: 5,
+        encodingConcurrency: 2,
+        ioConcurrency: 2,
+        thumbnailQuality: 70,
+        optimizedQuality: 80,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -57,6 +61,10 @@ export const settingsRouter = router({
       z.object({
         allowsSelfRegistration: z.optional(z.boolean()),
         encodingConcurrency: z.optional(z.number().int().min(1).max(64)),
+        ioConcurrency: z.optional(z.number().int().min(1).max(10)),
+        thumbnailQuality: z.optional(z.number().int().min(1).max(100)),
+        optimizedQuality: z.optional(z.number().int().min(1).max(100)),
+        variantsPath: z.optional(z.string().nullable()),
       })
     )
     .mutation(async (ctx) => {

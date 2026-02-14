@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { basename, extname } from "node:path";
 import {
   and,
   desc,
@@ -397,6 +398,7 @@ export const filesRouter = router({
               name: z.string(), // e.g. `${base}__thumb.avif`
               mime: z.string(),
               size: z.number().int().nonnegative(),
+              quality: z.number().int().min(1).max(100).optional(),
             })
           )
           .min(1)
@@ -445,9 +447,13 @@ export const filesRouter = router({
             originalFileId,
             fileId: res.id,
             type: v.type,
+            quality: v.quality,
           })
-          .onConflictDoNothing({
+          .onConflictDoUpdate({
             target: [FileVariantTable.originalFileId, FileVariantTable.type],
+            set: {
+              quality: v.quality,
+            },
           });
 
         result[v.type] = { id: res.id, dir: v.dir, name: v.name };
@@ -474,7 +480,7 @@ export const filesRouter = router({
       .from(FileVariantTable)
       .where(
         and(
-          eq(FileVariantTable.fileId, file.id),
+          eq(FileVariantTable.originalFileId, file.id),
           inArray(FileVariantTable.type, ["thumbnail", "optimised"])
         )
       );
@@ -482,7 +488,21 @@ export const filesRouter = router({
     const thumbnail = variants.find((v) => v.type === "thumbnail") ?? null;
     const optimized = variants.find((v) => v.type === "optimised") ?? null;
 
-    return { raw: file, thumbnail, optimized };
+    return { 
+      raw: file, 
+      thumbnail: thumbnail ? { 
+        id: thumbnail.id, 
+        dir: file.dir, 
+        name: `${basename(file.name, extname(file.name))}__thumb.avif`,
+        quality: thumbnail.quality 
+      } : null, 
+      optimized: optimized ? { 
+        id: optimized.id, 
+        dir: file.dir, 
+        name: `${basename(file.name, extname(file.name))}__opt.avif`,
+        quality: optimized.quality 
+      } : null 
+    };
   }),
 
   getUsersFiles: privateProcedure

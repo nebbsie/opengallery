@@ -171,6 +171,7 @@ export const FileVariantTable = sqliteTable(
     fileId: text("file_id")
       .notNull()
       .references(() => FileTable.id),
+    quality: integer("quality"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -294,12 +295,16 @@ export const UiSettingsTable = sqliteTable(
 export const SystemSettingsTable = sqliteTable("system_settings", {
   id: id(),
   uploadPath: text("upload_path").notNull(),
+  variantsPath: text("variants_path"),
   allowsSelfRegistration: integer("allows_self_registration", {
     mode: "boolean",
   })
     .notNull()
     .default(false),
-  encodingConcurrency: integer("encoding_concurrency").notNull().default(5),
+  encodingConcurrency: integer("encoding_concurrency").notNull().default(2),
+  ioConcurrency: integer("io_concurrency").notNull().default(2),
+  thumbnailQuality: integer("thumbnail_quality").notNull().default(70),
+  optimizedQuality: integer("optimized_quality").notNull().default(80),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

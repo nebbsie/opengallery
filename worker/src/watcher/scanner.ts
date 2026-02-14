@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 import { ALLOWED_EXTENSIONS, type MediaType, getMediaType } from '../utils/media-types.js';
 import { getFullPath, toHostPath } from '../utils/paths.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
+import { throttleIo } from '../utils/io-throttle.js';
 
 type CreateFilesInput = RouterInputs['files']['create'];
 
@@ -200,7 +201,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
         const filePath = join(folder, f.name);
         let contentHash: string | undefined;
         try {
-          contentHash = await computeFileHash(filePath);
+          contentHash = await throttleIo(() => computeFileHash(filePath));
         } catch (err) {
           logger.warn(`Failed to compute hash for ${filePath}: ${err}`);
         }

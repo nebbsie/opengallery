@@ -4,10 +4,13 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
+  AccountTable,
   AuthSchema,
   LibraryTable,
   MediaSettingsTable,
+  SessionTable,
   SystemSettingsTable,
+  UiSettingsTable,
   UserTable,
 } from "../db/schema.js";
 
@@ -39,46 +42,72 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        after: async (u) => {
-          // SQLite transactions are serialized, so we don't need advisory locks
-          // Check if there's already an admin, if not promote this user
-          const [existingAdmin] = await db
+        before: async () => {
+          const [existingUser] = await db
             .select({ id: UserTable.id })
             .from(UserTable)
-            .where(eq(UserTable.type, "admin"))
             .limit(1);
 
-          if (!existingAdmin) {
-            await db
-              .update(UserTable)
-              .set({ type: "admin" })
-              .where(eq(UserTable.id, u.id));
+          if (!existingUser && !process.env["STORAGE_PATH"]) {
+            throw new Error("STORAGE_PATH is not set in environment variables");
           }
+        },
+        after: async (u) => {
+          let insertedSystemSettings = false;
 
-          await db.insert(LibraryTable).values({ userId: u.id });
+          try {
+            // SQLite transactions are serialized, so we don't need advisory locks
+            // Check if there's already an admin, if not promote this user
+            const [existingAdmin] = await db
+              .select({ id: UserTable.id })
+              .from(UserTable)
+              .where(eq(UserTable.type, "admin"))
+              .limit(1);
 
-          const [user] = await db
-            .select()
-            .from(UserTable)
-            .where(eq(UserTable.id, u.id))
-            .limit(1);
-
-          if (user?.type === "admin") {
-            if (!process.env["DEFAULT_UPLOAD_PATH"]) {
-              throw new Error(
-                "DEFAULT_UPLOAD_PATH is not set in environment variables",
-              );
+            if (!existingAdmin) {
+              await db
+                .update(UserTable)
+                .set({ type: "admin" })
+                .where(eq(UserTable.id, u.id));
             }
 
-            await db
-              .insert(SystemSettingsTable)
-              .values({ uploadPath: `${process.env["DEFAULT_UPLOAD_PATH"]}` });
-          }
+            await db.insert(LibraryTable).values({ userId: u.id });
 
-          await db.insert(MediaSettingsTable).values({
-            autoImportAlbums: true,
-            userId: u.id,
-          });
+            const [user] = await db
+              .select()
+              .from(UserTable)
+              .where(eq(UserTable.id, u.id))
+              .limit(1);
+
+            if (user?.type === "admin") {
+              await db
+                .insert(SystemSettingsTable)
+                .values({
+                  uploadPath: `${process.env["STORAGE_PATH"]}/uploads`,
+                  variantsPath: `${process.env["STORAGE_PATH"]}/variants`,
+                });
+              insertedSystemSettings = true;
+            }
+
+            await db.insert(MediaSettingsTable).values({
+              autoImportAlbums: true,
+              userId: u.id,
+            });
+          } catch (error) {
+            await db.transaction(async (tx) => {
+              await tx.delete(SessionTable).where(eq(SessionTable.userId, u.id));
+              await tx.delete(AccountTable).where(eq(AccountTable.userId, u.id));
+              await tx.delete(UiSettingsTable).where(eq(UiSettingsTable.userId, u.id));
+              await tx.delete(MediaSettingsTable).where(eq(MediaSettingsTable.userId, u.id));
+              await tx.delete(LibraryTable).where(eq(LibraryTable.userId, u.id));
+              if (insertedSystemSettings) {
+                await tx.delete(SystemSettingsTable);
+              }
+              await tx.delete(UserTable).where(eq(UserTable.id, u.id));
+            });
+
+            throw error;
+          }
         },
       },
     },

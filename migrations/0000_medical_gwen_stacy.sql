@@ -90,6 +90,7 @@ CREATE TABLE `file_variant` (
 	`type` text NOT NULL,
 	`original_file_id` text NOT NULL,
 	`file_id` text NOT NULL,
+	`quality` integer,
 	`created_at` text NOT NULL,
 	`updatedAt` text NOT NULL,
 	FOREIGN KEY (`original_file_id`) REFERENCES `file`(`id`) ON UPDATE no action ON DELETE no action,
@@ -211,8 +212,12 @@ CREATE TABLE `shared_item` (
 CREATE TABLE `system_settings` (
 	`id` text PRIMARY KEY NOT NULL,
 	`upload_path` text NOT NULL,
+	`variants_path` text,
 	`allows_self_registration` integer DEFAULT false NOT NULL,
-	`encoding_concurrency` integer DEFAULT 5 NOT NULL,
+	`encoding_concurrency` integer DEFAULT 2 NOT NULL,
+	`io_concurrency` integer DEFAULT 2 NOT NULL,
+	`thumbnail_quality` integer DEFAULT 70 NOT NULL,
+	`optimized_quality` integer DEFAULT 80 NOT NULL,
 	`created_at` text NOT NULL,
 	`updatedAt` text NOT NULL
 );
