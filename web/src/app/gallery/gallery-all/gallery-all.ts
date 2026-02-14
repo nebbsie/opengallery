@@ -5,9 +5,10 @@ import { ErrorAlert } from '@core/components/error/error';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { provideIcons } from '@ng-icons/core';
-import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCirclePause, lucideCirclePlay, lucideImagePlus } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
@@ -17,9 +18,19 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     provideIcons({
       lucideCirclePlay,
       lucideCirclePause,
+      lucideImagePlus,
     }),
   ],
-  imports: [HlmSpinner, ErrorAlert, AssetThumbnail, RouterLink, HlmButton, VirtualThumbnailGrid],
+  imports: [
+    HlmSpinner,
+    ErrorAlert,
+    AssetThumbnail,
+    RouterLink,
+    HlmButton,
+    VirtualThumbnailGrid,
+    NgIcon,
+    HlmIcon,
+  ],
   template: `
     @if (files.isPending() && !files.data()) {
       <hlm-spinner />
@@ -27,10 +38,10 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
       <app-error-alert [error]="files.error()" />
     } @else {
       @if (!allItems().length) {
-        <div class="flex flex-col items-center justify-center gap-3 py-10 text-center">
-          <p class="text-muted-foreground text-sm">
-            No assets yet. Add a new source folder to import your library.
-          </p>
+        <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
+          <ng-icon hlm size="xl" name="lucideImagePlus" class="mb-4" />
+          <p>No assets yet</p>
+          <p class="mb-4 text-sm">Add a source folder to import your library</p>
           <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
         </div>
       } @else {

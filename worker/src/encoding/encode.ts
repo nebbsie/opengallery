@@ -1,8 +1,8 @@
 import { encode as encodeBlurhash } from 'blurhash';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
 import { getExifInfo } from '../utils/exif.js';
@@ -27,6 +27,9 @@ function getFileStableHash(file: File): string {
 }
 
 async function encodeImage(file: File, existingVariants?: { thumbPath: string; optPath: string }) {
+  const timings: Record<string, number> = {};
+  let stepStart = Date.now();
+
   // Get upload path from settings
   const settings = await trpc.settings.get.query();
   const uploadDir = settings?.uploadPath;
@@ -46,6 +49,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   const metadata = await sharpInstance.metadata();
   const width = metadata.width ?? null;
   const height = metadata.height ?? null;
+  timings['metadata'] = Date.now() - stepStart;
+  stepStart = Date.now();
 
   // Generate blurhash from a small version of the image
   let blurhash: string | null = null;
@@ -66,6 +71,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   } catch (e) {
     logger.warn(`[encode:image] blurhash generation failed for id=${fileId}`, e as Error);
   }
+  timings['blurhash'] = Date.now() - stepStart;
+  stepStart = Date.now();
 
   // Use path hash for stable folder naming across DB resets
   const pathHash = getFileStableHash(file);
@@ -96,7 +103,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       const thumbResult = await sharp(path)
         .rotate()
         .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
-        .avif({ quality: 45, effort: 4 })
+        .avif({ quality: 50, effort: 4 })
         .toBuffer({ resolveWithObject: true });
       thumb = { data: thumbResult.data, info: { size: thumbResult.data.length } };
     } catch (e) {
@@ -104,20 +111,27 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       throw e;
     }
 
+    timings['thumbnail'] = Date.now() - stepStart;
+    stepStart = Date.now();
+
     try {
       const optResult = await sharp(path)
         .rotate()
         .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
-        .avif({ quality: 50, effort: 4 })
+        .avif({ quality: 50, effort: 2 })
         .toBuffer({ resolveWithObject: true });
       opt = { data: optResult.data, info: { size: optResult.data.length } };
     } catch (e) {
       logger.error(`[encode:image] optimise failed for id=${fileId}`, e as Error);
       throw e;
     }
+    timings['optimised'] = Date.now() - stepStart;
+    stepStart = Date.now();
 
     // Write files asynchronously
     await Promise.all([writeFile(thumbPath, thumb.data), writeFile(optPath, opt.data)]);
+    timings['write_files'] = Date.now() - stepStart;
+    stepStart = Date.now();
   }
 
   logger.debug(
@@ -144,6 +158,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       },
     ],
   });
+  timings['save_variants'] = Date.now() - stepStart;
+  stepStart = Date.now();
 
   const {
     lon,
@@ -157,6 +173,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
     focalLength,
     fNumber,
   } = await getExifInfo(path);
+  timings['exif'] = Date.now() - stepStart;
+  stepStart = Date.now();
 
   // Save image metadata (width, height, takenAt). Only use real EXIF takenAt, do not default
   if (width && height) {
@@ -179,6 +197,9 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
     });
   }
 
+  timings['save_metadata'] = Date.now() - stepStart;
+  stepStart = Date.now();
+
   // Save geo location if available
   if (lat != null && lon != null) {
     try {
@@ -188,6 +209,13 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       logger.warn('Failed to save geo location', { fileId, error: e });
     }
   }
+  timings['save_geo'] = Date.now() - stepStart;
+
+  const total = Object.values(timings).reduce((a, b) => a + b, 0);
+  const breakdown = Object.entries(timings)
+    .map(([k, v]) => `${k}=${v}ms`)
+    .join(' ');
+  logger.info(`[encode:image] timings id=${fileId} total=${total}ms | ${breakdown}`);
 }
 
 export async function encode(fileId: string) {
@@ -246,7 +274,6 @@ export async function encode(fileId: string) {
         { fileId, type: 'encode_thumbnail', status: 'succeeded' },
         { fileId, type: 'encode_optimised', status: 'succeeded' },
       ]);
-      logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
     } catch (e) {
       logger.error(`[encode] image failed fileId=${fileId}`, e as Error);
       try {

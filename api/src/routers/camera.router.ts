@@ -33,8 +33,8 @@ export const cameraRouter = router({
           eq(LibraryTable.userId, userId),
           isNull(LibraryFileTable.deletedAt),
           sql`${ImageMetadataTable.cameraMake} IS NOT NULL`,
-          sql`${ImageMetadataTable.cameraModel} IS NOT NULL`
-        )
+          sql`${ImageMetadataTable.cameraModel} IS NOT NULL`,
+        ),
       )
       .groupBy(ImageMetadataTable.cameraMake, ImageMetadataTable.cameraModel)
       .orderBy(desc(sql`count(distinct ${FileTable.id})`));
@@ -53,7 +53,7 @@ export const cameraRouter = router({
         model: z.string(),
         limit: z.number().int().positive().max(200).default(60),
         cursor: z.string().uuid().nullable().optional(),
-      })
+      }),
     )
     .query(async ({ ctx: { userId }, input }) => {
       if (!userId) {
@@ -72,7 +72,7 @@ export const cameraRouter = router({
           .from(FileTable)
           .innerJoin(
             ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id)
+            eq(ImageMetadataTable.fileId, FileTable.id),
           )
           .where(eq(FileTable.id, cursor))
           .limit(1);
@@ -93,7 +93,7 @@ export const cameraRouter = router({
         .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
         .innerJoin(
           LibraryTable,
-          eq(LibraryTable.id, LibraryFileTable.libraryId)
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
         )
         .where(
           and(
@@ -114,8 +114,8 @@ export const cameraRouter = router({
               WHERE ${FileVariantTable.originalFileId} = ${FileTable.id}
               AND ${FileVariantTable.type} = 'optimised'
             )`,
-            ...(cursorCondition ? [cursorCondition] : [])
-          )
+            ...(cursorCondition ? [cursorCondition] : []),
+          ),
         )
         .orderBy(desc(ImageMetadataTable.takenAt))
         .limit(limit + 1);

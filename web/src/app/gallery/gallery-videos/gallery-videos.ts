@@ -4,8 +4,9 @@ import { ErrorAlert } from '@core/components/error/error';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { provideIcons } from '@ng-icons/core';
-import { lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCirclePause, lucideCirclePlay, lucideVideo } from '@ng-icons/lucide';
+import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
@@ -15,9 +16,10 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     provideIcons({
       lucideCirclePlay,
       lucideCirclePause,
+      lucideVideo,
     }),
   ],
-  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid],
+  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid, NgIcon, HlmIcon],
   host: { class: 'block h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
@@ -25,17 +27,25 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <app-virtual-thumbnail-grid
-        [items]="allItems()"
-        [hasMore]="files.hasNextPage()"
-        [isLoadingMore]="files.isFetchingNextPage()"
-        [scrollKey]="'gallery-videos'"
-        (loadMore)="loadMore()"
-      >
-        <ng-template let-asset>
-          <app-asset-thumbnail from="/gallery/videos" [asset]="asset" />
-        </ng-template>
-      </app-virtual-thumbnail-grid>
+      @if (!allItems().length) {
+        <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
+          <ng-icon hlm size="xl" name="lucideVideo" class="mb-4" />
+          <p>No videos found</p>
+          <p class="text-sm">Videos will appear here once they are imported</p>
+        </div>
+      } @else {
+        <app-virtual-thumbnail-grid
+          [items]="allItems()"
+          [hasMore]="files.hasNextPage()"
+          [isLoadingMore]="files.isFetchingNextPage()"
+          [scrollKey]="'gallery-videos'"
+          (loadMore)="loadMore()"
+        >
+          <ng-template let-asset>
+            <app-asset-thumbnail from="/gallery/videos" [asset]="asset" />
+          </ng-template>
+        </app-virtual-thumbnail-grid>
+      }
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,

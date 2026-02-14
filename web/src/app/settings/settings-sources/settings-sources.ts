@@ -53,8 +53,7 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
       <div>
         <h1 class="text-foreground mb-2 block text-lg font-bold">Folder Settings</h1>
         <p class="text-muted-foreground mb-6 text-sm">
-          Specify how application should handle scanning and importing media from specified
-          folders.
+          Specify how application should handle scanning and importing media from specified folders.
         </p>
       </div>
 
@@ -227,11 +226,13 @@ export class SettingsSources {
   }
 
   addPath() {
-    this.dialog.open(PathSelect).closed$.subscribe((path: string | null) => {
-      if (path) {
-        this.addSource.mutate(path);
-      }
-    });
+    this.dialog
+      .open(PathSelect, { contentClass: 'sm:max-w-[640px]' })
+      .closed$.subscribe((path: string | null) => {
+        if (path) {
+          this.addSource.mutate(path);
+        }
+      });
   }
 
   clickedImportAlbums(checked: boolean) {
