@@ -15,4 +15,6 @@ export const CacheKey = {
   StorageStats: 'storage-stats',
   CamerasAll: 'cameras-all',
   CameraSingle: 'camera-single',
+  LocationAll: 'location-all',
+  LocationSingle: 'location-single',
 };

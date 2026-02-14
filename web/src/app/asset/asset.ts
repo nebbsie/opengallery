@@ -48,13 +48,13 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
     @if (file.isSuccess() && file.data(); as data) {
       <div
-        class="mx-auto flex w-full items-center {{
+        class="mx-auto absolute z-50 flex w-full items-center {{
           backLink ? ' justify-between' : 'justify-end'
         }} mb-1"
       >
         @if (backLink) {
           <a hlmBtn variant="ghost" size="icon" [routerLink]="backLink">
-            <ng-icon hlm name="lucideChevronLeft" />
+            <ng-icon hlm name="lucideX" />
           </a>
         }
 
@@ -64,7 +64,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
       </div>
 
       @let f = data.file;
-      <div class="mx-auto h-[calc(100%-3rem)] w-full">
+      <div class="mx-auto h-full w-full">
         <div class="flex h-full flex-col sm:flex-row sm:items-stretch">
           <!-- Media area -->
           <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden">

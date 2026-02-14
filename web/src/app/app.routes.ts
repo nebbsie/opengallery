@@ -36,6 +36,18 @@ export const routes: Routes = [
     loadChildren: () => import('./cameras/cameras.routes').then((r) => r.routes),
   },
   {
+    path: 'map',
+    title: 'World Map - Open Gallery',
+    canActivate: [AuthGuard],
+    loadComponent: () => import('./map/map').then((c) => c.Map),
+  },
+  {
+    path: 'locations',
+    title: 'Locations - Open Gallery',
+    canActivate: [AuthGuard],
+    loadChildren: () => import('./locations/locations.routes').then((r) => r.routes),
+  },
+  {
     path: 'settings',
     title: 'Settings - Open Gallery',
     canActivate: [AuthGuard],

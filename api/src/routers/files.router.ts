@@ -219,7 +219,8 @@ export const filesRouter = router({
       let nextId: string | null = null;
 
       if (albumId) {
-        // Album context: find prev (newer) and next (older) within album
+        // Album context: find prev (newer/left in visual order) and next (older/right in visual order) within album
+        // Albums display items in DESC order (newest first), so left/right arrows navigate through that visual order
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(AlbumFileTable)
@@ -263,7 +264,8 @@ export const filesRouter = router({
         prevId = prev?.id ?? null;
         nextId = next?.id ?? null;
       } else if (cameraMake && cameraModel) {
-        // Camera context: find prev/next within same camera
+        // Camera context: find prev (newer/left in visual order) and next (older/right in visual order) within same camera
+        // Camera files display in DESC order (newest first), so left/right arrows navigate through that visual order
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(ImageMetadataTable)
@@ -317,7 +319,8 @@ export const filesRouter = router({
         prevId = prev?.id ?? null;
         nextId = next?.id ?? null;
       } else {
-        // Global library context: find prev/next in user's entire library
+        // Global library context: find prev (newer/left in visual order) and next (older/right in visual order) in user's entire library
+        // Library files display in DESC order (newest first), so left/right arrows navigate through that visual order
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(LibraryFileTable)

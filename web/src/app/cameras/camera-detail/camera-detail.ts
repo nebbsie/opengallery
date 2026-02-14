@@ -17,10 +17,9 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <div class="mb-6 shrink-0">
-        <h1 class="text-foreground mb-2 text-2xl font-bold">{{ make() }}</h1>
-        <p class="text-muted-foreground text-sm">{{ model() }}</p>
-      </div>
+      <h1 class="text-foreground mb-2 flex items-center gap-2 text-2xl font-bold">
+        {{ make() }} <span class="text-muted-foreground text-sm">{{ model() }}</span>
+      </h1>
 
       <app-virtual-thumbnail-grid
         class="min-h-0 flex-1"

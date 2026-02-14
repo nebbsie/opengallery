@@ -24,6 +24,10 @@ import {
   template: `
     <nav hlmBreadcrumb>
       <ol hlmBreadcrumbList>
+        <li hlmBreadcrumbItem>
+          <a hlmBreadcrumbLink link="/albums">Albums</a>
+        </li>
+
         @for (item of items(); track item.id; let last = $last) {
           <li class="flex items-center" hlmBreadcrumbSeparator></li>
           <li hlmBreadcrumbItem>

@@ -44,7 +44,12 @@
                 "output": "assets/leaflet"
               }
             ],
-            "styles": ["src/styles.css", "leaflet/dist/leaflet.css"],
+            "styles": [
+              "src/styles.css",
+              "leaflet/dist/leaflet.css",
+              "leaflet.markercluster/dist/MarkerCluster.css",
+              "leaflet.markercluster/dist/MarkerCluster.Default.css"
+            ],
             "server": "src/main.server.ts",
             "outputMode": "server",
             "ssr": {
@@ -113,7 +118,12 @@
                 "input": "public"
               }
             ],
-            "styles": ["src/styles.css", "leaflet/dist/leaflet.css"]
+            "styles": [
+              "src/styles.css",
+              "leaflet/dist/leaflet.css",
+              "leaflet.markercluster/dist/MarkerCluster.css",
+              "leaflet.markercluster/dist/MarkerCluster.Default.css"
+            ]
           }
         },
         "lint": {

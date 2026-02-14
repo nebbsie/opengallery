@@ -111,6 +111,23 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       </a>
       <span *brnTooltipContent class="flex items-center"> Albums </span>
     </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/map"
+        routerLinkActive="active"
+        size="icon"
+        #rlaWorldMap="routerLinkActive"
+        [variant]="rlaWorldMap.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideMap" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> World Map </span>
+    </hlm-tooltip>
   `,
 
   changeDetection: ChangeDetectionStrategy.OnPush,

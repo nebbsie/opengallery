@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "12f2e954-0ff5-447d-9efb-0483669676f7",
+  "id": "4b37bf91-35a3-41b9-8613-c9354bd39731",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "account": {
@@ -158,7 +158,22 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "album_file_album_id_idx": {
+          "name": "album_file_album_id_idx",
+          "columns": [
+            "album_id"
+          ],
+          "isUnique": false
+        },
+        "album_file_file_id_idx": {
+          "name": "album_file_file_id_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "album_file_album_id_album_id_fk": {
           "name": "album_file_album_id_album_id_fk",
@@ -411,6 +426,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -549,6 +571,20 @@
             "version"
           ],
           "isUnique": true
+        },
+        "file_task_status_idx": {
+          "name": "file_task_status_idx",
+          "columns": [
+            "status"
+          ],
+          "isUnique": false
+        },
+        "file_task_file_id_idx": {
+          "name": "file_task_file_id_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -624,6 +660,13 @@
             "type"
           ],
           "isUnique": true
+        },
+        "file_variant_file_id_idx": {
+          "name": "file_variant_file_id_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -704,7 +747,15 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "geo_location_file_id_idx": {
+          "name": "geo_location_file_id_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "geo_location_file_id_file_id_fk": {
           "name": "geo_location_file_id_file_id_fk",
@@ -833,7 +884,30 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "image_metadata_file_id_idx": {
+          "name": "image_metadata_file_id_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": true
+        },
+        "image_metadata_taken_at_idx": {
+          "name": "image_metadata_taken_at_idx",
+          "columns": [
+            "taken_at"
+          ],
+          "isUnique": false
+        },
+        "image_metadata_camera_idx": {
+          "name": "image_metadata_camera_idx",
+          "columns": [
+            "camera_make",
+            "camera_model"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "image_metadata_file_id_file_id_fk": {
           "name": "image_metadata_file_id_file_id_fk",
@@ -899,7 +973,22 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "library_file_library_id_idx": {
+          "name": "library_file_library_id_idx",
+          "columns": [
+            "library_id"
+          ],
+          "isUnique": false
+        },
+        "library_file_file_id_idx": {
+          "name": "library_file_file_id_idx",
+          "columns": [
+            "file_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "library_file_library_id_library_id_fk": {
           "name": "library_file_library_id_library_id_fk",
@@ -1030,7 +1119,22 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "log_created_at_idx": {
+          "name": "log_created_at_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        },
+        "log_service_idx": {
+          "name": "log_service_idx",
+          "columns": [
+            "service"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

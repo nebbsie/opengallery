@@ -79,7 +79,7 @@ export const FileTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)]
+  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)],
 );
 
 export const LibraryFileTable = sqliteTable(
@@ -99,7 +99,7 @@ export const LibraryFileTable = sqliteTable(
   (t) => [
     index("library_file_library_id_idx").on(t.libraryId),
     index("library_file_file_id_idx").on(t.fileId),
-  ]
+  ],
 );
 
 export const AlbumTable = sqliteTable(
@@ -119,7 +119,7 @@ export const AlbumTable = sqliteTable(
   },
   (table) => [
     uniqueIndex("album_library_dir_uidx").on(table.libraryId, table.dir),
-  ]
+  ],
 );
 
 export const AlbumRelations = relations(AlbumTable, ({ one, many }) => ({
@@ -146,7 +146,7 @@ export const AlbumFileTable = sqliteTable(
   (t) => [
     index("album_file_album_id_idx").on(t.albumId),
     index("album_file_file_id_idx").on(t.fileId),
-  ]
+  ],
 );
 
 export const SharedItemTable = sqliteTable("shared_item", {
@@ -177,7 +177,7 @@ export const FileVariantTable = sqliteTable(
   (t) => [
     uniqueIndex("file_variant_fileid_type_idx").on(t.originalFileId, t.type),
     index("file_variant_file_id_idx").on(t.fileId),
-  ]
+  ],
 );
 
 export const ImageMetadataTable = sqliteTable(
@@ -202,10 +202,10 @@ export const ImageMetadataTable = sqliteTable(
     updatedAt: updatedAt(),
   },
   (t) => [
-    index("image_metadata_file_id_idx").on(t.fileId),
+    uniqueIndex("image_metadata_file_id_idx").on(t.fileId),
     index("image_metadata_taken_at_idx").on(t.takenAt),
     index("image_metadata_camera_idx").on(t.cameraMake, t.cameraModel),
-  ]
+  ],
 );
 
 export const VideoMetadataTable = sqliteTable("video_metadata", {
@@ -238,7 +238,7 @@ export const GeoLocationTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("geo_location_file_id_idx").on(t.fileId)]
+  (t) => [index("geo_location_file_id_idx").on(t.fileId)],
 );
 
 export const MediaPathTable = sqliteTable(
@@ -254,7 +254,7 @@ export const MediaPathTable = sqliteTable(
   },
   (table) => [
     uniqueIndex("media_path_user_path_uidx").on(table.userId, table.path),
-  ]
+  ],
 );
 
 export const MediaSettingsTable = sqliteTable(
@@ -270,7 +270,7 @@ export const MediaSettingsTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [uniqueIndex("media_settings_user_uidx").on(table.userId)]
+  (table) => [uniqueIndex("media_settings_user_uidx").on(table.userId)],
 );
 
 export const UiSettingsTable = sqliteTable(
@@ -288,7 +288,7 @@ export const UiSettingsTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (table) => [uniqueIndex("ui_settings_user_uidx").on(table.userId)]
+  (table) => [uniqueIndex("ui_settings_user_uidx").on(table.userId)],
 );
 
 export const SystemSettingsTable = sqliteTable("system_settings", {
@@ -373,10 +373,10 @@ export const VerificationTable = sqliteTable("verification", {
   value: text("value").notNull(),
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(
-    () => new Date()
+    () => new Date(),
   ),
   updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(
-    () => new Date()
+    () => new Date(),
   ),
 });
 
@@ -392,7 +392,7 @@ export const LogTable = sqliteTable(
   (t) => [
     index("log_created_at_idx").on(t.createdAt),
     index("log_service_idx").on(t.service),
-  ]
+  ],
 );
 
 export const FileTaskTable = sqliteTable(
@@ -418,7 +418,7 @@ export const FileTaskTable = sqliteTable(
     uniqueIndex("file_task_unique").on(t.fileId, t.type, t.version),
     index("file_task_status_idx").on(t.status),
     index("file_task_file_id_idx").on(t.fileId),
-  ]
+  ],
 );
 
 export const AuthSchema = {

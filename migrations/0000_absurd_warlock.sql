@@ -25,6 +25,8 @@ CREATE TABLE `album_file` (
 	FOREIGN KEY (`file_id`) REFERENCES `file`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE INDEX `album_file_album_id_idx` ON `album_file` (`album_id`);--> statement-breakpoint
+CREATE INDEX `album_file_file_id_idx` ON `album_file` (`file_id`);--> statement-breakpoint
 CREATE TABLE `album` (
 	`id` text PRIMARY KEY NOT NULL,
 	`name` text NOT NULL,
@@ -57,6 +59,7 @@ CREATE TABLE `file` (
 	`type` text NOT NULL,
 	`mime` text NOT NULL,
 	`size` integer NOT NULL,
+	`content_hash` text,
 	`created_at` text NOT NULL,
 	`updatedAt` text NOT NULL
 );
@@ -80,6 +83,8 @@ CREATE TABLE `file_task` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `file_task_unique` ON `file_task` (`file_id`,`type`,`version`);--> statement-breakpoint
+CREATE INDEX `file_task_status_idx` ON `file_task` (`status`);--> statement-breakpoint
+CREATE INDEX `file_task_file_id_idx` ON `file_task` (`file_id`);--> statement-breakpoint
 CREATE TABLE `file_variant` (
 	`id` text PRIMARY KEY NOT NULL,
 	`type` text NOT NULL,
@@ -92,6 +97,7 @@ CREATE TABLE `file_variant` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `file_variant_fileid_type_idx` ON `file_variant` (`original_file_id`,`type`);--> statement-breakpoint
+CREATE INDEX `file_variant_file_id_idx` ON `file_variant` (`file_id`);--> statement-breakpoint
 CREATE TABLE `geo_location` (
 	`id` text PRIMARY KEY NOT NULL,
 	`file_id` text NOT NULL,
@@ -102,6 +108,7 @@ CREATE TABLE `geo_location` (
 	FOREIGN KEY (`file_id`) REFERENCES `file`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE INDEX `geo_location_file_id_idx` ON `geo_location` (`file_id`);--> statement-breakpoint
 CREATE TABLE `image_metadata` (
 	`id` text PRIMARY KEY NOT NULL,
 	`file_id` text NOT NULL,
@@ -121,6 +128,9 @@ CREATE TABLE `image_metadata` (
 	FOREIGN KEY (`file_id`) REFERENCES `file`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE UNIQUE INDEX `image_metadata_file_id_idx` ON `image_metadata` (`file_id`);--> statement-breakpoint
+CREATE INDEX `image_metadata_taken_at_idx` ON `image_metadata` (`taken_at`);--> statement-breakpoint
+CREATE INDEX `image_metadata_camera_idx` ON `image_metadata` (`camera_make`,`camera_model`);--> statement-breakpoint
 CREATE TABLE `library_file` (
 	`id` text PRIMARY KEY NOT NULL,
 	`library_id` text NOT NULL,
@@ -132,6 +142,8 @@ CREATE TABLE `library_file` (
 	FOREIGN KEY (`file_id`) REFERENCES `file`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE INDEX `library_file_library_id_idx` ON `library_file` (`library_id`);--> statement-breakpoint
+CREATE INDEX `library_file_file_id_idx` ON `library_file` (`file_id`);--> statement-breakpoint
 CREATE TABLE `library` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
@@ -149,6 +161,8 @@ CREATE TABLE `log` (
 	`created_at` text
 );
 --> statement-breakpoint
+CREATE INDEX `log_created_at_idx` ON `log` (`created_at`);--> statement-breakpoint
+CREATE INDEX `log_service_idx` ON `log` (`service`);--> statement-breakpoint
 CREATE TABLE `media_path` (
 	`id` text PRIMARY KEY NOT NULL,
 	`path` text NOT NULL,

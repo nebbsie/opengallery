@@ -1,1 +1,0 @@
-ALTER TABLE `file` ADD `content_hash` text;
