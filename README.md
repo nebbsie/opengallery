@@ -203,14 +203,28 @@ worker/improve-performance
 
 ### Docker Compose (Recommended)
 
+Use a single container-visible root (`/media`) for all media sources. Mount your host paths under
+`/media`, then add those `/media/...` paths in the app.
+
+```yaml
+services:
+  opengallery:
+    image: ghcr.io/nebbsie/opengallery:latest
+    container_name: opengallery
+    restart: unless-stopped
+    volumes:
+      - opengallery-data:/data
+      - /mnt/media:/media/library:ro
+      - /srv/photos:/media/photos:ro
+    environment:
+      - INTERNAL_TOKEN=${OPENGALLERY_TOKEN}
+```
+
+Start and manage services:
+
 ```bash
-# Start all services
 docker compose up -d
-
-# View logs
 docker compose logs -f
-
-# Stop all services
 docker compose down
 ```
 
@@ -236,6 +250,12 @@ Each module requires specific environment variables. See individual README files
 - **[API Configuration](api/README.md#configuration)**
 - **[Web Configuration](web/README.md#configuration)**
 - **[Worker Configuration](worker/README.md#configuration)**
+
+Optional path mapping for existing libraries inside containers:
+
+```
+MEDIA_PATH_MAP=/mnt/media=/host/mnt/media;/srv/photos=/host/srv/photos
+```
 
 ### Database Setup
 

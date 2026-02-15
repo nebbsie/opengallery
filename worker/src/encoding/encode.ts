@@ -11,8 +11,11 @@ import { logger } from '../utils/logger.js';
 import { toContainerPath } from '../utils/paths.js';
 import { type RouterOutputs, trpc } from '../utils/trpc.js';
 import { throttleIo } from '../utils/io-throttle.js';
+import { validateCamera } from '../utils/camera-validator.js';
 
 type File = RouterOutputs['files']['getFileById']['raw'];
+type EncodeStatus = 'success' | 'failed';
+type EncodeResult = { type: 'image' | 'video'; status: EncodeStatus };
 
 // Get a stable identifier for encoding folder names.
 // Prefers contentHash (true deduplication) if available, falls back to path hash.
@@ -192,6 +195,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   timings['exif'] = Date.now() - stepStart;
   stepStart = Date.now();
 
+  const validatedCamera = validateCamera(cameraMake ?? null, cameraModel ?? null);
+
   // Save image metadata (width, height, takenAt). Only use real EXIF takenAt, do not default
   if (width && height) {
     logger.debug(
@@ -203,8 +208,8 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
       height,
       blurhash,
       takenAt: takenAt ?? null,
-      cameraMake: cameraMake ?? null,
-      cameraModel: cameraModel ?? null,
+      cameraMake: validatedCamera.isValid ? validatedCamera.cameraMake : null,
+      cameraModel: validatedCamera.isValid ? validatedCamera.cameraModel : null,
       lensModel: lensModel ?? null,
       iso: iso ?? null,
       exposureTime: exposureTime ?? null,
@@ -234,7 +239,7 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   logger.info(`[encode:image] timings id=${fileId} total=${total}ms | ${breakdown}`);
 }
 
-export async function encode(fileId: string) {
+export async function encode(fileId: string): Promise<EncodeResult | null> {
   const startedAt = Date.now();
   const fileResult = await trpc.files.getFileById.query(fileId);
   const file = fileResult.raw;
@@ -258,7 +263,7 @@ export async function encode(fileId: string) {
       { fileId, type: 'encode_optimised', status: 'succeeded' },
     ]);
     logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
-    return;
+    return { type: 'image', status: 'success' };
   }
   
   // Log if quality changed and we need to re-encode
@@ -272,11 +277,11 @@ export async function encode(fileId: string) {
       { fileId, type: 'encode_optimised', status: 'succeeded' },
     ]);
     logger.info(`[encode] [video] ${fileId} | ${Date.now() - startedAt}ms`);
-    return;
+    return { type: 'video', status: 'success' };
   }
 
   if (file.type === 'image') {
-    if (file.mime === 'image/svg+xml') return;
+    if (file.mime === 'image/svg+xml') return null;
     try {
       await trpc.fileTask.setManyStatusByFileAndType.mutate([
         { fileId, type: 'encode_thumbnail', status: 'in_progress' },
@@ -308,6 +313,7 @@ export async function encode(fileId: string) {
         { fileId, type: 'encode_thumbnail', status: 'succeeded' },
         { fileId, type: 'encode_optimised', status: 'succeeded' },
       ]);
+      return { type: 'image', status: 'success' };
     } catch (e) {
       logger.error(`[encode] image failed fileId=${fileId}`, e as Error);
       try {
@@ -330,9 +336,8 @@ export async function encode(fileId: string) {
       } catch (statusErr) {
         logger.error('[encode] failed to mark image tasks failed', statusErr as Error);
       }
-      return;
+      return { type: 'image', status: 'failed' };
     }
-    return;
   }
 
   if (file.type === 'video') {
@@ -362,6 +367,7 @@ export async function encode(fileId: string) {
         { fileId, type: 'encode_optimised', status: 'succeeded' },
       ]);
       logger.info(`[encode] [video] ${fileId} | ${Date.now() - startedAt}ms`);
+      return { type: 'video', status: 'success' };
     } catch (e) {
       logger.error(`[encode] video failed fileId=${fileId}`, e as Error);
       try {
@@ -384,10 +390,11 @@ export async function encode(fileId: string) {
       } catch (statusErr) {
         logger.error('[encode] failed to mark video tasks failed', statusErr as Error);
       }
-      return;
+      return { type: 'video', status: 'failed' };
     }
-    return;
   }
+
+  return null;
 }
 
 async function runFfmpeg(args: string[], label: string) {
@@ -531,6 +538,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
   });
 
   // Save video metadata (width, height, takenAt). Only use real takenAt from video tags, do not default
+  const validatedCamera = validateCamera(cameraMake ?? null, cameraModel ?? null);
   if (width && height) {
     logger.debug(
       `[encode:video] saving metadata id=${file.id} width=${width} height=${height} takenAt=${takenAt?.toISOString?.() ?? 'null'}`,
@@ -541,8 +549,8 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
       height,
       blurhash,
       takenAt: takenAt ?? null,
-      cameraMake: cameraMake ?? null,
-      cameraModel: cameraModel ?? null,
+      cameraMake: validatedCamera.isValid ? validatedCamera.cameraMake : null,
+      cameraModel: validatedCamera.isValid ? validatedCamera.cameraModel : null,
       lensModel: lensModel ?? null,
     });
   }

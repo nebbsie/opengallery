@@ -71,8 +71,14 @@ export function runWorker(): void {
             limit(async () => {
               const startTime = Date.now();
               try {
-                await encode(fileId);
-                await reportMetrics({ durationMs: Date.now() - startTime, status: 'success' });
+                const result = await encode(fileId);
+                if (result) {
+                  await reportMetrics({
+                    durationMs: Date.now() - startTime,
+                    type: result.type,
+                    status: result.status,
+                  });
+                }
               } catch (e) {
                 logger.error(`[worker] encode failed for fileId=${fileId}`, e as Error);
                 await reportMetrics({ durationMs: Date.now() - startTime, status: 'failed' });
@@ -85,8 +91,8 @@ export function runWorker(): void {
         try {
           const counts = await trpc.fileTask.getCountsByType.query();
           const pendingCount = counts
-            .filter(c => c.status === 'pending')
-            .reduce((sum, c) => sum + c.count, 0);
+            .filter((c: { status: string }) => c.status === 'pending')
+            .reduce((sum: number, c: { count: number }) => sum + c.count, 0);
           await reportMetrics({ queueSize: pendingCount });
         } catch (e) {
           // Ignore errors

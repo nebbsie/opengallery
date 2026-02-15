@@ -452,7 +452,8 @@ export const filesRouter = router({
           .onConflictDoUpdate({
             target: [FileVariantTable.originalFileId, FileVariantTable.type],
             set: {
-              quality: v.quality,
+              fileId: res.id,
+              ...(v.quality !== undefined && { quality: v.quality }),
             },
           });
 

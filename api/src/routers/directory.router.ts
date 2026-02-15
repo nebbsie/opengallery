@@ -24,13 +24,18 @@ export const directoryRouter = router({
 
     // Resolve container path:
     // - If HOST_ROOT_PREFIX is set (Docker), join it with hostPath (with root special-case)
+    // - If the mount does not exist (local dev), fall back to hostPath
     // - Otherwise (local dev), read directly from hostPath
-    const containerPath =
-      HOST_PREFIX && HOST_PREFIX.trim() !== ""
-        ? hostPath === "/"
-          ? HOST_PREFIX
-          : path.join(HOST_PREFIX, hostPath)
-        : hostPath;
+    let containerPath = hostPath;
+    if (HOST_PREFIX && HOST_PREFIX.trim() !== "") {
+      const candidate = hostPath === "/" ? HOST_PREFIX : path.join(HOST_PREFIX, hostPath);
+      try {
+        await fs.access(candidate);
+        containerPath = candidate;
+      } catch {
+        containerPath = hostPath;
+      }
+    }
     let dirents;
     try {
       dirents = await fs.readdir(containerPath, { withFileTypes: true });

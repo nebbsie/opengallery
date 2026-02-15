@@ -18,6 +18,39 @@ import { createContext } from "./trpc.js";
 
 const server: FastifyInstance = Fastify();
 
+type MediaPathMap = { from: string; to: string };
+
+function parseMediaPathMap(raw?: string): MediaPathMap[] {
+  if (!raw) return [];
+  return raw
+    .split(";")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [from, to] = entry.split("=");
+      if (!from || !to) return null;
+      return { from: path.resolve(from), to: path.resolve(to) };
+    })
+    .filter((m): m is MediaPathMap => m !== null);
+}
+
+const mediaPathMap = parseMediaPathMap(process.env["MEDIA_PATH_MAP"]);
+
+function resolveAssetPath(absPath: string): string {
+  const resolved = path.resolve(absPath);
+  if (fs.existsSync(resolved)) return resolved;
+
+  for (const map of mediaPathMap) {
+    if (resolved === map.from || resolved.startsWith(`${map.from}${path.sep}`)) {
+      const rel = path.relative(map.from, resolved);
+      const candidate = path.resolve(map.to, rel);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+
+  return resolved;
+}
+
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 const allowAll = !rawOrigins || rawOrigins.trim() === "*";
 const parsedOrigins = rawOrigins
@@ -91,7 +124,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     return reply.code(404).send({ error: `Variant not found: ${v}` });
   }
 
-  const abs = path.resolve(path.join(target.dir, target.name));
+  const abs = resolveAssetPath(path.resolve(path.join(target.dir, target.name)));
   const updatedAt = new Date(target.updatedAt);
   const etag = `${target.id}-${target.size}-${Math.floor(updatedAt.getTime() / 1000)}`;
 
