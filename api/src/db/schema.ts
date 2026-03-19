@@ -56,15 +56,19 @@ export type FileTaskStatus =
   | "skipped";
 export type UserType = "user" | "admin";
 
-export const LibraryTable = sqliteTable("library", {
-  id: id(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => UserTable.id),
-  name: text("name"),
-  createdAt: createdAt(),
-  updatedAt: updatedAt(),
-});
+export const LibraryTable = sqliteTable(
+  "library",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => UserTable.id),
+    name: text("name"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("library_user_id_idx").on(t.userId)],
+);
 
 export const FileTable = sqliteTable(
   "file",
@@ -99,6 +103,7 @@ export const LibraryFileTable = sqliteTable(
   (t) => [
     index("library_file_library_id_idx").on(t.libraryId),
     index("library_file_file_id_idx").on(t.fileId),
+    index("library_file_library_deleted_idx").on(t.libraryId, t.deletedAt),
   ],
 );
 

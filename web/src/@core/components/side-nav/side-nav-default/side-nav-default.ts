@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, inject, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, output } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { PrefetchRouteDirective } from '@core/directives/prefetch-route/prefetch-route.directive';
 import { CacheKey } from '@core/services/cache-key.types';
-import { PrefetchService } from '@core/services/prefetch/prefetch';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon } from '@ng-icons/core';
 import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
@@ -16,6 +16,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     HlmButton,
     HlmIcon,
     NgIcon,
+    PrefetchRouteDirective,
     RouterLink,
     RouterLinkActive,
     HlmTooltipImports,
@@ -31,12 +32,12 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/gallery"
+        flPrefetchRoute
         routerLinkActive="active"
         #rlaAll="routerLinkActive"
         size="icon"
         [variant]="rlaAll.isActive ? 'menu_active' : 'menu'"
         [routerLinkActiveOptions]="{ exact: true }"
-        (mouseenter)="prefetchSvc.prefetchGalleryAll()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideLayoutDashboard" />
@@ -50,11 +51,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/gallery/photos"
+        flPrefetchRoute
         routerLinkActive="active"
         size="icon"
         #rlaPhotos="routerLinkActive"
         [variant]="rlaPhotos.isActive ? 'menu_active' : 'menu'"
-        (mouseenter)="prefetchSvc.prefetchGalleryPhotos()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideCamera" />
@@ -68,11 +69,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/gallery/videos"
+        flPrefetchRoute
         routerLinkActive="active"
         size="icon"
         #rlaVideos="routerLinkActive"
         [variant]="rlaVideos.isActive ? 'menu_active' : 'menu'"
-        (mouseenter)="prefetchSvc.prefetchGalleryVideos()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideFilm" />
@@ -88,11 +89,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/cameras"
+        flPrefetchRoute
         routerLinkActive="active"
         size="icon"
         #rlaCameras="routerLinkActive"
         [variant]="rlaCameras.isActive ? 'menu_active' : 'menu'"
-        (mouseenter)="prefetchSvc.prefetchCameras()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideCamera" />
@@ -106,11 +107,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/albums"
+        flPrefetchRoute
         routerLinkActive="active"
         size="icon"
         #rlaAlbums="routerLinkActive"
         [variant]="rlaAlbums.isActive ? 'menu_active' : 'menu'"
-        (mouseenter)="prefetchSvc.prefetchAlbums()"
         (click)="handleClicked()"
       >
         <ng-icon hlm size="sm" name="lucideImages" />
@@ -124,6 +125,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/map"
+        flPrefetchRoute
         routerLinkActive="active"
         size="icon"
         #rlaWorldMap="routerLinkActive"
@@ -140,7 +142,6 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 })
 export class SideNavDefault {
   clicked = output<void>();
-  readonly prefetchSvc = inject(PrefetchService);
 
   private readonly trpc = injectTrpc();
 

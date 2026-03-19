@@ -87,6 +87,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   hasMore = input(false);
   isLoadingMore = input(false);
   scrollKey = input<string | null>(null);
+  pageCount = input(0);
 
   @Output() loadMore = new EventEmitter<void>();
 
@@ -198,7 +199,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     // Don't save scroll position while restoring
     const key = this.scrollKey();
     if (key && this.viewport && this.scrollRestoreState === 'done') {
-      this.scrollPosition.save(key, this.viewport.measureScrollOffset('top'));
+      this.scrollPosition.save(key, this.viewport.measureScrollOffset('top'), this.pageCount());
     }
 
     // Don't load if already loading or no more items

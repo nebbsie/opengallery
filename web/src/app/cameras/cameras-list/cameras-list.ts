@@ -43,7 +43,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
                   <ng-icon hlm size="lg" name="lucideCamera" />
                 </div>
                 <div class="min-w-0 flex-1">
-                  <p class="text-foreground truncate font-medium">{{ camera.make }}</p>
+                  <p class="text-foreground truncate font-medium capitalize">{{ camera.make }}</p>
                   <p class="text-muted-foreground truncate text-sm">{{ camera.model }}</p>
                   <p class="text-muted-foreground text-xs">{{ camera.count }} photos</p>
                 </div>

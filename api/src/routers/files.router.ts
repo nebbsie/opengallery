@@ -510,8 +510,8 @@ export const filesRouter = router({
     .input(
       z.object({
         kind: z.enum(["all", "video", "image"]).default("all"),
-        limit: z.number().int().positive().max(200).default(60),
-        cursor: z.string().uuid().nullable().optional(),
+        limit: z.number().int().positive().max(500).default(60),
+        cursor: z.string().nullable().optional(),
       })
     )
     .query(async ({ ctx: { userId }, input }) => {
@@ -532,26 +532,10 @@ const getUsersFiles = async (
 ) => {
   const { kind, limit, cursor } = params;
 
-  // If cursor provided, get the sort value of that record to paginate from
-  let cursorCondition: ReturnType<typeof sql> | undefined;
-  if (cursor) {
-    // Get the sort timestamp for the cursor record (takenAt only)
-    const [cursorRecord] = await db
-      .select({
-        sortTs: ImageMetadataTable.takenAt,
-      })
-      .from(FileTable)
-      .innerJoin(
-        ImageMetadataTable,
-        eq(ImageMetadataTable.fileId, FileTable.id)
-      )
-      .where(eq(FileTable.id, cursor))
-      .limit(1);
-
-    if (cursorRecord?.sortTs) {
-      cursorCondition = sql`${ImageMetadataTable.takenAt} < ${cursorRecord.sortTs}`;
-    }
-  }
+  // cursor is now the takenAt timestamp of the last item — no extra round-trip needed
+  const cursorCondition = cursor
+    ? sql`${ImageMetadataTable.takenAt} < ${cursor}`
+    : undefined;
 
   const rows = await db
     .select({
@@ -559,6 +543,7 @@ const getUsersFiles = async (
       libraryId: LibraryTable.id,
       libraryFileId: LibraryFileTable.id,
       blurhash: ImageMetadataTable.blurhash,
+      takenAt: ImageMetadataTable.takenAt,
     })
     .from(LibraryFileTable)
     .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
@@ -594,7 +579,7 @@ const getUsersFiles = async (
               )
             )
         ),
-        // Cursor-based pagination: only get items older than cursor
+        // Cursor-based pagination: only get items older than cursor timestamp
         ...(cursorCondition ? [cursorCondition] : [])
       )
     )
@@ -606,10 +591,12 @@ const getUsersFiles = async (
     libraryId: r.libraryId,
     libraryFileId: r.libraryFileId,
     blurhash: r.blurhash,
+    takenAt: r.takenAt,
   }));
 
   const hasMore = data.length > limit;
   const items = hasMore ? data.slice(0, limit) : data;
-  const nextCursor = hasMore ? (items[items.length - 1]?.id ?? null) : null;
+  // cursor is now the takenAt of the last item, not its UUID
+  const nextCursor = hasMore ? (items[items.length - 1]?.takenAt ?? null) : null;
   return { items, nextCursor } as const;
 };

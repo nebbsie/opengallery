@@ -1,9 +1,10 @@
-import { ChangeDetectionStrategy, Component, computed } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
+import { ScrollPosition } from '@core/services/scroll-position/scroll-position';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay, lucideImagePlus } from '@ng-icons/lucide';
@@ -50,6 +51,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
           [hasMore]="files.hasNextPage()"
           [isLoadingMore]="files.isFetchingNextPage()"
           [scrollKey]="'gallery-all'"
+          [pageCount]="pageCount()"
           (loadMore)="loadMore()"
         >
           <ng-template let-asset>
@@ -63,13 +65,17 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 })
 export class GalleryAll {
   private readonly trpc = injectTrpc();
+  private readonly scrollPosition = inject(ScrollPosition);
 
   files = injectInfiniteQuery(() => ({
     queryKey: [CacheKey.GalleryAll],
     queryFn: async ({ pageParam }) =>
-      this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 200, cursor: pageParam }),
+      this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 500, cursor: pageParam }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+    staleTime: 5 * 60 * 1000,
+    refetchPage: (_page: unknown, index: number) =>
+      index <= this.scrollPosition.getPageIndex('gallery-all'),
   }));
 
   allItems = computed(() => {
@@ -77,6 +83,8 @@ export class GalleryAll {
     if (!data) return [];
     return data.pages.flatMap((page) => page.items);
   });
+
+  pageCount = computed(() => this.files.data()?.pages.length ?? 0);
 
   loadMore(): void {
     if (this.files.hasNextPage() && !this.files.isFetchingNextPage()) {

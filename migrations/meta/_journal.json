@@ -8,6 +8,13 @@
       "when": 1771038831839,
       "tag": "0000_medical_gwen_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1771392277219,
+      "tag": "0001_premium_firebird",
+      "breakpoints": true
     }
   ]
 }

@@ -21,11 +21,12 @@ export const prefetchGalleryAll: CanActivateFn = async (
       queryFn: async ({ pageParam }) =>
         trpc.files.getUsersFiles.query({
           kind: 'all',
-          limit: 200,
+          limit: 500,
           cursor: pageParam,
         }),
       initialPageParam: null as string | null,
       getNextPageParam: (lastPage: any) => lastPage.nextCursor,
+      staleTime: 5 * 60 * 1000,
     });
     return true;
   } catch {
@@ -46,11 +47,12 @@ export const prefetchGalleryPhotos: CanActivateFn = async (
       queryFn: async ({ pageParam }) =>
         trpc.files.getUsersFiles.query({
           kind: 'image',
-          limit: 200,
+          limit: 500,
           cursor: pageParam,
         }),
       initialPageParam: null as string | null,
       getNextPageParam: (lastPage: any) => lastPage.nextCursor,
+      staleTime: 5 * 60 * 1000,
     });
     return true;
   } catch {
@@ -71,11 +73,12 @@ export const prefetchGalleryVideos: CanActivateFn = async (
       queryFn: async ({ pageParam }) =>
         trpc.files.getUsersFiles.query({
           kind: 'video',
-          limit: 200,
+          limit: 500,
           cursor: pageParam,
         }),
       initialPageParam: null as string | null,
       getNextPageParam: (lastPage: any) => lastPage.nextCursor,
+      staleTime: 5 * 60 * 1000,
     });
     return true;
   } catch {

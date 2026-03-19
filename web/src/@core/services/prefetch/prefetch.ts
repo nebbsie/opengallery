@@ -46,7 +46,7 @@ export class PrefetchService {
     void this.queryClient.prefetchInfiniteQuery({
       queryKey: [CacheKey.GalleryAll],
       queryFn: async ({ pageParam }) =>
-        this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 200, cursor: pageParam }),
+        this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 500, cursor: pageParam }),
       initialPageParam: null as string | null,
       getNextPageParam: (lastPage: { nextCursor: string | null }) => lastPage.nextCursor,
       staleTime: 30_000,
@@ -57,7 +57,7 @@ export class PrefetchService {
     void this.queryClient.prefetchInfiniteQuery({
       queryKey: [CacheKey.GalleryPhotos],
       queryFn: async ({ pageParam }) =>
-        this.trpc.files.getUsersFiles.query({ kind: 'image', limit: 200, cursor: pageParam }),
+        this.trpc.files.getUsersFiles.query({ kind: 'image', limit: 500, cursor: pageParam }),
       initialPageParam: null as string | null,
       getNextPageParam: (lastPage: { nextCursor: string | null }) => lastPage.nextCursor,
       staleTime: 30_000,
@@ -68,7 +68,7 @@ export class PrefetchService {
     void this.queryClient.prefetchInfiniteQuery({
       queryKey: [CacheKey.GalleryVideos],
       queryFn: async ({ pageParam }) =>
-        this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 200, cursor: pageParam }),
+        this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 500, cursor: pageParam }),
       initialPageParam: null as string | null,
       getNextPageParam: (lastPage: { nextCursor: string | null }) => lastPage.nextCursor,
       staleTime: 30_000,
