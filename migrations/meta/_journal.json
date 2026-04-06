@@ -15,6 +15,13 @@
       "when": 1771392277219,
       "tag": "0001_premium_firebird",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1774588347291,
+      "tag": "0002_hot_kingpin",
+      "breakpoints": true
     }
   ]
 }

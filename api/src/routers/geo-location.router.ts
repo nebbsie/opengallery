@@ -1,5 +1,9 @@
 import { and, desc, eq, exists, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  buildFileAccessFilter,
+  getAccessScope,
+} from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
   FileTable,
@@ -49,59 +53,66 @@ export const geoLocationRouter = router({
       return result;
     }),
 
-  getAllLocations: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) {
-      throw new Error("Unauthorized");
-    }
+  getAllLocations: privateProcedure.query(
+    async ({ ctx: { userId, session } }) => {
+      if (!userId) {
+        throw new Error("Unauthorized");
+      }
 
-    const locations = await db
-      .select({
-        lat: GeoLocationTable.lat,
-        lon: GeoLocationTable.lon,
-        count: sql<number>`count(distinct ${FileTable.id})`,
-      })
-      .from(GeoLocationTable)
-      .innerJoin(FileTable, eq(FileTable.id, GeoLocationTable.fileId))
-      .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
-      .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
-      .where(
-        and(
-          eq(LibraryTable.userId, userId),
-          isNull(LibraryFileTable.deletedAt),
-          // Only include files that have BOTH thumbnail and optimised variants
-          exists(
-            db
-              .select()
-              .from(FileVariantTable)
-              .where(
-                and(
-                  eq(FileVariantTable.originalFileId, FileTable.id),
-                  eq(FileVariantTable.type, "thumbnail"),
-                ),
-              ),
-          ),
-          exists(
-            db
-              .select()
-              .from(FileVariantTable)
-              .where(
-                and(
-                  eq(FileVariantTable.originalFileId, FileTable.id),
-                  eq(FileVariantTable.type, "optimised"),
-                ),
-              ),
-          ),
-        ),
-      )
-      .groupBy(GeoLocationTable.lat, GeoLocationTable.lon)
-      .orderBy(desc(sql`count(distinct ${FileTable.id})`));
+      const accessScope = await getAccessScope(userId, session);
 
-    return locations.map((l) => ({
-      lat: l.lat,
-      lon: l.lon,
-      count: l.count,
-    }));
-  }),
+      const locations = await db
+        .select({
+          lat: GeoLocationTable.lat,
+          lon: GeoLocationTable.lon,
+          count: sql<number>`count(distinct ${FileTable.id})`,
+        })
+        .from(GeoLocationTable)
+        .innerJoin(FileTable, eq(FileTable.id, GeoLocationTable.fileId))
+        .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
+        .innerJoin(
+          LibraryTable,
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
+        )
+        .where(
+          and(
+            buildFileAccessFilter(accessScope, FileTable.id),
+            isNull(LibraryFileTable.deletedAt),
+            // Only include files that have BOTH thumbnail and optimised variants
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "thumbnail"),
+                  ),
+                ),
+            ),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "optimised"),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .groupBy(GeoLocationTable.lat, GeoLocationTable.lon)
+        .orderBy(desc(sql`count(distinct ${FileTable.id})`));
+
+      return locations.map((l) => ({
+        lat: l.lat,
+        lon: l.lon,
+        count: l.count,
+      }));
+    },
+  ),
 
   getFilesByLocation: privateProcedure
     .input(
@@ -112,13 +123,14 @@ export const geoLocationRouter = router({
         cursor: z.string().uuid().nullable().optional(),
       }),
     )
-    .query(async ({ ctx: { userId }, input }) => {
+    .query(async ({ ctx: { userId, session }, input }) => {
       if (!userId) {
         throw new Error("Unauthorized");
       }
 
       const { lat, lon, limit, cursor } = input;
       const radiusDegrees = 5 / 69;
+      const accessScope = await getAccessScope(userId, session);
 
       let cursorCondition: ReturnType<typeof sql> | undefined;
       if (cursor) {
@@ -161,7 +173,7 @@ export const geoLocationRouter = router({
         )
         .where(
           and(
-            eq(LibraryTable.userId, userId),
+            buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
             sql`${GeoLocationTable.lat} BETWEEN ${lat - radiusDegrees} AND ${lat + radiusDegrees}`,
             sql`${GeoLocationTable.lon} BETWEEN ${lon - radiusDegrees} AND ${lon + radiusDegrees}`,

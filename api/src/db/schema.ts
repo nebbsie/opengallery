@@ -270,6 +270,9 @@ export const MediaSettingsTable = sqliteTable(
     autoImportAlbums: integer("auto_import_albums", { mode: "boolean" })
       .notNull()
       .default(true),
+    hideUndated: integer("hide_undated", { mode: "boolean" })
+      .notNull()
+      .default(false),
     userId: text("user_id")
       .notNull()
       .references(() => UserTable.id),

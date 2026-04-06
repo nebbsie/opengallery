@@ -1,6 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  buildFileAccessFilter,
+  canUserManageSharedItem,
+  getAccessScope,
+} from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
   AlbumFileTable,
@@ -11,6 +16,8 @@ import {
   ImageMetadataTable,
   LibraryTable,
   MediaPathTable,
+  SharedItemTable,
+  UserTable,
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
@@ -24,9 +31,9 @@ export const albumRouter = router({
             name: z.string(),
             libraryId: z.string(),
             dir: z.string(),
-          })
+          }),
         ),
-      })
+      }),
     )
     .mutation(async ({ ctx: { userId: ctxUserId, isInternal }, input }) => {
       const targetUserId = input.userId;
@@ -47,10 +54,10 @@ export const albumRouter = router({
         .where(inArray(LibraryTable.id, libIds));
 
       const libOwnerById = Object.fromEntries(
-        libs.map((l) => [l.id, l.userId])
+        libs.map((l) => [l.id, l.userId]),
       );
       const invalid = input.albums.filter(
-        (a) => libOwnerById[a.libraryId] !== targetUserId
+        (a) => libOwnerById[a.libraryId] !== targetUserId,
       );
       if (invalid.length > 0) {
         throw new TRPCError({
@@ -69,7 +76,7 @@ export const albumRouter = router({
             libraryId: a.libraryId,
             userId: targetUserId,
             dir: a.dir,
-          }))
+          })),
         )
         .onConflictDoNothing({
           target: [AlbumTable.libraryId, AlbumTable.dir],
@@ -88,7 +95,7 @@ export const albumRouter = router({
           dir: z.string(),
           parentId: z.string().nullable(),
         }),
-      })
+      }),
     )
     .mutation(async ({ ctx: { userId: ctxUserId, isInternal }, input }) => {
       const targetUserId = input.userId;
@@ -108,8 +115,8 @@ export const albumRouter = router({
         .where(
           and(
             eq(LibraryTable.id, input.album.libraryId),
-            eq(LibraryTable.userId, input.userId)
-          )
+            eq(LibraryTable.userId, input.userId),
+          ),
         )
         .limit(1);
 
@@ -141,7 +148,7 @@ export const albumRouter = router({
   getAlbumByDir: privateProcedure
     .input(z.string())
     .query(({ input: dir }) =>
-      db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1)
+      db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1),
     ),
 
   getAllAlbumsForLibrary: privateProcedure
@@ -161,100 +168,66 @@ export const albumRouter = router({
         })
         .from(AlbumTable)
         .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-        .where(eq(AlbumTable.libraryId, libraryId))
+        .where(eq(AlbumTable.libraryId, libraryId)),
     ),
 
-  getUsersAlbums: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) {
-      throw new TRPCError({ code: "UNAUTHORIZED" });
-    }
-
-    const rows = await db
-      .select({
-        album: AlbumTable,
-      })
-      .from(AlbumTable)
-      .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-      .where(and(eq(LibraryTable.userId, userId), isNull(AlbumTable.parentId)))
-      .orderBy(desc(AlbumTable.createdAt));
-
-    const albumIds = rows.map((r) => r.album.id);
-
-    if (albumIds.length === 0)
-      return [] as Array<
-        (typeof rows)[number]["album"] & { items: number; cover: string | null }
-      >;
-
-    // Count items per album
-    const itemsRes = await db
-      .select({
-        albumId: AlbumFileTable.albumId,
-        items: sql<number>`COUNT(*)`,
-      })
-      .from(AlbumFileTable)
-      .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-      .where(
-        and(
-          inArray(AlbumFileTable.albumId, albumIds),
-          exists(
-            db
-              .select()
-              .from(FileVariantTable)
-              .where(
-                and(
-                  eq(FileVariantTable.originalFileId, FileTable.id),
-                  eq(FileVariantTable.type, "thumbnail")
-                )
-              )
-          ),
-          exists(
-            db
-              .select()
-              .from(FileVariantTable)
-              .where(
-                and(
-                  eq(FileVariantTable.originalFileId, FileTable.id),
-                  eq(FileVariantTable.type, "optimised")
-                )
-              )
-          )
-        )
-      )
-      .groupBy(AlbumFileTable.albumId);
-    const itemsByAlbum = Object.fromEntries(
-      itemsRes.map((r) => [r.albumId, Number(r.items)])
-    ) as Record<string, number>;
-
-    // Compute cover per album: prefer explicit cover, else first image file id with thumbnail ready
-    const albumsWithCovers = await db
-      .select({ id: AlbumTable.id, cover: AlbumTable.cover })
-      .from(AlbumTable)
-      .where(inArray(AlbumTable.id, albumIds));
-
-    // Initialize covers from explicit covers
-    const coverByAlbum: Record<string, string | null> = {};
-    const albumsNeedingCover: string[] = [];
-    for (const album of albumsWithCovers) {
-      if (album.cover) {
-        coverByAlbum[album.id] = album.cover;
-      } else {
-        albumsNeedingCover.push(album.id);
+  getUsersAlbums: privateProcedure.query(
+    async ({ ctx: { userId, session } }) => {
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
       }
-    }
 
-    // Batch fetch first image with thumbnail for albums without explicit cover
-    if (albumsNeedingCover.length > 0) {
-      const computedCovers = await db
+      const accessScope = await getAccessScope(userId, session);
+      const accessibleAlbumIds = [...accessScope.visibleAlbumIds];
+
+      if (accessibleAlbumIds.length === 0) {
+        return [] as Array<
+          typeof AlbumTable.$inferSelect & {
+            items: number;
+            cover: string | null;
+            pendingTasks: number;
+            canManageShares: boolean;
+          }
+        >;
+      }
+
+      const rows = await db
+        .select({
+          album: AlbumTable,
+        })
+        .from(AlbumTable)
+        .where(inArray(AlbumTable.id, accessibleAlbumIds))
+        .orderBy(desc(AlbumTable.createdAt));
+
+      const accessibleSet = accessScope.visibleAlbumIds;
+      const rootRows = rows.filter(
+        (row) => !row.album.parentId || !accessibleSet.has(row.album.parentId),
+      );
+
+      const albumIds = rootRows.map((r) => r.album.id);
+
+      if (albumIds.length === 0)
+        return [] as Array<
+          (typeof rows)[number]["album"] & {
+            items: number;
+            cover: string | null;
+            pendingTasks: number;
+            canManageShares: boolean;
+          }
+        >;
+
+      // Count items per album
+      const itemsRes = await db
         .select({
           albumId: AlbumFileTable.albumId,
-          fileId: sql<string>`MIN(${FileTable.id})`,
+          items: sql<number>`COUNT(*)`,
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .where(
           and(
-            inArray(AlbumFileTable.albumId, albumsNeedingCover),
-            eq(FileTable.type, "image"),
+            inArray(AlbumFileTable.albumId, albumIds),
+            buildFileAccessFilter(accessScope, FileTable.id),
             exists(
               db
                 .select()
@@ -262,79 +235,159 @@ export const albumRouter = router({
                 .where(
                   and(
                     eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "thumbnail")
-                  )
-                )
-            )
-          )
+                    eq(FileVariantTable.type, "thumbnail"),
+                  ),
+                ),
+            ),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "optimised"),
+                  ),
+                ),
+            ),
+          ),
         )
         .groupBy(AlbumFileTable.albumId);
+      const itemsByAlbum = Object.fromEntries(
+        itemsRes.map((r) => [r.albumId, Number(r.items)]),
+      ) as Record<string, number>;
 
-      for (const { albumId, fileId } of computedCovers) {
-        coverByAlbum[albumId] = fileId;
-      }
-      // Set null for albums that still don't have a cover
-      for (const albumId of albumsNeedingCover) {
-        if (!(albumId in coverByAlbum)) {
-          coverByAlbum[albumId] = null;
+      // Compute cover per album: prefer explicit cover, else first image file id with thumbnail ready
+      const albumsWithCovers = await db
+        .select({ id: AlbumTable.id, cover: AlbumTable.cover })
+        .from(AlbumTable)
+        .where(inArray(AlbumTable.id, albumIds));
+
+      // Initialize covers from explicit covers
+      const coverByAlbum: Record<string, string | null> = {};
+      const albumsNeedingCover: string[] = [];
+      for (const album of albumsWithCovers) {
+        if (album.cover) {
+          coverByAlbum[album.id] = album.cover;
+        } else {
+          albumsNeedingCover.push(album.id);
         }
       }
-    }
 
-    // Count pending tasks per album (files with non-succeeded encode tasks)
-    const pendingTasksRes = await db
-      .select({
-        albumId: AlbumFileTable.albumId,
-        pendingCount: sql<number>`COUNT(DISTINCT ${FileTaskTable.fileId})`,
-      })
-      .from(AlbumFileTable)
-      .innerJoin(FileTaskTable, eq(FileTaskTable.fileId, AlbumFileTable.fileId))
-      .where(
-        and(
-          inArray(AlbumFileTable.albumId, albumIds),
-          inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`
+      // Batch fetch first image with thumbnail for albums without explicit cover
+      if (albumsNeedingCover.length > 0) {
+        const computedCovers = await db
+          .select({
+            albumId: AlbumFileTable.albumId,
+            fileId: sql<string>`MIN(${FileTable.id})`,
+          })
+          .from(AlbumFileTable)
+          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+          .where(
+            and(
+              inArray(AlbumFileTable.albumId, albumsNeedingCover),
+              buildFileAccessFilter(accessScope, FileTable.id),
+              eq(FileTable.type, "image"),
+              exists(
+                db
+                  .select()
+                  .from(FileVariantTable)
+                  .where(
+                    and(
+                      eq(FileVariantTable.originalFileId, FileTable.id),
+                      eq(FileVariantTable.type, "thumbnail"),
+                    ),
+                  ),
+              ),
+            ),
+          )
+          .groupBy(AlbumFileTable.albumId);
+
+        for (const { albumId, fileId } of computedCovers) {
+          coverByAlbum[albumId] = fileId;
+        }
+        // Set null for albums that still don't have a cover
+        for (const albumId of albumsNeedingCover) {
+          if (!(albumId in coverByAlbum)) {
+            coverByAlbum[albumId] = null;
+          }
+        }
+      }
+
+      // Count pending tasks per album (files with non-succeeded encode tasks)
+      const pendingTasksRes = await db
+        .select({
+          albumId: AlbumFileTable.albumId,
+          pendingCount: sql<number>`COUNT(DISTINCT ${FileTaskTable.fileId})`,
+        })
+        .from(AlbumFileTable)
+        .innerJoin(
+          FileTaskTable,
+          eq(FileTaskTable.fileId, AlbumFileTable.fileId),
         )
-      )
-      .groupBy(AlbumFileTable.albumId);
-    const pendingByAlbum = Object.fromEntries(
-      pendingTasksRes.map((r) => [r.albumId, Number(r.pendingCount)])
-    ) as Record<string, number>;
+        .where(
+          and(
+            inArray(AlbumFileTable.albumId, albumIds),
+            inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
+            sql`${FileTaskTable.attempts} < 3`,
+          ),
+        )
+        .groupBy(AlbumFileTable.albumId);
+      const pendingByAlbum = Object.fromEntries(
+        pendingTasksRes.map((r) => [r.albumId, Number(r.pendingCount)]),
+      ) as Record<string, number>;
 
-    return rows.map((r) => ({
-      ...r.album,
-      items: itemsByAlbum[r.album.id] ?? 0,
-      cover: coverByAlbum[r.album.id] ?? r.album.cover ?? null,
-      pendingTasks: pendingByAlbum[r.album.id] ?? 0,
-    }));
-  }),
+      return rootRows.map((r) => ({
+        ...r.album,
+        items: itemsByAlbum[r.album.id] ?? 0,
+        cover: coverByAlbum[r.album.id] ?? r.album.cover ?? null,
+        pendingTasks: pendingByAlbum[r.album.id] ?? 0,
+        canManageShares:
+          accessScope.isAdmin ||
+          accessScope.ownedLibraryIds.has(r.album.libraryId),
+      }));
+    },
+  ),
 
   // Fetch all albums for the current user, including child albums
-  getAllUserAlbums: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) {
-      throw new TRPCError({ code: "UNAUTHORIZED" });
-    }
+  getAllUserAlbums: privateProcedure.query(
+    async ({ ctx: { userId, session } }) => {
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
 
-    const rows = await db
-      .select({
-        album: AlbumTable,
-      })
-      .from(AlbumTable)
-      .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-      .where(eq(LibraryTable.userId, userId))
-      .orderBy(desc(AlbumTable.createdAt));
+      const accessScope = await getAccessScope(userId, session);
+      const accessibleAlbumIds = [...accessScope.visibleAlbumIds];
 
-    return rows.map((r) => ({
-      ...r.album,
-    }));
-  }),
+      if (accessibleAlbumIds.length === 0) {
+        return [] as Array<typeof AlbumTable.$inferSelect>;
+      }
+
+      const rows = await db
+        .select({
+          album: AlbumTable,
+        })
+        .from(AlbumTable)
+        .where(inArray(AlbumTable.id, accessibleAlbumIds))
+        .orderBy(desc(AlbumTable.createdAt));
+
+      return rows.map((r) => ({
+        ...r.album,
+      }));
+    },
+  ),
 
   // Fetch a single album by id, ensuring it belongs to the current user
   getAlbumById: privateProcedure
     .input(z.string())
-    .query(async ({ ctx: { userId }, input: albumId }) => {
+    .query(async ({ ctx: { userId, session }, input: albumId }) => {
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+
+      const accessScope = await getAccessScope(userId, session);
+      if (!accessScope.visibleAlbumIds.has(albumId)) {
+        throw new TRPCError({ code: "FORBIDDEN" });
       }
 
       const [row] = await db
@@ -348,18 +401,19 @@ export const albumRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Album not found" });
       }
 
-      if (row.libraryUserId !== userId) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
-
       return row.album;
     }),
 
   // Fetch files for an album, ensuring access by current user
   getAlbumInfo: privateProcedure
     .input(z.string())
-    .query(async ({ ctx: { userId }, input: albumId }) => {
+    .query(async ({ ctx: { userId, session }, input: albumId }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+      const accessScope = await getAccessScope(userId, session);
+      if (!accessScope.visibleAlbumIds.has(albumId)) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
 
       const normalize = (p: string) => p.replace(/\\/g, "/");
       const stripPrefix = (full: string, prefix: string) =>
@@ -388,14 +442,12 @@ export const albumRouter = router({
       const albumRow = rows[0];
       if (!albumRow)
         throw new TRPCError({ code: "NOT_FOUND", message: "Album not found" });
-      if (albumRow.libraryUserId !== userId)
-        throw new TRPCError({ code: "FORBIDDEN" });
 
       // best matching user media root (longest prefix of dir)
       const mediaPaths = await db
         .select({ path: MediaPathTable.path })
         .from(MediaPathTable)
-        .where(eq(MediaPathTable.userId, userId));
+        .where(eq(MediaPathTable.userId, albumRow.libraryUserId));
 
       // Find longest matching prefix
       let rootPath = "";
@@ -454,11 +506,12 @@ export const albumRouter = router({
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .leftJoin(
           ImageMetadataTable,
-          eq(ImageMetadataTable.fileId, FileTable.id)
+          eq(ImageMetadataTable.fileId, FileTable.id),
         )
         .where(
           and(
             eq(AlbumFileTable.albumId, albumId),
+            buildFileAccessFilter(accessScope, FileTable.id),
             // Only include files that have BOTH thumbnail and optimised variants
             exists(
               db
@@ -467,9 +520,9 @@ export const albumRouter = router({
                 .where(
                   and(
                     eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "thumbnail")
-                  )
-                )
+                    eq(FileVariantTable.type, "thumbnail"),
+                  ),
+                ),
             ),
             exists(
               db
@@ -478,16 +531,16 @@ export const albumRouter = router({
                 .where(
                   and(
                     eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "optimised")
-                  )
-                )
-            )
-          )
+                    eq(FileVariantTable.type, "optimised"),
+                  ),
+                ),
+            ),
+          ),
         )
         .orderBy(
           desc(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
-          )
+            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+          ),
         );
 
       // child albums
@@ -504,16 +557,20 @@ export const albumRouter = router({
           updatedAt: AlbumTable.updatedAt,
         })
         .from(AlbumTable)
-        .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
-        .where(
-          and(eq(AlbumTable.parentId, albumId), eq(LibraryTable.userId, userId))
-        )
+        .where(eq(AlbumTable.parentId, albumId))
         .orderBy(desc(AlbumTable.createdAt));
 
+      const accessibleChildren = children.filter((child) =>
+        accessScope.visibleAlbumIds.has(child.id),
+      );
+
       // Augment children with items count and computed cover
-      const childIds = children.map((c) => c.id);
-      let childrenWithMeta = children as Array<
-        (typeof children)[number] & { items?: number }
+      const childIds = accessibleChildren.map((c) => c.id);
+      let childrenWithMeta = accessibleChildren as Array<
+        (typeof accessibleChildren)[number] & {
+          items?: number;
+          canManageShares?: boolean;
+        }
       >;
       if (childIds.length > 0) {
         const childItemsRes = await db
@@ -522,16 +579,22 @@ export const albumRouter = router({
             items: sql<number>`COUNT(*)`,
           })
           .from(AlbumFileTable)
-          .where(inArray(AlbumFileTable.albumId, childIds))
+          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+          .where(
+            and(
+              inArray(AlbumFileTable.albumId, childIds),
+              buildFileAccessFilter(accessScope, FileTable.id),
+            ),
+          )
           .groupBy(AlbumFileTable.albumId);
         const childItemsMap = Object.fromEntries(
-          childItemsRes.map((r) => [r.albumId, Number(r.items)])
+          childItemsRes.map((r) => [r.albumId, Number(r.items)]),
         ) as Record<string, number>;
 
         // Compute covers for children - batch query to avoid N+1
         const childCoverMap: Record<string, string | null> = {};
         const childrenNeedingCover: string[] = [];
-        for (const child of children) {
+        for (const child of accessibleChildren) {
           if (child.cover) {
             childCoverMap[child.id] = child.cover;
           } else {
@@ -551,6 +614,7 @@ export const albumRouter = router({
             .where(
               and(
                 inArray(AlbumFileTable.albumId, childrenNeedingCover),
+                buildFileAccessFilter(accessScope, FileTable.id),
                 eq(FileTable.type, "image"),
                 exists(
                   db
@@ -559,11 +623,11 @@ export const albumRouter = router({
                     .where(
                       and(
                         eq(FileVariantTable.originalFileId, FileTable.id),
-                        eq(FileVariantTable.type, "thumbnail")
-                      )
-                    )
-                )
-              )
+                        eq(FileVariantTable.type, "thumbnail"),
+                      ),
+                    ),
+                ),
+              ),
             )
             .groupBy(AlbumFileTable.albumId);
 
@@ -578,10 +642,12 @@ export const albumRouter = router({
           }
         }
 
-        childrenWithMeta = children.map((c) => ({
+        childrenWithMeta = accessibleChildren.map((c) => ({
           ...c,
           items: childItemsMap[c.id] ?? 0,
           cover: childCoverMap[c.id] ?? c.cover ?? null,
+          canManageShares:
+            accessScope.isAdmin || accessScope.ownedLibraryIds.has(c.libraryId),
         }));
       }
 
@@ -593,14 +659,14 @@ export const albumRouter = router({
         .from(AlbumFileTable)
         .innerJoin(
           FileTaskTable,
-          eq(FileTaskTable.fileId, AlbumFileTable.fileId)
+          eq(FileTaskTable.fileId, AlbumFileTable.fileId),
         )
         .where(
           and(
             eq(AlbumFileTable.albumId, albumId),
             inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
-            sql`${FileTaskTable.attempts} < 3`
-          )
+            sql`${FileTaskTable.attempts} < 3`,
+          ),
         );
       const pendingTasks = Number(pendingTasksRes[0]?.pendingCount ?? 0);
 
@@ -613,6 +679,9 @@ export const albumRouter = router({
           libraryId: albumRow.libraryId,
           items: files.length,
           pendingTasks,
+          canManageShares:
+            accessScope.isAdmin ||
+            accessScope.ownedLibraryIds.has(albumRow.libraryId),
         },
         files: files.map((r) => r.file),
         children: childrenWithMeta,
@@ -623,6 +692,131 @@ export const albumRouter = router({
           ancestors, // [{ id, parentId, name, dir }, ...] root->current
         },
       };
+    }),
+
+  getShares: privateProcedure
+    .input(
+      z.object({
+        sourceType: z.enum(["album", "file"]),
+        sourceId: z.string(),
+      }),
+    )
+    .query(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+
+      const canManage = await canUserManageSharedItem(
+        userId,
+        session,
+        input.sourceType,
+        input.sourceId,
+      );
+
+      if (!canManage) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const [users, shares] = await Promise.all([
+        db
+          .select({
+            id: UserTable.id,
+            name: UserTable.name,
+            email: UserTable.email,
+            type: UserTable.type,
+          })
+          .from(UserTable),
+        db
+          .select({ userId: SharedItemTable.sharedToUserId })
+          .from(SharedItemTable)
+          .where(
+            and(
+              eq(SharedItemTable.sourceType, input.sourceType),
+              eq(SharedItemTable.sourceId, input.sourceId),
+              eq(SharedItemTable.shareType, "user"),
+              eq(SharedItemTable.accessLevel, "view"),
+            ),
+          ),
+      ]);
+
+      const selectedUserIds = shares
+        .map((row) => row.userId)
+        .filter((value): value is string => !!value);
+
+      return {
+        users: users.filter(
+          (candidate) => candidate.id !== userId && candidate.type !== "admin",
+        ),
+        selectedUserIds,
+      };
+    }),
+
+  updateShares: privateProcedure
+    .input(
+      z.object({
+        sourceType: z.enum(["album", "file"]),
+        sourceId: z.string(),
+        userIds: z.array(z.string()).default([]),
+      }),
+    )
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+
+      const canManage = await canUserManageSharedItem(
+        userId,
+        session,
+        input.sourceType,
+        input.sourceId,
+      );
+
+      if (!canManage) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      const distinctUserIds = Array.from(new Set(input.userIds));
+
+      if (distinctUserIds.length > 0) {
+        const existingUsers = await db
+          .select({ id: UserTable.id, type: UserTable.type })
+          .from(UserTable)
+          .where(inArray(UserTable.id, distinctUserIds));
+
+        const validUsers = existingUsers.filter(
+          (candidate) => candidate.type !== "admin",
+        );
+        if (validUsers.length !== distinctUserIds.length) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "One or more users are invalid",
+          });
+        }
+      }
+
+      await db
+        .delete(SharedItemTable)
+        .where(
+          and(
+            eq(SharedItemTable.sourceType, input.sourceType),
+            eq(SharedItemTable.sourceId, input.sourceId),
+            eq(SharedItemTable.shareType, "user"),
+          ),
+        );
+
+      if (distinctUserIds.length > 0) {
+        await db.insert(SharedItemTable).values(
+          distinctUserIds.map((sharedToUserId) => ({
+            sourceType: input.sourceType,
+            sourceId: input.sourceId,
+            shareType: "user" as const,
+            accessLevel: "view" as const,
+            sharedToUserId,
+          })),
+        );
+      }
+
+      return { sharedUserIds: distinctUserIds };
     }),
 
   // Remove empty albums under a directory (recursively) for a specified user (internal only)
@@ -641,9 +835,9 @@ export const albumRouter = router({
             eq(LibraryTable.userId, userId),
             or(
               eq(AlbumTable.dir, dir),
-              sql`${AlbumTable.dir} LIKE ${dir + "/%"}`
-            )
-          )
+              sql`${AlbumTable.dir} LIKE ${dir + "/%"}`,
+            ),
+          ),
         )
         .orderBy(desc(sql`length(${AlbumTable.dir})`));
 
@@ -662,7 +856,7 @@ export const albumRouter = router({
 
       // Filter to only empty albums (those not in the set)
       const emptyAlbumIds = candidateIds.filter(
-        (id) => !albumsWithFilesSet.has(id)
+        (id) => !albumsWithFilesSet.has(id),
       );
 
       if (emptyAlbumIds.length === 0) return { removed: 0 } as const;
@@ -679,7 +873,7 @@ export const albumRouter = router({
         libraryId: z.string(),
         dir: z.string(),
         parentId: z.string().nullable(),
-      })
+      }),
     )
     .mutation(async ({ input }) => {
       await db
@@ -688,8 +882,8 @@ export const albumRouter = router({
         .where(
           and(
             eq(AlbumTable.libraryId, input.libraryId),
-            eq(AlbumTable.dir, input.dir)
-          )
+            eq(AlbumTable.dir, input.dir),
+          ),
         );
     }),
 });

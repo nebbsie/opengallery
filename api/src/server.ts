@@ -9,12 +9,13 @@ import Fastify, { type FastifyInstance } from "fastify";
 import * as fs from "node:fs";
 import path from "path";
 import { auth } from "./auth/auth.js";
+import { canUserViewFile } from "./authz/shared-access.js";
 import { db } from "./db/index.js";
 import { FileTable, FileVariantTable } from "./db/schema.js";
 import { logger } from "./logger.js";
 import metricsPlugin from "./metrics.js";
 import { appRouter, type AppRouter } from "./router.js";
-import { createContext } from "./trpc.js";
+import { createContext, toHeaders } from "./trpc.js";
 
 const server: FastifyInstance = Fastify();
 
@@ -41,7 +42,10 @@ function resolveAssetPath(absPath: string): string {
   if (fs.existsSync(resolved)) return resolved;
 
   for (const map of mediaPathMap) {
-    if (resolved === map.from || resolved.startsWith(`${map.from}${path.sep}`)) {
+    if (
+      resolved === map.from ||
+      resolved.startsWith(`${map.from}${path.sep}`)
+    ) {
       const rel = path.relative(map.from, resolved);
       const candidate = path.resolve(map.to, rel);
       if (fs.existsSync(candidate)) return candidate;
@@ -76,6 +80,20 @@ server.get("/health", async () => ({ status: "ok" }));
 
 server.get("/asset/:id/:variant?", async (req, reply) => {
   const { id, variant } = req.params as { id: string; variant?: string };
+
+  const session = await auth.api.getSession({
+    headers: toHeaders(req.headers),
+  });
+  const sessionUserId = (session?.user?.id as string | undefined) ?? null;
+
+  if (!sessionUserId) {
+    return reply.code(401).send({ error: "Unauthorized" });
+  }
+
+  const canView = await canUserViewFile(sessionUserId, session, id);
+  if (!canView) {
+    return reply.code(403).send({ error: "Forbidden" });
+  }
 
   const [base] = await db
     .select()
@@ -113,8 +131,8 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
             .where(
               and(
                 eq(FileVariantTable.originalFileId, base.id),
-                eq(FileVariantTable.type, v)
-              )
+                eq(FileVariantTable.type, v),
+              ),
             )
             .limit(1)
         )[0]?.file;
@@ -124,7 +142,9 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     return reply.code(404).send({ error: `Variant not found: ${v}` });
   }
 
-  const abs = resolveAssetPath(path.resolve(path.join(target.dir, target.name)));
+  const abs = resolveAssetPath(
+    path.resolve(path.join(target.dir, target.name)),
+  );
   const updatedAt = new Date(target.updatedAt);
   const etag = `${target.id}-${target.size}-${Math.floor(updatedAt.getTime() / 1000)}`;
 
@@ -160,7 +180,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
 // Auth handler shared by both routes
 const authHandler = async function (
   request: import("fastify").FastifyRequest,
-  reply: import("fastify").FastifyReply
+  reply: import("fastify").FastifyReply,
 ) {
   try {
     // Preflight is handled by @fastify/cors already, but this keeps route unified.
@@ -281,7 +301,7 @@ const start = async () => {
     const host = process.env["HOST"] ?? "0.0.0.0";
     logger.info(`Starting server on ${host}:${port}...`);
     logger.info(
-      `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`
+      `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
     );
 
     await server.listen({ port, host });

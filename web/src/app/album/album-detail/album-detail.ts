@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { AlbumThumbnail } from '@core/components/album-thumbnail/album-thumbnail';
 import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
@@ -6,8 +6,14 @@ import { ErrorAlert } from '@core/components/error/error';
 import { LoadingThumbnail } from '@core/components/loading-thumbnail/loading-thumbnail';
 import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
+import { ShareItem } from '@core/dialogs/share-item/share-item';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideShare2 } from '@ng-icons/lucide';
+import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmDialogService } from '@spartan-ng/helm/dialog';
+import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
@@ -22,7 +28,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     AlbumToolbar,
     VirtualThumbnailGrid,
     LoadingThumbnail,
+    HlmButton,
+    HlmIcon,
+    NgIcon,
   ],
+  providers: [provideIcons({ lucideShare2 })],
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (response.isPending() && !response.data()) {
@@ -32,7 +42,21 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     } @else {
       @let data = response.data()!;
 
-      <app-album-toolbar [items]="data.tree.ancestors" />
+      <div class="mb-2 flex items-center justify-between gap-3">
+        <app-album-toolbar [items]="data.tree.ancestors" />
+
+        @if (data.album.canManageShares) {
+          <button
+            hlmBtn
+            variant="outline"
+            type="button"
+            (click)="openShareDialog(data.album.id, data.album.name)"
+          >
+            <ng-icon hlm size="sm" name="lucideShare2" />
+            Share
+          </button>
+        }
+      </div>
 
       @if (data.children.length) {
         <app-thumbnail-grid class="mb-4">
@@ -67,6 +91,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 })
 export class AlbumDetail {
   private readonly trpc = injectTrpc();
+  private readonly dialog = inject(HlmDialogService);
   id = input.required<string>();
 
   response = injectQuery(() => ({
@@ -96,4 +121,14 @@ export class AlbumDetail {
 
     return [...files, ...placeholders];
   });
+
+  openShareDialog(albumId: string, albumName: string) {
+    this.dialog.open(ShareItem, {
+      context: {
+        sourceType: 'album',
+        sourceId: albumId,
+        title: albumName,
+      },
+    });
+  }
 }

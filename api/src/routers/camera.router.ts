@@ -1,6 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  buildFileAccessFilter,
+  getAccessScope,
+} from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
   FileTable,
@@ -12,39 +16,46 @@ import {
 import { privateProcedure, router } from "../trpc.js";
 
 export const cameraRouter = router({
-  getAllCameras: privateProcedure.query(async ({ ctx: { userId } }) => {
-    if (!userId) {
-      throw new TRPCError({ code: "UNAUTHORIZED" });
-    }
+  getAllCameras: privateProcedure.query(
+    async ({ ctx: { userId, session } }) => {
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
 
-    // Get all unique camera make/model combinations with file counts
-    const cameras = await db
-      .select({
-        cameraMake: ImageMetadataTable.cameraMake,
-        cameraModel: ImageMetadataTable.cameraModel,
-        count: sql<number>`count(distinct ${FileTable.id})`,
-      })
-      .from(ImageMetadataTable)
-      .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
-      .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
-      .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
-      .where(
-        and(
-          eq(LibraryTable.userId, userId),
-          isNull(LibraryFileTable.deletedAt),
-          sql`${ImageMetadataTable.cameraMake} IS NOT NULL`,
-          sql`${ImageMetadataTable.cameraModel} IS NOT NULL`,
-        ),
-      )
-      .groupBy(ImageMetadataTable.cameraMake, ImageMetadataTable.cameraModel)
-      .orderBy(desc(sql`count(distinct ${FileTable.id})`));
+      const accessScope = await getAccessScope(userId, session);
 
-    return cameras.map((c) => ({
-      make: c.cameraMake!,
-      model: c.cameraModel!,
-      count: c.count,
-    }));
-  }),
+      // Get all unique camera make/model combinations with file counts
+      const cameras = await db
+        .select({
+          cameraMake: ImageMetadataTable.cameraMake,
+          cameraModel: ImageMetadataTable.cameraModel,
+          count: sql<number>`count(distinct ${FileTable.id})`,
+        })
+        .from(ImageMetadataTable)
+        .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
+        .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
+        .innerJoin(
+          LibraryTable,
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
+        )
+        .where(
+          and(
+            buildFileAccessFilter(accessScope, FileTable.id),
+            isNull(LibraryFileTable.deletedAt),
+            sql`${ImageMetadataTable.cameraMake} IS NOT NULL`,
+            sql`${ImageMetadataTable.cameraModel} IS NOT NULL`,
+          ),
+        )
+        .groupBy(ImageMetadataTable.cameraMake, ImageMetadataTable.cameraModel)
+        .orderBy(desc(sql`count(distinct ${FileTable.id})`));
+
+      return cameras.map((c) => ({
+        make: c.cameraMake!,
+        model: c.cameraModel!,
+        count: c.count,
+      }));
+    },
+  ),
 
   getFilesByCamera: privateProcedure
     .input(
@@ -55,12 +66,13 @@ export const cameraRouter = router({
         cursor: z.string().uuid().nullable().optional(),
       }),
     )
-    .query(async ({ ctx: { userId }, input }) => {
+    .query(async ({ ctx: { userId, session }, input }) => {
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
       const { make, model, limit, cursor } = input;
+      const accessScope = await getAccessScope(userId, session);
 
       // If cursor provided, get the sort value of that record to paginate from
       let cursorCondition: ReturnType<typeof sql> | undefined;
@@ -97,7 +109,7 @@ export const cameraRouter = router({
         )
         .where(
           and(
-            eq(LibraryTable.userId, userId),
+            buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
             eq(ImageMetadataTable.cameraMake, make),
             eq(ImageMetadataTable.cameraModel, model),

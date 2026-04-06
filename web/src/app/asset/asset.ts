@@ -12,6 +12,7 @@ import {
 } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ErrorAlert } from '@core/components/error/error';
+import { ShareItem } from '@core/dialogs/share-item/share-item';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
@@ -22,10 +23,12 @@ import {
   lucideCopy,
   lucideDownload,
   lucideInfo,
+  lucideShare2,
   lucideX,
 } from '@ng-icons/lucide';
 import { HlmBadge } from '@spartan-ng/helm/badge';
 import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 import * as L from 'leaflet';
@@ -36,7 +39,15 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
   selector: 'app-asset',
   imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, HlmBadge, DatePipe],
   providers: [
-    provideIcons({ lucideChevronLeft, lucideChevronRight, lucideCopy, lucideDownload, lucideInfo, lucideX }),
+    provideIcons({
+      lucideChevronLeft,
+      lucideChevronRight,
+      lucideCopy,
+      lucideDownload,
+      lucideInfo,
+      lucideShare2,
+      lucideX,
+    }),
   ],
   host: {
     class: 'relative block h-full w-full overflow-hidden',
@@ -70,6 +81,19 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
           >
             <ng-icon hlm name="lucideDownload" />
           </a>
+
+          @if (data.canManageShares) {
+            <button
+              hlmBtn
+              variant="ghost"
+              size="icon"
+              type="button"
+              title="Share"
+              (click)="openShareDialog()"
+            >
+              <ng-icon hlm name="lucideShare2" />
+            </button>
+          }
 
           <button hlmBtn variant="ghost" size="icon" (click)="infoOpen.set(!infoOpen())">
             <ng-icon hlm name="lucideInfo" />
@@ -340,6 +364,7 @@ export class Asset implements OnDestroy {
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly queryClient = inject(QueryClient);
+  private readonly dialog = inject(HlmDialogService);
 
   protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
   protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
@@ -651,5 +676,20 @@ export class Asset implements OnDestroy {
     } catch {
       // ignore
     }
+  }
+
+  openShareDialog() {
+    const data = this.file.data();
+    if (!data?.canManageShares) {
+      return;
+    }
+
+    this.dialog.open(ShareItem, {
+      context: {
+        sourceType: 'file',
+        sourceId: data.file.id,
+        title: data.file.name,
+      },
+    });
   }
 }

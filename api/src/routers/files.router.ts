@@ -1,5 +1,4 @@
 import { TRPCError } from "@trpc/server";
-import { basename, extname } from "node:path";
 import {
   and,
   desc,
@@ -11,7 +10,13 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { basename, extname } from "node:path";
 import { z } from "zod";
+import {
+  buildFileAccessFilter,
+  canUserViewFile,
+  getAccessScope,
+} from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
   AlbumFileTable,
@@ -23,7 +28,7 @@ import {
   ImageMetadataTable,
   LibraryFileTable,
   LibraryTable,
-  VideoMetadataTable,
+  MediaSettingsTable,
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 import { deleteFilesWithCascade } from "../utils/file-operations.js";
@@ -39,8 +44,8 @@ export const filesRouter = router({
           mime: z.string(),
           size: z.number(),
           contentHash: z.string().optional(),
-        })
-      )
+        }),
+      ),
     )
     .mutation(async ({ input }) => {
       const addedFiles = await db.insert(FileTable).values(input).returning();
@@ -67,7 +72,7 @@ export const filesRouter = router({
   getFilesInDir: privateProcedure
     .input(z.string())
     .mutation(({ input }) =>
-      db.select().from(FileTable).where(eq(FileTable.dir, input))
+      db.select().from(FileTable).where(eq(FileTable.dir, input)),
     ),
 
   removeFilesById: internalProcedure
@@ -88,14 +93,17 @@ export const filesRouter = router({
         .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
         .innerJoin(
           LibraryTable,
-          eq(LibraryTable.id, LibraryFileTable.libraryId)
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
         )
         .where(
           and(
             eq(LibraryTable.userId, userId),
             isNull(LibraryFileTable.deletedAt),
-            or(eq(FileTable.dir, dir), sql`${FileTable.dir} LIKE ${dir + "/%"}`)
-          )
+            or(
+              eq(FileTable.dir, dir),
+              sql`${FileTable.dir} LIKE ${dir + "/%"}`,
+            ),
+          ),
         );
 
       const fileIds = rows.map((r) => r.id);
@@ -113,13 +121,15 @@ export const filesRouter = router({
         albumId: z.string().uuid().optional(),
         cameraMake: z.string().optional(),
         cameraModel: z.string().optional(),
-      })
+      }),
     )
-    .query(async ({ input, ctx: { userId } }) => {
+    .query(async ({ input, ctx: { userId, session } }) => {
       const { fileId, albumId, cameraMake, cameraModel } = input;
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
+
+      const accessScope = await getAccessScope(userId, session);
 
       // Load the file and ensure it exists and is an image
       const [file] = await db
@@ -135,24 +145,7 @@ export const filesRouter = router({
         });
       }
 
-      // Ensure the user has this file in their library and it's not deleted
-      const [link] = await db
-        .select({ libraryFileId: LibraryFileTable.id })
-        .from(LibraryFileTable)
-        .innerJoin(
-          LibraryTable,
-          eq(LibraryTable.id, LibraryFileTable.libraryId)
-        )
-        .where(
-          and(
-            eq(LibraryFileTable.fileId, file.id),
-            eq(LibraryTable.userId, userId),
-            isNull(LibraryFileTable.deletedAt)
-          )
-        )
-        .limit(1);
-
-      if (!link) {
+      if (!(await canUserViewFile(userId, session, file.id))) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You do not have access to this file.",
@@ -174,7 +167,7 @@ export const filesRouter = router({
             message: "Album not found",
           });
         }
-        if (albumRow.libraryUserId !== userId) {
+        if (!accessScope.visibleAlbumIds.has(albumId)) {
           throw new TRPCError({ code: "FORBIDDEN" });
         }
 
@@ -184,8 +177,8 @@ export const filesRouter = router({
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),
-              eq(AlbumFileTable.fileId, file.id)
-            )
+              eq(AlbumFileTable.fileId, file.id),
+            ),
           )
           .limit(1);
 
@@ -213,8 +206,7 @@ export const filesRouter = router({
       // Compute prev/next IDs efficiently by fetching only adjacent items
       // Instead of loading ALL file IDs, we use the current file's sort value
       // to find the immediate prev/next items (O(1) queries instead of O(n))
-      const currentSortValue =
-        imageMetadata?.takenAt ?? file.createdAt;
+      const currentSortValue = imageMetadata?.takenAt ?? file.createdAt;
 
       let prevId: string | null = null;
       let nextId: string | null = null;
@@ -228,16 +220,17 @@ export const filesRouter = router({
           .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
           .leftJoin(
             ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id)
+            eq(ImageMetadataTable.fileId, FileTable.id),
           )
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) > ${currentSortValue}`
-            )
+              buildFileAccessFilter(accessScope, FileTable.id),
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) > ${currentSortValue}`,
+            ),
           )
           .orderBy(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) ASC`
+            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) ASC`,
           )
           .limit(1);
 
@@ -247,18 +240,19 @@ export const filesRouter = router({
           .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
           .leftJoin(
             ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id)
+            eq(ImageMetadataTable.fileId, FileTable.id),
           )
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${currentSortValue}`
-            )
+              buildFileAccessFilter(accessScope, FileTable.id),
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${currentSortValue}`,
+            ),
           )
           .orderBy(
             desc(
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
-            )
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+            ),
           )
           .limit(1);
 
@@ -271,23 +265,14 @@ export const filesRouter = router({
           .select({ id: FileTable.id })
           .from(ImageMetadataTable)
           .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
-          .innerJoin(
-            LibraryFileTable,
-            eq(LibraryFileTable.fileId, FileTable.id)
-          )
-          .innerJoin(
-            LibraryTable,
-            eq(LibraryTable.id, LibraryFileTable.libraryId)
-          )
           .where(
             and(
-              eq(LibraryTable.userId, userId),
-              isNull(LibraryFileTable.deletedAt),
+              buildFileAccessFilter(accessScope, FileTable.id),
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
-              sql`${ImageMetadataTable.takenAt} > ${currentSortValue}`
-            )
+              sql`${ImageMetadataTable.takenAt} > ${currentSortValue}`,
+            ),
           )
           .orderBy(sql`${ImageMetadataTable.takenAt} ASC`)
           .limit(1);
@@ -296,23 +281,14 @@ export const filesRouter = router({
           .select({ id: FileTable.id })
           .from(ImageMetadataTable)
           .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
-          .innerJoin(
-            LibraryFileTable,
-            eq(LibraryFileTable.fileId, FileTable.id)
-          )
-          .innerJoin(
-            LibraryTable,
-            eq(LibraryTable.id, LibraryFileTable.libraryId)
-          )
           .where(
             and(
-              eq(LibraryTable.userId, userId),
-              isNull(LibraryFileTable.deletedAt),
+              buildFileAccessFilter(accessScope, FileTable.id),
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
-              sql`${ImageMetadataTable.takenAt} < ${currentSortValue}`
-            )
+              sql`${ImageMetadataTable.takenAt} < ${currentSortValue}`,
+            ),
           )
           .orderBy(desc(ImageMetadataTable.takenAt))
           .limit(1);
@@ -324,51 +300,39 @@ export const filesRouter = router({
         // Library files display in DESC order (newest first), so left/right arrows navigate through that visual order
         const [prev] = await db
           .select({ id: FileTable.id })
-          .from(LibraryFileTable)
-          .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
-          .innerJoin(
-            LibraryTable,
-            eq(LibraryTable.id, LibraryFileTable.libraryId)
-          )
+          .from(FileTable)
           .leftJoin(
             ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id)
+            eq(ImageMetadataTable.fileId, FileTable.id),
           )
           .where(
             and(
-              eq(LibraryTable.userId, userId),
-              isNull(LibraryFileTable.deletedAt),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) > ${currentSortValue}`
-            )
+              buildFileAccessFilter(accessScope, FileTable.id),
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) > ${currentSortValue}`,
+            ),
           )
           .orderBy(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) ASC`
+            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) ASC`,
           )
           .limit(1);
 
         const [next] = await db
           .select({ id: FileTable.id })
-          .from(LibraryFileTable)
-          .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
-          .innerJoin(
-            LibraryTable,
-            eq(LibraryTable.id, LibraryFileTable.libraryId)
-          )
+          .from(FileTable)
           .leftJoin(
             ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id)
+            eq(ImageMetadataTable.fileId, FileTable.id),
           )
           .where(
             and(
-              eq(LibraryTable.userId, userId),
-              isNull(LibraryFileTable.deletedAt),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${currentSortValue}`
-            )
+              buildFileAccessFilter(accessScope, FileTable.id),
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${currentSortValue}`,
+            ),
           )
           .orderBy(
             desc(
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`
-            )
+              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
+            ),
           )
           .limit(1);
 
@@ -376,12 +340,27 @@ export const filesRouter = router({
         nextId = next?.id ?? null;
       }
 
+      const ownerLibraryIds = accessScope.ownedLibraryIds;
+
       return {
         file,
         imageMetadata: imageMetadata ?? null,
         geoLocation: geoLocation ?? null,
         prevId,
         nextId,
+        canManageShares:
+          accessScope.isAdmin ||
+          (await db
+            .select({ libraryId: LibraryFileTable.libraryId })
+            .from(LibraryFileTable)
+            .where(
+              and(
+                eq(LibraryFileTable.fileId, file.id),
+                isNull(LibraryFileTable.deletedAt),
+              ),
+            )
+            .limit(1)
+            .then((rows) => ownerLibraryIds.has(rows[0]?.libraryId ?? ""))),
       };
     }),
 
@@ -399,11 +378,11 @@ export const filesRouter = router({
               mime: z.string(),
               size: z.number().int().nonnegative(),
               quality: z.number().int().min(1).max(100).optional(),
-            })
+            }),
           )
           .min(1)
           .max(2),
-      })
+      }),
     )
     .mutation(async ({ input }) => {
       const { originalFileId, variants } = input;
@@ -482,27 +461,31 @@ export const filesRouter = router({
       .where(
         and(
           eq(FileVariantTable.originalFileId, file.id),
-          inArray(FileVariantTable.type, ["thumbnail", "optimised"])
-        )
+          inArray(FileVariantTable.type, ["thumbnail", "optimised"]),
+        ),
       );
 
     const thumbnail = variants.find((v) => v.type === "thumbnail") ?? null;
     const optimized = variants.find((v) => v.type === "optimised") ?? null;
 
-    return { 
-      raw: file, 
-      thumbnail: thumbnail ? { 
-        id: thumbnail.id, 
-        dir: file.dir, 
-        name: `${basename(file.name, extname(file.name))}__thumb.avif`,
-        quality: thumbnail.quality 
-      } : null, 
-      optimized: optimized ? { 
-        id: optimized.id, 
-        dir: file.dir, 
-        name: `${basename(file.name, extname(file.name))}__opt.avif`,
-        quality: optimized.quality 
-      } : null 
+    return {
+      raw: file,
+      thumbnail: thumbnail
+        ? {
+            id: thumbnail.id,
+            dir: file.dir,
+            name: `${basename(file.name, extname(file.name))}__thumb.avif`,
+            quality: thumbnail.quality,
+          }
+        : null,
+      optimized: optimized
+        ? {
+            id: optimized.id,
+            dir: file.dir,
+            name: `${basename(file.name, extname(file.name))}__opt.avif`,
+            quality: optimized.quality,
+          }
+        : null,
     };
   }),
 
@@ -512,50 +495,135 @@ export const filesRouter = router({
         kind: z.enum(["all", "video", "image"]).default("all"),
         limit: z.number().int().positive().max(500).default(60),
         cursor: z.string().nullable().optional(),
-      })
+        seekCursor: z.string().nullable().optional(),
+      }),
     )
-    .query(async ({ ctx: { userId }, input }) => {
+    .query(async ({ ctx: { userId, session }, input }) => {
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
-      return getUsersFiles(userId, input);
+      return getUsersFiles(userId, session, input);
+    }),
+
+  getTimeline: privateProcedure
+    .input(
+      z.object({
+        kind: z.enum(["all", "video", "image"]).default("all"),
+      }),
+    )
+    .query(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) {
+        throw new TRPCError({ code: "UNAUTHORIZED" });
+      }
+
+      const [accessScope, hideUndated] = await Promise.all([
+        getAccessScope(userId, session),
+        getHideUndated(userId),
+      ]);
+      const sortExpr = sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`;
+
+      const months = await db
+        .select({
+          year: sql<number>`cast(strftime('%Y', ${sortExpr}) as integer)`,
+          month: sql<number>`cast(strftime('%m', ${sortExpr}) as integer)`,
+          count: sql<number>`count(*)`,
+        })
+        .from(FileTable)
+        .innerJoin(
+          ImageMetadataTable,
+          eq(ImageMetadataTable.fileId, FileTable.id),
+        )
+        .where(
+          and(
+            buildFileAccessFilter(accessScope, FileTable.id),
+            ...(input.kind === "all" ? [] : [eq(FileTable.type, input.kind)]),
+            ...(hideUndated ? [isNotNull(ImageMetadataTable.takenAt)] : []),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "thumbnail"),
+                  ),
+                ),
+            ),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "optimised"),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .groupBy(
+          sql`strftime('%Y', ${sortExpr})`,
+          sql`strftime('%m', ${sortExpr})`,
+        )
+        .orderBy(
+          desc(sql`cast(strftime('%Y', ${sortExpr}) as integer)`),
+          desc(sql`cast(strftime('%m', ${sortExpr}) as integer)`),
+        );
+
+      const total = months.reduce((sum, m) => sum + m.count, 0);
+      return { months, total };
     }),
 });
 
+const getHideUndated = async (userId: string): Promise<boolean> => {
+  const [settings] = await db
+    .select({ hideUndated: MediaSettingsTable.hideUndated })
+    .from(MediaSettingsTable)
+    .where(eq(MediaSettingsTable.userId, userId))
+    .limit(1);
+  return settings?.hideUndated ?? false;
+};
+
 const getUsersFiles = async (
   userId: string,
+  session: { user?: { type?: "user" | "admin" } } | null,
   params: {
     kind: "all" | "video" | "image";
     limit: number;
     cursor?: string | null | undefined;
-  }
+    seekCursor?: string | null | undefined;
+  },
 ) => {
-  const { kind, limit, cursor } = params;
+  const { kind, limit, cursor, seekCursor } = params;
+  const [accessScope, hideUndated] = await Promise.all([
+    getAccessScope(userId, session),
+    getHideUndated(userId),
+  ]);
+  const sortExpr = sql<string>`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`;
 
-  // cursor is now the takenAt timestamp of the last item — no extra round-trip needed
-  const cursorCondition = cursor
-    ? sql`${ImageMetadataTable.takenAt} < ${cursor}`
+  // seekCursor is used when jumping to a specific date (e.g. clicking a year/month on the timeline).
+  // It acts as the cursor when no regular pagination cursor is provided.
+  const effectiveCursor = cursor ?? seekCursor;
+  const cursorCondition = effectiveCursor
+    ? sql`${sortExpr} < ${effectiveCursor}`
     : undefined;
 
   const rows = await db
     .select({
       file: FileTable,
-      libraryId: LibraryTable.id,
-      libraryFileId: LibraryFileTable.id,
       blurhash: ImageMetadataTable.blurhash,
       takenAt: ImageMetadataTable.takenAt,
+      sortAt: sortExpr,
     })
-    .from(LibraryFileTable)
-    .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
-    .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
+    .from(FileTable)
     .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
     .where(
       and(
-        eq(LibraryTable.userId, userId),
-        isNull(LibraryFileTable.deletedAt),
-        // Only include files that have an actual takenAt date
-        isNotNull(ImageMetadataTable.takenAt),
+        buildFileAccessFilter(accessScope, FileTable.id),
         ...(kind === "all" ? [] : [eq(FileTable.type, kind)]),
+        // When hideUndated is on, only show files with a takenAt date
+        ...(hideUndated ? [isNotNull(ImageMetadataTable.takenAt)] : []),
         // Only include files that have BOTH thumbnail and optimised variants
         exists(
           db
@@ -564,9 +632,9 @@ const getUsersFiles = async (
             .where(
               and(
                 eq(FileVariantTable.originalFileId, FileTable.id),
-                eq(FileVariantTable.type, "thumbnail")
-              )
-            )
+                eq(FileVariantTable.type, "thumbnail"),
+              ),
+            ),
         ),
         exists(
           db
@@ -575,28 +643,26 @@ const getUsersFiles = async (
             .where(
               and(
                 eq(FileVariantTable.originalFileId, FileTable.id),
-                eq(FileVariantTable.type, "optimised")
-              )
-            )
+                eq(FileVariantTable.type, "optimised"),
+              ),
+            ),
         ),
         // Cursor-based pagination: only get items older than cursor timestamp
-        ...(cursorCondition ? [cursorCondition] : [])
-      )
+        ...(cursorCondition ? [cursorCondition] : []),
+      ),
     )
-    .orderBy(desc(ImageMetadataTable.takenAt))
+    .orderBy(desc(sortExpr))
     .limit(limit + 1);
 
   const data = rows.map((r) => ({
     ...r.file,
-    libraryId: r.libraryId,
-    libraryFileId: r.libraryFileId,
     blurhash: r.blurhash,
     takenAt: r.takenAt,
+    sortAt: r.sortAt,
   }));
 
   const hasMore = data.length > limit;
   const items = hasMore ? data.slice(0, limit) : data;
-  // cursor is now the takenAt of the last item, not its UUID
-  const nextCursor = hasMore ? (items[items.length - 1]?.takenAt ?? null) : null;
+  const nextCursor = hasMore ? (items[items.length - 1]?.sortAt ?? null) : null;
   return { items, nextCursor } as const;
 };

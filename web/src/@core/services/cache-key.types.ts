@@ -17,4 +17,7 @@ export const CacheKey = {
   CameraSingle: 'camera-single',
   LocationAll: 'location-all',
   LocationSingle: 'location-single',
+  TimelineAll: 'timeline-all',
+  TimelinePhotos: 'timeline-photos',
+  TimelineVideos: 'timeline-videos',
 };
