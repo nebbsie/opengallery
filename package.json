@@ -2,7 +2,13 @@
   "name": "opengallery-monorepo",
   "private": true,
   "scripts": {
-    "dev": "./scripts/dev.sh",
+    "dev": "npm run ensure-data && npm run migrate && concurrently --kill-others \"npm run dev:api\" \"npm run dev:worker-delayed\" \"npm run dev:web-delayed\"",
+    "dev:worker-delayed": "wait-on tcp:3000 && cross-env API_URL=http://localhost:3000 INTERNAL_TOKEN=my_token npm run dev:worker",
+    "dev:web-delayed": "wait-on tcp:3000 && cd web && npm start",
+    "ensure-data": "node -e \"const fs=require('fs'); const path=require('path'); const dir=path.join('api','data'); if(!fs.existsSync(dir)) fs.mkdirSync(dir,{recursive:true});\"",
+    "dev:api": "cd api && npm run start",
+    "dev:worker": "cd worker && npm run dev",
+    "dev:web": "cd web && npm start",
     "publish": "./scripts/publish-unified.sh",
     "local": "./scripts/run-local.sh",
     "migrate": "npm run db:migrate --prefix api",
@@ -15,5 +21,10 @@
     "web",
     "worker",
     "packages/*"
-  ]
+  ],
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "wait-on": "^8.0.0"
+  }
 }
