@@ -314,6 +314,7 @@ export const SystemSettingsTable = sqliteTable("system_settings", {
   thumbnailQuality: integer("thumbnail_quality").notNull().default(70),
   optimizedQuality: integer("optimized_quality").notNull().default(80),
   gpuEncoding: integer("gpu_encoding", { mode: "boolean" }).notNull().default(false),
+  selectedGpu: text("selected_gpu"), // Selected GPU for encoding (e.g., 'nvidia:0', 'intel', 'amd')
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

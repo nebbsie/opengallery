@@ -69,6 +69,7 @@ export const settingsRouter = router({
         thumbnailQuality: z.optional(z.number().int().min(1).max(100)),
         optimizedQuality: z.optional(z.number().int().min(1).max(100)),
         gpuEncoding: z.optional(z.boolean()),
+        selectedGpu: z.optional(z.string().nullable()),
         uploadPath: z.optional(z.string().nullable()),
         variantsPath: z.optional(z.string().nullable()),
       })
@@ -179,38 +180,55 @@ export const settingsRouter = router({
       const hasVideotoolbox = output.includes('h264_videotoolbox'); // macOS
       const hasVaapi = output.includes('h264_vaapi'); // Intel/AMD Linux
 
-      let encoderType = 'cpu';
-      let gpuName: string | null = null;
+      const gpus: Array<{ id: string; name: string; encoder: string }> = [];
 
+      // Detect NVIDIA GPUs
       if (hasNvenc) {
-        encoderType = 'nvenc';
-        // Try to get GPU name (nvidia-smi may not be available in containers)
         try {
-          const { stdout: nvidiaStdout } = await execAsync('nvidia-smi --query-gpu=name --format=csv,noheader');
-          gpuName = nvidiaStdout.trim();
+          const { stdout: nvidiaStdout } = await execAsync('nvidia-smi --query-gpu=index,name --format=csv,noheader');
+          const nvidiaGpus = nvidiaStdout.trim().split('\n').filter(line => line.trim());
+          for (const gpuLine of nvidiaGpus) {
+            const parts = gpuLine.split(',');
+            if (parts.length >= 2) {
+              const index = parts[0]?.trim();
+              const name = parts[1]?.trim();
+              if (index && name) {
+                gpus.push({ id: `nvidia:${index}`, name: `NVIDIA ${name}`, encoder: 'h264_nvenc' });
+              }
+            }
+          }
         } catch {
+          // Single GPU or nvidia-smi failed
+          gpus.push({ id: 'nvidia:0', name: 'NVIDIA GPU', encoder: 'h264_nvenc' });
           // Check if NVIDIA runtime is available via environment or fallback
-          gpuName = process.env.NVIDIA_VISIBLE_DEVICES
-            ? 'NVIDIA GPU (container)'
-            : 'NVIDIA GPU (NVENC available)';
         }
-      } else if (hasVideotoolbox) {
-        encoderType = 'videotoolbox';
-        gpuName = 'Apple Silicon/Intel Mac';
-      } else if (hasVaapi) {
-        encoderType = 'vaapi';
-        gpuName = 'Intel/AMD GPU (VAAPI)';
       }
+
+      // Detect Intel/AMD VAAPI
+      if (hasVaapi) {
+        gpus.push({ id: 'vaapi', name: 'Intel/AMD GPU (VAAPI)', encoder: 'h264_vaapi' });
+      }
+
+      // Detect Apple VideoToolbox
+      if (hasVideotoolbox) {
+        gpus.push({ id: 'videotoolbox', name: 'Apple Silicon/Intel Mac', encoder: 'h264_videotoolbox' });
+      }
+
+      // Always add CPU fallback
+      gpus.push({ id: 'cpu', name: 'CPU (Software)', encoder: 'libx264' });
 
       return {
         availableEncoders: {
           nvenc: hasNvenc,
           videotoolbox: hasVideotoolbox,
           vaapi: hasVaapi,
-          cpu: true, // Always available
+          cpu: true,
         },
-        detectedEncoder: encoderType,
-        gpuName,
+        detectedGpus: gpus,
+        defaultGpu: gpus.find(g => g.id.startsWith('nvidia'))?.id ??
+                    gpus.find(g => g.id === 'vaapi')?.id ??
+                    gpus.find(g => g.id === 'videotoolbox')?.id ??
+                    'cpu',
       };
     } catch (e) {
       // FFmpeg not available
@@ -222,8 +240,8 @@ export const settingsRouter = router({
           vaapi: false,
           cpu: false,
         },
-        detectedEncoder: 'none',
-        gpuName: null,
+        detectedGpus: [{ id: 'cpu', name: 'CPU (Software)', encoder: 'libx264' }],
+        defaultGpu: 'cpu',
         error: String(e),
       };
     }
