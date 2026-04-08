@@ -10,6 +10,7 @@
     "dev:worker": "cd worker && npm run dev",
     "dev:web": "cd web && npm start",
     "publish": "./scripts/publish-unified.sh",
+    "publish:dev": "./scripts/publish-unified-dev.sh",
     "local": "./scripts/run-local.sh",
     "migrate": "npm run db:migrate --prefix api",
     "generate": "npm run db:generate --prefix api",

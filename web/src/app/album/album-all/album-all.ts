@@ -13,7 +13,15 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-album-all',
-  imports: [ErrorAlert, HlmSpinner, HlmIcon, NgIcon, AlbumThumbnail, AlbumToolbar, VirtualThumbnailGrid],
+  imports: [
+    ErrorAlert,
+    HlmSpinner,
+    HlmIcon,
+    NgIcon,
+    AlbumThumbnail,
+    AlbumToolbar,
+    VirtualThumbnailGrid,
+  ],
   providers: [provideIcons({ lucideImages })],
   host: { class: 'flex flex-col h-full' },
   template: `
@@ -36,7 +44,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <p class="text-sm">Create an album to organize your photos</p>
         </div>
       } @else {
-        <app-virtual-thumbnail-grid class="min-h-0 flex-1" [items]="response.data() ?? []">
+        <app-virtual-thumbnail-grid
+          class="min-h-0 flex-1"
+          [items]="response.data() ?? []"
+          [rowHeightExtra]="48"
+        >
           <ng-template let-album>
             <app-album-thumbnail [album]="album" />
           </ng-template>

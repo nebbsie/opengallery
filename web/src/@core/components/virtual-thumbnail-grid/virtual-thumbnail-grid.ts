@@ -366,6 +366,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   pageCount = input(0);
   dateAccessor = input<(item: T) => Date | string | null | undefined>(() => null);
   timelineData = input<TimelineData | null>(null);
+  rowHeightExtra = input(0); // Extra height for content below thumbnail (e.g., album name)
 
   @Output() loadMore = new EventEmitter<void>();
   @Output() seekTo = new EventEmitter<{ year: number; month: number }>();
@@ -468,7 +469,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     const cols = this.columns();
     const gap = 8; // tailwind gap-2
     const tile = Math.floor((w - (cols - 1) * gap) / cols);
-    return Math.max(120, tile) + gap; // include gap to avoid overlap
+    return Math.max(120, tile) + gap + this.rowHeightExtra(); // include gap to avoid overlap
   });
 
   readonly gridRows = computed((): GridRow<T>[] => {
