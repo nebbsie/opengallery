@@ -9,6 +9,9 @@ import { getFullPath, toHostPath } from '../utils/paths.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
 import { throttleIo } from '../utils/io-throttle.js';
 
+// Folders to exclude from scanning (encoding/storage folders)
+const EXCLUDED_SCAN_FOLDERS = new Set(['uploads', 'variants', 'encodes']);
+
 type CreateFilesInput = RouterInputs['files']['create'];
 
 type TempFile = CreateFilesInput[0];
@@ -43,8 +46,12 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     for (const entry of entries) {
       const path = join(dir, entry.name);
 
-      // If directory, add to queue for recursion
+      // If directory, add to queue for recursion (skip excluded folders)
       if (entry.isDirectory()) {
+        if (EXCLUDED_SCAN_FOLDERS.has(entry.name)) {
+          logger.debug(`Skipping excluded folder: ${path}`);
+          continue;
+        }
         subdirs.push(path);
         continue;
       }
