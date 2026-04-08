@@ -545,74 +545,73 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
 
     // Try GPU encoding if enabled, fall back to CPU
     const useGpu = settings?.gpuEncoding ?? false;
+    const selectedGpu = settings?.selectedGpu ?? null;
     let gpuFailed = false;
 
-    if (useGpu) {
+    // Determine encoder based on selected GPU
+    const getEncoderCodec = (): { codec: string; name: string } => {
+      if (!selectedGpu || selectedGpu === 'cpu') {
+        return { codec: 'libx264', name: 'CPU' };
+      }
+      if (selectedGpu.startsWith('nvidia:')) {
+        return { codec: 'h264_nvenc', name: 'NVENC' };
+      }
+      if (selectedGpu === 'vaapi') {
+        return { codec: 'h264_vaapi', name: 'VAAPI' };
+      }
+      if (selectedGpu === 'videotoolbox') {
+        return { codec: 'h264_videotoolbox', name: 'VideoToolbox' };
+      }
+      // Default to NVENC if GPU enabled but no specific selection
+      return { codec: 'h264_nvenc', name: 'NVENC' };
+    };
+
+    const encoder = getEncoderCodec();
+
+    if (useGpu && encoder.codec !== 'libx264') {
       try {
-        logger.info(`[encode:video] attempting NVENC GPU encoding id=${file.id}`);
-        if (duration && duration > 0) {
-          await runFfmpegWithProgress(
-            [
-              '-y',
-              '-i',
-              inputPath,
-              '-c:v',
-              'h264_nvenc',
-              '-preset',
-              'p4',
-              '-cq',
-              '23',
-              '-pix_fmt',
-              'yuv420p',
-              '-vf',
-              "scale='min(1920,iw)':'-2'",
-              '-c:a',
-              'aac',
-              '-b:a',
-              '128k',
-              '-ac',
-              '2',
-              '-movflags',
-              '+faststart',
-              optPath,
-            ],
-            'optimise-nvenc',
-            duration,
-            reportProgress,
-          );
-        } else {
-          await runFfmpeg(
-            [
-              '-y',
-              '-i',
-              inputPath,
-              '-c:v',
-              'h264_nvenc',
-              '-preset',
-              'p4',
-              '-cq',
-              '23',
-              '-pix_fmt',
-              'yuv420p',
-              '-vf',
-              "scale='min(1920,iw)':'-2'",
-              '-c:a',
-              'aac',
-              '-b:a',
-              '128k',
-              '-ac',
-              '2',
-              '-movflags',
-              '+faststart',
-              optPath,
-            ],
-            'optimise-nvenc',
-          );
+        logger.info(`[encode:video] attempting ${encoder.name} GPU encoding id=${file.id} gpu=${selectedGpu}`);
+
+        // Base arguments for all encoders
+        const baseArgs = [
+          '-y',
+          '-i',
+          inputPath,
+          '-c:v',
+          encoder.codec,
+          '-pix_fmt',
+          'yuv420p',
+          '-vf',
+          "scale='min(1920,iw)':'-2'",
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-ac',
+          '2',
+          '-movflags',
+          '+faststart',
+          optPath,
+        ];
+
+        // Add encoder-specific options
+        if (encoder.codec === 'h264_nvenc') {
+          baseArgs.splice(5, 0, '-preset', 'p4', '-cq', '23');
+        } else if (encoder.codec === 'h264_vaapi') {
+          baseArgs.splice(5, 0, '-qp', '23');
+        } else if (encoder.codec === 'h264_videotoolbox') {
+          baseArgs.splice(5, 0, '-b:v', '5M');
         }
-        logger.info(`[encode:video] NVENC encoding successful id=${file.id}`);
+
+        if (duration && duration > 0) {
+          await runFfmpegWithProgress(baseArgs, `optimise-${encoder.name.toLowerCase()}`, duration, reportProgress);
+        } else {
+          await runFfmpeg(baseArgs, `optimise-${encoder.name.toLowerCase()}`);
+        }
+        logger.info(`[encode:video] ${encoder.name} encoding successful id=${file.id}`);
       } catch (e) {
         logger.warn(
-          `[encode:video] NVENC encoding failed, falling back to CPU id=${file.id}`,
+          `[encode:video] ${encoder.name} encoding failed, falling back to CPU id=${file.id}`,
           e as Error,
         );
         gpuFailed = true;

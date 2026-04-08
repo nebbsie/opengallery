@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
@@ -32,22 +32,12 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
         @if (encoderInfo.isSuccess()) {
           <div class="flex items-center gap-2">
             <span class="text-sm">Detected:</span>
-            @if (encoderInfo.data().detectedEncoder === 'nvenc') {
+            @if (hasGpuDetected()) {
               <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
                 <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
-                NVENC - {{ encoderInfo.data().gpuName }}
+                {{ primaryGpuName() }}
               </span>
-            } @else if (encoderInfo.data().detectedEncoder === 'videotoolbox') {
-              <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
-                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
-                VideoToolbox - {{ encoderInfo.data().gpuName }}
-              </span>
-            } @else if (encoderInfo.data().detectedEncoder === 'vaapi') {
-              <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
-                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
-                VAAPI - {{ encoderInfo.data().gpuName }}
-              </span>
-            } @else if (encoderInfo.data().detectedEncoder === 'cpu') {
+            } @else if (encoderInfo.data().detectedGpus.length === 1 && encoderInfo.data().detectedGpus[0].id === 'cpu') {
               <span class="inline-flex items-center rounded bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800 dark:bg-yellow-900/30">
                 <span class="mr-1 inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
                 CPU Only (no GPU detected)
@@ -84,6 +74,31 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           Use NVIDIA NVENC for video encoding (5-10x faster). Requires NVIDIA GPU with NVENC support.
           Falls back to CPU if unavailable.
         </p>
+
+        @if (hasMultipleGpus() && gpuEncoding()) {
+          <div class="flex items-center justify-between mt-2">
+            <label for="gpu-select" class="text-sm">Select GPU</label>
+            <select
+              id="gpu-select"
+              [value]="selectedGpu() ?? encoderInfo.data()?.defaultGpu"
+              (change)="onGpuSelectChange($any($event.target).value)"
+              class="text-sm border rounded px-2 py-1 bg-background"
+            >
+              @for (gpu of encoderInfo.data()?.detectedGpus; track gpu.id) {
+                <option [value]="gpu.id">{{ gpu.name }}</option>
+              }
+            </select>
+          </div>
+          <p class="text-muted-foreground text-xs">Choose which GPU to use for encoding.</p>
+
+          @if (isBetaGpu()) {
+            <div class="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded">
+              <p class="text-yellow-600 text-xs">
+                <strong>Note:</strong> {{ selectedGpuName() }} support is experimental. NVIDIA NVENC is recommended for best compatibility.
+              </p>
+            </div>
+          }
+        }
 
         <div class="flex items-center justify-between mt-2">
           <label for="concurrency" class="text-sm">Encoding Concurrency</label>
@@ -176,6 +191,7 @@ export class SettingsEncoding {
   thumbQuality = signal<number>(70);
   optQuality = signal<number>(80);
   gpuEncoding = signal<boolean>(false);
+  selectedGpu = signal<string | null>(null);
 
   private originalThumbQuality = 70;
   private originalOptQuality = 80;
@@ -194,25 +210,63 @@ export class SettingsEncoding {
         this.originalOptQuality = data.optimizedQuality;
       }
       if (data?.gpuEncoding !== undefined) this.gpuEncoding.set(data.gpuEncoding);
+      if (data?.selectedGpu !== undefined) this.selectedGpu.set(data.selectedGpu);
     });
   }
+
+  hasGpuDetected = computed(() => {
+    const info = this.encoderInfo.data();
+    return info?.detectedGpus?.some(g => g.id !== 'cpu') ?? false;
+  });
+
+  primaryGpuName = computed(() => {
+    const info = this.encoderInfo.data();
+    if (!info) return 'Unknown';
+    // Find first non-CPU GPU
+    const gpu = info.detectedGpus?.find(g => g.id !== 'cpu');
+    return gpu?.name ?? 'No GPU';
+  });
 
   hasQualityChanged(): boolean {
     return this.thumbQuality() !== this.originalThumbQuality || this.optQuality() !== this.originalOptQuality;
   }
 
-  activeEncoderName(): string {
-    const encoder = this.encoderInfo.data()?.detectedEncoder;
-    const gpuEnabled = this.gpuEncoding();
-    
-    if (!encoder || encoder === 'none') return 'Unknown';
-    
-    if (gpuEnabled && encoder === 'nvenc') return 'h264_nvenc (GPU)';
-    if (gpuEnabled && encoder === 'videotoolbox') return 'h264_videotoolbox (GPU)';
-    if (gpuEnabled && encoder === 'vaapi') return 'h264_vaapi (GPU)';
-    
-    return 'libx264 (CPU)';
-  }
+  activeEncoderName = computed(() => {
+    const info = this.encoderInfo.data();
+    const selected = this.selectedGpu();
+    if (!info) return 'Unknown';
+
+    // Find the selected GPU info
+    const gpu = info.detectedGpus?.find(g => g.id === selected);
+    if (gpu) {
+      return gpu.name;
+    }
+
+    // Fallback to default detection
+    if (info.detectedGpus?.length > 0) {
+      const defaultGpu = info.detectedGpus.find(g => g.id === info.defaultGpu);
+      return defaultGpu?.name || 'Unknown';
+    }
+
+    return 'CPU (Software)';
+  });
+
+  hasMultipleGpus = computed(() => {
+    const info = this.encoderInfo.data();
+    return (info?.detectedGpus?.length ?? 0) > 1;
+  });
+
+  isBetaGpu = computed(() => {
+    const selected = this.selectedGpu() ?? this.encoderInfo.data()?.defaultGpu;
+    return selected === 'vaapi' || selected === 'videotoolbox';
+  });
+
+  selectedGpuName = computed(() => {
+    const info = this.encoderInfo.data();
+    const selected = this.selectedGpu() ?? info?.defaultGpu;
+    const gpu = info?.detectedGpus?.find(g => g.id === selected);
+    return gpu?.name ?? 'Unknown';
+  });
 
   onEncodingChange(value: string) {
     const n = Number(value);
@@ -238,6 +292,10 @@ export class SettingsEncoding {
     this.gpuEncoding.set(checked);
   }
 
+  onGpuSelectChange(value: string) {
+    this.selectedGpu.set(value);
+  }
+
   saveMutation = injectMutation(() => ({
     mutationFn: async () =>
       this.trpc.settings.update.mutate({
@@ -246,6 +304,7 @@ export class SettingsEncoding {
         thumbnailQuality: this.thumbQuality(),
         optimizedQuality: this.optQuality(),
         gpuEncoding: this.gpuEncoding(),
+        selectedGpu: this.selectedGpu(),
       }),
     onSuccess: (data) => {
       if (data?.encodingConcurrency) this.concurrency.set(data.encodingConcurrency);
@@ -259,6 +318,7 @@ export class SettingsEncoding {
         this.originalOptQuality = data.optimizedQuality;
       }
       if (data?.gpuEncoding !== undefined) this.gpuEncoding.set(data.gpuEncoding);
+      if (data?.selectedGpu !== undefined) this.selectedGpu.set(data.selectedGpu);
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
       this.queryClient.invalidateQueries({ queryKey: ['encoderInfo'] });
     },
