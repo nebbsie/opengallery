@@ -5,13 +5,13 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
+import { validateCamera } from '../utils/camera-validator.js';
 import { getExifInfo } from '../utils/exif.js';
 import { getVideoMetadata } from '../utils/ffprobe.js';
+import { throttleIo } from '../utils/io-throttle.js';
 import { logger } from '../utils/logger.js';
 import { toContainerPath } from '../utils/paths.js';
 import { type RouterOutputs, trpc } from '../utils/trpc.js';
-import { throttleIo } from '../utils/io-throttle.js';
-import { validateCamera } from '../utils/camera-validator.js';
 
 type File = RouterOutputs['files']['getFileById']['raw'];
 type EncodeStatus = 'success' | 'failed';
@@ -30,7 +30,15 @@ function getFileStableHash(file: File): string {
   return createHash('sha256').update(fullPath).digest('hex').slice(0, 16);
 }
 
-async function encodeImage(file: File, existingVariants?: { thumbPath: string; optPath: string; thumbQuality: number | undefined; optQuality: number | undefined }) {
+async function encodeImage(
+  file: File,
+  existingVariants?: {
+    thumbPath: string;
+    optPath: string;
+    thumbQuality: number | undefined;
+    optQuality: number | undefined;
+  },
+) {
   const timings: Record<string, number> = {};
   let stepStart = Date.now();
 
@@ -93,10 +101,9 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
   const optPath = join(destDir, optName);
 
   // If variants already exist on disk, check if quality matches - re-encode if not
-  const needsReencode = existingVariants && (
-    existingVariants.thumbQuality !== thumbQuality ||
-    existingVariants.optQuality !== optQuality
-  );
+  const needsReencode =
+    existingVariants &&
+    (existingVariants.thumbQuality !== thumbQuality || existingVariants.optQuality !== optQuality);
 
   let thumb: { data: Buffer; info: { size: number } };
   let opt: { data: Buffer; info: { size: number } };
@@ -111,7 +118,9 @@ async function encodeImage(file: File, existingVariants?: { thumbPath: string; o
     opt = { data: optData, info: { size: optData.length } };
   } else {
     if (needsReencode) {
-      logger.info(`[encode:image] re-encoding due to quality change: thumb ${existingVariants.thumbQuality}->${thumbQuality}, opt ${existingVariants.optQuality}->${optQuality} for id=${fileId}`);
+      logger.info(
+        `[encode:image] re-encoding due to quality change: thumb ${existingVariants.thumbQuality}->${thumbQuality}, opt ${existingVariants.optQuality}->${optQuality} for id=${fileId}`,
+      );
     }
 
     try {
@@ -256,7 +265,7 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
   const hasOpt = !!fileResult.optimized;
   const thumbQualityMatches = fileResult.thumbnail?.quality === thumbQuality;
   const optQualityMatches = fileResult.optimized?.quality === optQuality;
-  
+
   if (file.type === 'image' && hasThumb && hasOpt && thumbQualityMatches && optQualityMatches) {
     await trpc.fileTask.setManyStatusByFileAndType.mutate([
       { fileId, type: 'encode_thumbnail', status: 'succeeded' },
@@ -265,12 +274,14 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
     logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
     return { type: 'image', status: 'success' };
   }
-  
+
   // Log if quality changed and we need to re-encode
   if (file.type === 'image' && hasThumb && hasOpt && (!thumbQualityMatches || !optQualityMatches)) {
-    logger.info(`[encode] re-encoding image due to quality change: thumb ${fileResult.thumbnail?.quality}->${thumbQuality}, opt ${fileResult.optimized?.quality}->${optQuality} for id=${fileId}`);
+    logger.info(
+      `[encode] re-encoding image due to quality change: thumb ${fileResult.thumbnail?.quality}->${thumbQuality}, opt ${fileResult.optimized?.quality}->${optQuality} for id=${fileId}`,
+    );
   }
-  
+
   if (file.type === 'video' && hasThumb && hasOpt) {
     await trpc.fileTask.setManyStatusByFileAndType.mutate([
       { fileId, type: 'video_poster', status: 'succeeded' },
@@ -290,7 +301,14 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
 
       // Check if encoded files already exist on disk (DB may have been reset)
       // Also check if quality matches current settings - if not, need to re-encode
-      let existingVariants: { thumbPath: string; optPath: string; thumbQuality: number | undefined; optQuality: number | undefined } | undefined;
+      let existingVariants:
+        | {
+            thumbPath: string;
+            optPath: string;
+            thumbQuality: number | undefined;
+            optQuality: number | undefined;
+          }
+        | undefined;
       if (variantsPath) {
         const pathHash = getFileStableHash(file);
         const destDir = join(variantsPath, 'images', pathHash);
@@ -299,8 +317,8 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
         const optPath = join(destDir, `${base}__opt.avif`);
         if (existsSync(thumbPath) && existsSync(optPath)) {
           logger.info(`[encode] found existing encoded files on disk for image id=${fileId}`);
-          existingVariants = { 
-            thumbPath, 
+          existingVariants = {
+            thumbPath,
             optPath,
             thumbQuality: fileResult.thumbnail?.quality ?? undefined,
             optQuality: fileResult.optimized?.quality ?? undefined,
@@ -405,7 +423,7 @@ function parseFfmpegTime(stderr: string): number | null {
   if (timeMatches.length === 0) return null;
 
   const lastMatch = timeMatches[timeMatches.length - 1];
-  if (!lastMatch[1] || !lastMatch[2] || !lastMatch[3]) return null;
+  if (!lastMatch || !lastMatch[1] || !lastMatch[2] || !lastMatch[3]) return null;
 
   const hours = parseInt(lastMatch[1], 10);
   const minutes = parseInt(lastMatch[2], 10);
@@ -447,7 +465,10 @@ async function runFfmpegWithProgress(
       // Parse progress from FFmpeg output
       const currentTime = parseFfmpegTime(stderr);
       if (currentTime !== null && durationSeconds > 0) {
-        const percent = Math.min(100, Math.max(0, Math.round((currentTime / durationSeconds) * 100)));
+        const percent = Math.min(
+          100,
+          Math.max(0, Math.round((currentTime / durationSeconds) * 100)),
+        );
         // Only report every 5% to avoid excessive API calls
         if (percent !== lastReportedPercent && percent % 5 === 0) {
           lastReportedPercent = percent;
@@ -509,7 +530,9 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
   } else {
     // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
     // Use progress tracking if we have duration
-    logger.info(`[encode:video] starting transcode id=${file.id} duration=${duration ?? 'unknown'}s gpu=${settings?.gpuEncoding ?? false}`);
+    logger.info(
+      `[encode:video] starting transcode id=${file.id} duration=${duration ?? 'unknown'}s gpu=${settings?.gpuEncoding ?? false}`,
+    );
 
     const reportProgress = async (percent: number) => {
       logger.debug(`[encode:video] progress id=${file.id} ${percent}%`);
@@ -588,7 +611,10 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
         }
         logger.info(`[encode:video] NVENC encoding successful id=${file.id}`);
       } catch (e) {
-        logger.warn(`[encode:video] NVENC encoding failed, falling back to CPU id=${file.id}`, e as Error);
+        logger.warn(
+          `[encode:video] NVENC encoding failed, falling back to CPU id=${file.id}`,
+          e as Error,
+        );
         gpuFailed = true;
       }
     }
