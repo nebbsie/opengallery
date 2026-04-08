@@ -105,14 +105,20 @@ export const fileTaskRouter = router({
         finishedAt?: string;
         lastError?: string;
         attempts?: ReturnType<typeof sql>;
+        progress?: number | null;
       } = { status: input.status, updatedAt: now };
-      if (input.status === "in_progress") update.startedAt = now;
+      if (input.status === "in_progress") {
+        update.startedAt = now;
+        update.progress = 0; // Reset progress when starting
+      }
       if (
         input.status === "succeeded" ||
         input.status === "failed" ||
         input.status === "skipped"
-      )
+      ) {
         update.finishedAt = now;
+        update.progress = null; // Clear progress when done
+      }
       if (input.error) update.lastError = input.error;
       if (input.incrementAttempts)
         update.attempts = sql`${FileTaskTable.attempts} + 1`;
@@ -226,13 +232,18 @@ export const fileTaskRouter = router({
           status: item.status,
           updatedAt: now,
         };
-        if (item.status === "in_progress") update["startedAt"] = now;
+        if (item.status === "in_progress") {
+          update["startedAt"] = now;
+          update["progress"] = 0; // Reset progress when starting
+        }
         if (
           item.status === "succeeded" ||
           item.status === "failed" ||
           item.status === "skipped"
-        )
+        ) {
           update["finishedAt"] = now;
+          update["progress"] = null; // Clear progress when done
+        }
         if (item.error) update["lastError"] = item.error;
         if (item.incrementAttempts)
           update["attempts"] = sql`${FileTaskTable.attempts} + 1`;
@@ -331,6 +342,30 @@ export const fileTaskRouter = router({
     return candidateFileIds;
   }),
 
+  // Update progress for a task (used during video encoding)
+  setProgress: internalProcedure
+    .input(
+      z.object({
+        fileId: z.string().uuid(),
+        type: z.enum(["encode_thumbnail", "encode_optimised", "video_poster"]),
+        progress: z.number().int().min(0).max(100),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const now = new Date().toISOString();
+      const [row] = await db
+        .update(FileTaskTable)
+        .set({ progress: input.progress, updatedAt: now })
+        .where(
+          and(
+            eq(FileTaskTable.fileId, input.fileId),
+            eq(FileTaskTable.type, input.type)
+          )
+        )
+        .returning({ id: FileTaskTable.id, progress: FileTaskTable.progress });
+      return row ?? null;
+    }),
+
   // List outstanding encode-related tasks per file (attempts <3 and not succeeded)
   listOutstanding: privateProcedure
     .input(
@@ -395,6 +430,7 @@ export const fileTaskRouter = router({
           status: FileTaskTable.status,
           attempts: FileTaskTable.attempts,
           lastError: FileTaskTable.lastError,
+          progress: FileTaskTable.progress,
           updatedAt: FileTaskTable.updatedAt,
         })
         .from(FileTaskTable)
@@ -416,6 +452,7 @@ export const fileTaskRouter = router({
           status: string;
           attempts: number;
           lastError: string | null;
+          progress: number | null;
         }>
       >();
       for (const r of rows) {
@@ -425,6 +462,7 @@ export const fileTaskRouter = router({
           status: r.status!,
           attempts: r.attempts,
           lastError: r.lastError,
+          progress: r.progress ?? 0,
         });
       }
 

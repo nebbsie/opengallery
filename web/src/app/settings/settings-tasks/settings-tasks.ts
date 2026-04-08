@@ -50,34 +50,49 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
               <div class="truncate" [title]="item.fileId">{{ item.fileId }}</div>
               <div class="text-right">
                 @for (t of item.tasks; track t.type) {
-                  @if (t.status === 'pending') {
-                    <span
-                      class="mr-1 inline-block rounded bg-yellow-100 px-1 text-yellow-800 dark:bg-yellow-900/30"
-                    >
-                      {{ t.type }}
-                    </span>
-                  }
-                  @if (t.status === 'in_progress') {
-                    <span
-                      class="mr-1 inline-block rounded bg-blue-100 px-1 text-blue-800 dark:bg-blue-900/30"
-                    >
-                      {{ t.type }}
-                    </span>
-                  }
-                  @if (t.status === 'succeeded') {
-                    <span
-                      class="mr-1 inline-block rounded bg-green-100 px-1 text-green-800 dark:bg-green-900/30"
-                    >
-                      {{ t.type }}
-                    </span>
-                  }
-                  @if (t.status === 'failed') {
-                    <span
-                      class="mr-1 inline-block rounded bg-red-100 px-1 text-red-800 dark:bg-red-900/30"
-                    >
-                      {{ t.type }}
-                    </span>
-                  }
+                  <span class="mr-4 inline-flex items-center gap-1">
+                    @if (t.status === 'pending') {
+                      <span
+                        class="mr-1 inline-block rounded bg-yellow-100 px-1 text-yellow-800 dark:bg-yellow-900/30"
+                      >
+                        {{ t.type }}
+                      </span>
+                    }
+                    @if (t.status === 'in_progress') {
+                      <span
+                        class="mr-1 inline-block rounded bg-blue-100 px-1 text-blue-800 dark:bg-blue-900/30"
+                      >
+                        {{ t.type }}
+                      </span>
+                      @if (t.progress != null && t.progress > 0) {
+                        <div class="inline-flex w-24 items-center gap-1 align-middle">
+                          <div class="h-2.5 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+                            <div
+                              class="h-full bg-blue-500 transition-all duration-300"
+                              [style.width.%]="t.progress"
+                            ></div>
+                          </div>
+                          <span class="text-xs text-gray-500">{{ t.progress }}%</span>
+                        </div>
+                      } @else {
+                        <span class="text-xs text-gray-400">processing...</span>
+                      }
+                    }
+                    @if (t.status === 'succeeded') {
+                      <span
+                        class="mr-1 inline-block rounded bg-green-100 px-1 text-green-800 dark:bg-green-900/30"
+                      >
+                        {{ t.type }}
+                      </span>
+                    }
+                    @if (t.status === 'failed') {
+                      <span
+                        class="mr-1 inline-block rounded bg-red-100 px-1 text-red-800 dark:bg-red-900/30"
+                      >
+                        {{ t.type }}
+                      </span>
+                    }
+                  </span>
                 }
               </div>
             }
