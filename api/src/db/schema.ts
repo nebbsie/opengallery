@@ -424,6 +424,7 @@ export const FileTaskTable = sqliteTable(
     startedAt: text("started_at"),
     finishedAt: text("finished_at"),
     lastError: text("last_error"),
+    progress: integer("progress").default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

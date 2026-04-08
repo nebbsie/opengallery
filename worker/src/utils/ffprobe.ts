@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 type FfprobeFormat = {
+  duration?: string;
   tags?: Record<string, unknown>;
 };
 
@@ -90,6 +91,7 @@ async function runFfprobeJson(path: string): Promise<FfprobeResult | undefined> 
 export async function getVideoMetadata(inputPath: string): Promise<{
   width?: number;
   height?: number;
+  duration?: number; // in seconds
   takenAt?: Date;
   lat?: number;
   lon?: number;
@@ -103,6 +105,9 @@ export async function getVideoMetadata(inputPath: string): Promise<{
   const videoStream = (info.streams || []).find((s) => s.codec_type === 'video');
   const width = videoStream?.width;
   const height = videoStream?.height;
+
+  // Get duration from format (in seconds)
+  const duration = info.format?.duration ? Number(info.format.duration) : undefined;
 
   const formatTags = info.format?.tags;
   const streamTags = videoStream?.tags;
@@ -129,6 +134,7 @@ export async function getVideoMetadata(inputPath: string): Promise<{
   const result: {
     width?: number;
     height?: number;
+    duration?: number;
     takenAt?: Date;
     lat?: number;
     lon?: number;
@@ -138,6 +144,7 @@ export async function getVideoMetadata(inputPath: string): Promise<{
   } = {};
   if (width != null) result.width = width;
   if (height != null) result.height = height;
+  if (duration != null && !isNaN(duration)) result.duration = duration;
   if (takenAt != null) result.takenAt = takenAt;
   if (lat != null) result.lat = lat;
   if (lon != null) result.lon = lon;

@@ -397,6 +397,22 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
   return null;
 }
 
+// Parse time from FFmpeg stderr output (format: time=00:05:32.42)
+// Finds the LAST occurrence to get the most recent progress
+function parseFfmpegTime(stderr: string): number | null {
+  // Find all time matches and use the last one (most recent progress)
+  const timeMatches = [...stderr.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)];
+  if (timeMatches.length === 0) return null;
+
+  const lastMatch = timeMatches[timeMatches.length - 1];
+  if (!lastMatch[1] || !lastMatch[2] || !lastMatch[3]) return null;
+
+  const hours = parseInt(lastMatch[1], 10);
+  const minutes = parseInt(lastMatch[2], 10);
+  const seconds = parseFloat(lastMatch[3]);
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
 async function runFfmpeg(args: string[], label: string) {
   return new Promise<void>((resolve, reject) => {
     logger.debug(`[ffmpeg:${label}] spawn ${args.join(' ')}`);
@@ -408,6 +424,48 @@ async function runFfmpeg(args: string[], label: string) {
       logger.error(`[ffmpeg:${label}] failed code=${code} stderr=${stderr}`);
       reject(new Error(`ffmpeg ${label} failed (code ${code}): ${stderr}`));
     });
+    child.on('error', (err) => reject(err));
+  });
+}
+
+async function runFfmpegWithProgress(
+  args: string[],
+  label: string,
+  durationSeconds: number,
+  onProgress: (percent: number) => void | Promise<void>,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    logger.debug(`[ffmpeg:${label}] spawn with progress tracking ${args.join(' ')}`);
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    let lastReportedPercent = -1;
+
+    child.stderr.on('data', async (d) => {
+      const chunk = String(d);
+      stderr += chunk;
+
+      // Parse progress from FFmpeg output
+      const currentTime = parseFfmpegTime(stderr);
+      if (currentTime !== null && durationSeconds > 0) {
+        const percent = Math.min(100, Math.max(0, Math.round((currentTime / durationSeconds) * 100)));
+        // Only report every 5% to avoid excessive API calls
+        if (percent !== lastReportedPercent && percent % 5 === 0) {
+          lastReportedPercent = percent;
+          try {
+            await onProgress(percent);
+          } catch (e) {
+            // Ignore progress reporting errors
+          }
+        }
+      }
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) return resolve();
+      logger.error(`[ffmpeg:${label}] failed code=${code} stderr=${stderr}`);
+      reject(new Error(`ffmpeg ${label} failed (code ${code}): ${stderr}`));
+    });
+
     child.on('error', (err) => reject(err));
   });
 }
@@ -432,8 +490,8 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
   const thumbPath = join(destDir, thumbName);
   const optPath = join(destDir, optName);
 
-  // Extract metadata (width/height, takenAt, geo) from source video
-  const { width, height, takenAt, lat, lon, cameraMake, cameraModel, lensModel } =
+  // Extract metadata (width/height, duration, takenAt, geo) from source video
+  const { width, height, duration, takenAt, lat, lon, cameraMake, cameraModel, lensModel } =
     await getVideoMetadata(inputPath);
 
   let thumbSize: number;
@@ -450,37 +508,86 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
     optSize = optStat.size;
   } else {
     // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
-    await runFfmpeg(
-      [
-        '-y',
-        '-i',
-        inputPath,
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '23',
-        '-profile:v',
-        'high',
-        '-level',
-        '4.1',
-        '-pix_fmt',
-        'yuv420p',
-        '-vf',
-        "scale='min(1920,iw)':'-2'",
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-        '-ac',
-        '2',
-        '-movflags',
-        '+faststart',
-        optPath,
-      ],
-      'optimise',
-    );
+    // Use progress tracking if we have duration
+    logger.info(`[encode:video] starting transcode id=${file.id} duration=${duration ?? 'unknown'}s`);
+
+    const reportProgress = async (percent: number) => {
+      logger.debug(`[encode:video] progress id=${file.id} ${percent}%`);
+      await trpc.fileTask.setProgress.mutate({
+        fileId: file.id,
+        type: 'encode_optimised',
+        progress: percent,
+      });
+    };
+
+    if (duration && duration > 0) {
+      await runFfmpegWithProgress(
+        [
+          '-y',
+          '-i',
+          inputPath,
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-profile:v',
+          'high',
+          '-level',
+          '4.1',
+          '-pix_fmt',
+          'yuv420p',
+          '-vf',
+          "scale='min(1920,iw)':'-2'",
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-ac',
+          '2',
+          '-movflags',
+          '+faststart',
+          optPath,
+        ],
+        'optimise',
+        duration,
+        reportProgress,
+      );
+    } else {
+      // Fallback to non-progress tracking for unknown duration
+      await runFfmpeg(
+        [
+          '-y',
+          '-i',
+          inputPath,
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-profile:v',
+          'high',
+          '-level',
+          '4.1',
+          '-pix_fmt',
+          'yuv420p',
+          '-vf',
+          "scale='min(1920,iw)':'-2'",
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-ac',
+          '2',
+          '-movflags',
+          '+faststart',
+          optPath,
+        ],
+        'optimise',
+      );
+    }
 
     // Poster frame (first frame), scaled to width 320px
     await runFfmpeg(
