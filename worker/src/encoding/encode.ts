@@ -509,7 +509,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
   } else {
     // Optimised MP4 (H.264/AAC, faststart, max 1080p, yuv420p)
     // Use progress tracking if we have duration
-    logger.info(`[encode:video] starting transcode id=${file.id} duration=${duration ?? 'unknown'}s`);
+    logger.info(`[encode:video] starting transcode id=${file.id} duration=${duration ?? 'unknown'}s gpu=${settings?.gpuEncoding ?? false}`);
 
     const reportProgress = async (percent: number) => {
       logger.debug(`[encode:video] progress id=${file.id} ${percent}%`);
@@ -520,73 +520,149 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
       });
     };
 
-    if (duration && duration > 0) {
-      await runFfmpegWithProgress(
-        [
-          '-y',
-          '-i',
-          inputPath,
-          '-c:v',
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-crf',
-          '23',
-          '-profile:v',
-          'high',
-          '-level',
-          '4.1',
-          '-pix_fmt',
-          'yuv420p',
-          '-vf',
-          "scale='min(1920,iw)':'-2'",
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          '-ac',
-          '2',
-          '-movflags',
-          '+faststart',
-          optPath,
-        ],
-        'optimise',
-        duration,
-        reportProgress,
-      );
-    } else {
-      // Fallback to non-progress tracking for unknown duration
-      await runFfmpeg(
-        [
-          '-y',
-          '-i',
-          inputPath,
-          '-c:v',
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-crf',
-          '23',
-          '-profile:v',
-          'high',
-          '-level',
-          '4.1',
-          '-pix_fmt',
-          'yuv420p',
-          '-vf',
-          "scale='min(1920,iw)':'-2'",
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          '-ac',
-          '2',
-          '-movflags',
-          '+faststart',
-          optPath,
-        ],
-        'optimise',
-      );
+    // Try GPU encoding if enabled, fall back to CPU
+    const useGpu = settings?.gpuEncoding ?? false;
+    let gpuFailed = false;
+
+    if (useGpu) {
+      try {
+        logger.info(`[encode:video] attempting NVENC GPU encoding id=${file.id}`);
+        if (duration && duration > 0) {
+          await runFfmpegWithProgress(
+            [
+              '-y',
+              '-i',
+              inputPath,
+              '-c:v',
+              'h264_nvenc',
+              '-preset',
+              'p4',
+              '-cq',
+              '23',
+              '-pix_fmt',
+              'yuv420p',
+              '-vf',
+              "scale='min(1920,iw)':'-2'",
+              '-c:a',
+              'aac',
+              '-b:a',
+              '128k',
+              '-ac',
+              '2',
+              '-movflags',
+              '+faststart',
+              optPath,
+            ],
+            'optimise-nvenc',
+            duration,
+            reportProgress,
+          );
+        } else {
+          await runFfmpeg(
+            [
+              '-y',
+              '-i',
+              inputPath,
+              '-c:v',
+              'h264_nvenc',
+              '-preset',
+              'p4',
+              '-cq',
+              '23',
+              '-pix_fmt',
+              'yuv420p',
+              '-vf',
+              "scale='min(1920,iw)':'-2'",
+              '-c:a',
+              'aac',
+              '-b:a',
+              '128k',
+              '-ac',
+              '2',
+              '-movflags',
+              '+faststart',
+              optPath,
+            ],
+            'optimise-nvenc',
+          );
+        }
+        logger.info(`[encode:video] NVENC encoding successful id=${file.id}`);
+      } catch (e) {
+        logger.warn(`[encode:video] NVENC encoding failed, falling back to CPU id=${file.id}`, e as Error);
+        gpuFailed = true;
+      }
+    }
+
+    // CPU encoding (fallback or if GPU not enabled)
+    if (!useGpu || gpuFailed) {
+      if (duration && duration > 0) {
+        await runFfmpegWithProgress(
+          [
+            '-y',
+            '-i',
+            inputPath,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '23',
+            '-profile:v',
+            'high',
+            '-level',
+            '4.1',
+            '-pix_fmt',
+            'yuv420p',
+            '-vf',
+            "scale='min(1920,iw)':'-2'",
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            '-ac',
+            '2',
+            '-movflags',
+            '+faststart',
+            optPath,
+          ],
+          'optimise',
+          duration,
+          reportProgress,
+        );
+      } else {
+        // Fallback to non-progress tracking for unknown duration
+        await runFfmpeg(
+          [
+            '-y',
+            '-i',
+            inputPath,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '23',
+            '-profile:v',
+            'high',
+            '-level',
+            '4.1',
+            '-pix_fmt',
+            'yuv420p',
+            '-vf',
+            "scale='min(1920,iw)':'-2'",
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            '-ac',
+            '2',
+            '-movflags',
+            '+faststart',
+            optPath,
+          ],
+          'optimise',
+        );
+      }
     }
 
     // Poster frame (first frame), scaled to width 320px

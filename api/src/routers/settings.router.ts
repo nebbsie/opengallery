@@ -1,5 +1,8 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
+import { exec } from "child_process";
+import { mkdir } from "fs/promises";
+import { promisify } from "util";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import {
@@ -45,6 +48,7 @@ export const settingsRouter = router({
         ioConcurrency: 2,
         thumbnailQuality: 70,
         optimizedQuality: 80,
+        gpuEncoding: false,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -64,16 +68,51 @@ export const settingsRouter = router({
         ioConcurrency: z.optional(z.number().int().min(1).max(10)),
         thumbnailQuality: z.optional(z.number().int().min(1).max(100)),
         optimizedQuality: z.optional(z.number().int().min(1).max(100)),
+        gpuEncoding: z.optional(z.boolean()),
+        uploadPath: z.optional(z.string().nullable()),
         variantsPath: z.optional(z.string().nullable()),
       })
     )
     .mutation(async (ctx) => {
-      const [res] = await db
-        .update(SystemSettingsTable)
-        .set(ctx.input)
-        .returning();
+      // Create directories if paths are being set
+      if (ctx.input.uploadPath) {
+        await mkdir(ctx.input.uploadPath, { recursive: true }).catch(() => {});
+      }
+      if (ctx.input.variantsPath) {
+        await mkdir(ctx.input.variantsPath, { recursive: true }).catch(() => {});
+      }
 
-      return res;
+      // Check if row exists
+      const [existing] = await db.select().from(SystemSettingsTable).limit(1);
+
+      if (existing) {
+        // Update existing row
+        const [res] = await db
+          .update(SystemSettingsTable)
+          .set({ ...ctx.input, updatedAt: new Date().toISOString() })
+          .where(eq(SystemSettingsTable.id, existing.id))
+          .returning();
+        return res;
+      } else {
+        // Insert new row with defaults + input
+        const [res] = await db
+          .insert(SystemSettingsTable)
+          .values({
+            uploadPath: null,
+            variantsPath: null,
+            allowsSelfRegistration: false,
+            encodingConcurrency: 2,
+            ioConcurrency: 2,
+            thumbnailQuality: 70,
+            optimizedQuality: 80,
+            gpuEncoding: false,
+            ...ctx.input,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+          .returning();
+        return res;
+      }
     }),
 
   getStorageStats: privateProcedure.query<StorageStats>(async () => {
@@ -127,5 +166,63 @@ export const settingsRouter = router({
     };
 
     return stats;
+  }),
+
+  getEncoderInfo: privateProcedure.query(async () => {
+    const execAsync = promisify(exec);
+
+    try {
+      // Check for NVENC support (cross-platform command)
+      const { stdout, stderr } = await execAsync('ffmpeg -encoders');
+      const output = stdout + stderr;
+      const hasNvenc = output.includes('h264_nvenc');
+      const hasVideotoolbox = output.includes('h264_videotoolbox'); // macOS
+      const hasVaapi = output.includes('h264_vaapi'); // Intel/AMD Linux
+
+      let encoderType = 'cpu';
+      let gpuName: string | null = null;
+
+      if (hasNvenc) {
+        encoderType = 'nvenc';
+        // Try to get GPU name
+        try {
+          const { stdout: nvidiaStdout } = await execAsync('nvidia-smi --query-gpu=name --format=csv,noheader');
+          gpuName = nvidiaStdout.trim();
+        } catch {
+          gpuName = 'NVIDIA GPU (unknown model)';
+        }
+      } else if (hasVideotoolbox) {
+        encoderType = 'videotoolbox';
+        gpuName = 'Apple Silicon/Intel Mac';
+      } else if (hasVaapi) {
+        encoderType = 'vaapi';
+        gpuName = 'Intel/AMD GPU (VAAPI)';
+      }
+
+      return {
+        availableEncoders: {
+          nvenc: hasNvenc,
+          videotoolbox: hasVideotoolbox,
+          vaapi: hasVaapi,
+          cpu: true, // Always available
+        },
+        detectedEncoder: encoderType,
+        gpuName,
+      };
+    } catch (e) {
+      // FFmpeg not available
+      console.error('[getEncoderInfo] FFmpeg detection failed:', e);
+      return {
+        availableEncoders: {
+          nvenc: false,
+          videotoolbox: false,
+          vaapi: false,
+          cpu: false,
+        },
+        detectedEncoder: 'none',
+        gpuName: null,
+        error: String(e),
+      };
+    }
   }),
 });
