@@ -79,7 +79,16 @@ RUN npm run build:prod
 FROM node:22-alpine AS runner
 
 # Install runtime dependencies
-RUN apk add --no-cache ffmpeg supervisor nginx
+RUN apk add --no-cache supervisor nginx
+
+# Install FFmpeg with NVENC support using static build
+RUN apk add --no-cache wget tar xz && \
+    wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz && \
+    tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz && \
+    mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg && \
+    mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/ffprobe && \
+    rm -rf ffmpeg-master-latest-linux64-gpl* && \
+    apk del wget tar xz
 
 WORKDIR /app
 

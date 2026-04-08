@@ -76,10 +76,10 @@ export const settingsRouter = router({
     .mutation(async (ctx) => {
       // Create directories if paths are being set
       if (ctx.input.uploadPath) {
-        await mkdir(ctx.input.uploadPath, { recursive: true }).catch(() => {});
+        await mkdir(ctx.input.uploadPath, { recursive: true }).catch(() => { });
       }
       if (ctx.input.variantsPath) {
-        await mkdir(ctx.input.variantsPath, { recursive: true }).catch(() => {});
+        await mkdir(ctx.input.variantsPath, { recursive: true }).catch(() => { });
       }
 
       // Check if row exists
@@ -184,12 +184,15 @@ export const settingsRouter = router({
 
       if (hasNvenc) {
         encoderType = 'nvenc';
-        // Try to get GPU name
+        // Try to get GPU name (nvidia-smi may not be available in containers)
         try {
           const { stdout: nvidiaStdout } = await execAsync('nvidia-smi --query-gpu=name --format=csv,noheader');
           gpuName = nvidiaStdout.trim();
         } catch {
-          gpuName = 'NVIDIA GPU (unknown model)';
+          // Check if NVIDIA runtime is available via environment or fallback
+          gpuName = process.env.NVIDIA_VISIBLE_DEVICES
+            ? 'NVIDIA GPU (container)'
+            : 'NVIDIA GPU (NVENC available)';
         }
       } else if (hasVideotoolbox) {
         encoderType = 'videotoolbox';
