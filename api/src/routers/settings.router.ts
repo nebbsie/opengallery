@@ -182,7 +182,7 @@ export const settingsRouter = router({
 
       const gpus: Array<{ id: string; name: string; encoder: string }> = [];
 
-      // Detect NVIDIA GPUs
+      // Detect NVIDIA GPUs (includes Docker/container support)
       if (hasNvenc) {
         try {
           const { stdout: nvidiaStdout } = await execAsync('nvidia-smi --query-gpu=index,name --format=csv,noheader');
@@ -198,8 +198,11 @@ export const settingsRouter = router({
             }
           }
         } catch {
-          // Single GPU or nvidia-smi failed
-          gpus.push({ id: 'nvidia:0', name: 'NVIDIA GPU', encoder: 'h264_nvenc' });
+          // nvidia-smi failed - check for Docker/container GPU
+          const containerGpuName = process.env.NVIDIA_VISIBLE_DEVICES
+            ? 'NVIDIA GPU (Docker/container)'
+            : 'NVIDIA GPU (NVENC available)';
+          gpus.push({ id: 'nvidia:0', name: containerGpuName, encoder: 'h264_nvenc' });
           // Check if NVIDIA runtime is available via environment or fallback
         }
       }
