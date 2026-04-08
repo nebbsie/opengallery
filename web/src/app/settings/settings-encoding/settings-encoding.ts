@@ -25,10 +25,67 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
         <p class="text-muted-foreground mb-6 text-sm">Tune background encoding performance.</p>
       </div>
 
+      <!-- Encoder Status Card -->
+      <div class="hover:bg-accent/50 mb-6 grid max-w-lg gap-3 rounded-lg border p-3">
+        <h2 class="text-foreground font-semibold">Hardware Status</h2>
+        
+        @if (encoderInfo.isSuccess()) {
+          <div class="flex items-center gap-2">
+            <span class="text-sm">Detected:</span>
+            @if (encoderInfo.data().detectedEncoder === 'nvenc') {
+              <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
+                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
+                NVENC - {{ encoderInfo.data().gpuName }}
+              </span>
+            } @else if (encoderInfo.data().detectedEncoder === 'videotoolbox') {
+              <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
+                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
+                VideoToolbox - {{ encoderInfo.data().gpuName }}
+              </span>
+            } @else if (encoderInfo.data().detectedEncoder === 'vaapi') {
+              <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
+                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
+                VAAPI - {{ encoderInfo.data().gpuName }}
+              </span>
+            } @else if (encoderInfo.data().detectedEncoder === 'cpu') {
+              <span class="inline-flex items-center rounded bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800 dark:bg-yellow-900/30">
+                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
+                CPU Only (no GPU detected)
+              </span>
+            } @else {
+              <span class="inline-flex items-center rounded bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-900/30">
+                <span class="mr-1 inline-block h-2 w-2 rounded-full bg-red-500"></span>
+                FFmpeg not available
+              </span>
+            }
+          </div>
+
+          <div class="text-muted-foreground text-xs">
+            Active encoder: <span class="font-medium">{{ activeEncoderName() }}</span>
+          </div>
+        } @else {
+          <div class="text-muted-foreground text-xs">Detecting hardware...</div>
+        }
+      </div>
+
       <div class="hover:bg-accent/50 mb-10 grid max-w-lg gap-3 rounded-lg border p-3">
         <h2 class="text-foreground font-semibold">Performance</h2>
-        
+
         <div class="flex items-center justify-between">
+          <label for="gpu-encoding" class="text-sm">GPU Video Encoding</label>
+          <input
+            id="gpu-encoding"
+            type="checkbox"
+            [checked]="gpuEncoding()"
+            (change)="onGpuEncodingChange($any($event.target).checked)"
+          />
+        </div>
+        <p class="text-muted-foreground text-xs">
+          Use NVIDIA NVENC for video encoding (5-10x faster). Requires NVIDIA GPU with NVENC support.
+          Falls back to CPU if unavailable.
+        </p>
+
+        <div class="flex items-center justify-between mt-2">
           <label for="concurrency" class="text-sm">Encoding Concurrency</label>
           <span class="text-muted-foreground text-sm">{{ concurrency() }}</span>
         </div>
@@ -109,10 +166,16 @@ export class SettingsEncoding {
     queryFn: async () => this.trpc.settings.get.query(),
   }));
 
+  encoderInfo = injectQuery(() => ({
+    queryKey: ['encoderInfo'],
+    queryFn: async () => this.trpc.settings.getEncoderInfo.query(),
+  }));
+
   concurrency = signal<number>(2);
   ioConcurrency = signal<number>(2);
   thumbQuality = signal<number>(70);
   optQuality = signal<number>(80);
+  gpuEncoding = signal<boolean>(false);
 
   private originalThumbQuality = 70;
   private originalOptQuality = 80;
@@ -130,11 +193,25 @@ export class SettingsEncoding {
         this.optQuality.set(data.optimizedQuality);
         this.originalOptQuality = data.optimizedQuality;
       }
+      if (data?.gpuEncoding !== undefined) this.gpuEncoding.set(data.gpuEncoding);
     });
   }
 
   hasQualityChanged(): boolean {
     return this.thumbQuality() !== this.originalThumbQuality || this.optQuality() !== this.originalOptQuality;
+  }
+
+  activeEncoderName(): string {
+    const encoder = this.encoderInfo.data()?.detectedEncoder;
+    const gpuEnabled = this.gpuEncoding();
+    
+    if (!encoder || encoder === 'none') return 'Unknown';
+    
+    if (gpuEnabled && encoder === 'nvenc') return 'h264_nvenc (GPU)';
+    if (gpuEnabled && encoder === 'videotoolbox') return 'h264_videotoolbox (GPU)';
+    if (gpuEnabled && encoder === 'vaapi') return 'h264_vaapi (GPU)';
+    
+    return 'libx264 (CPU)';
   }
 
   onEncodingChange(value: string) {
@@ -157,13 +234,18 @@ export class SettingsEncoding {
     if (Number.isFinite(n)) this.optQuality.set(Math.min(100, Math.max(10, n)));
   }
 
+  onGpuEncodingChange(checked: boolean) {
+    this.gpuEncoding.set(checked);
+  }
+
   saveMutation = injectMutation(() => ({
     mutationFn: async () =>
-      this.trpc.settings.update.mutate({ 
+      this.trpc.settings.update.mutate({
         encodingConcurrency: this.concurrency(),
         ioConcurrency: this.ioConcurrency(),
         thumbnailQuality: this.thumbQuality(),
         optimizedQuality: this.optQuality(),
+        gpuEncoding: this.gpuEncoding(),
       }),
     onSuccess: (data) => {
       if (data?.encodingConcurrency) this.concurrency.set(data.encodingConcurrency);
@@ -176,7 +258,9 @@ export class SettingsEncoding {
         this.optQuality.set(data.optimizedQuality);
         this.originalOptQuality = data.optimizedQuality;
       }
+      if (data?.gpuEncoding !== undefined) this.gpuEncoding.set(data.gpuEncoding);
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
+      this.queryClient.invalidateQueries({ queryKey: ['encoderInfo'] });
     },
   }));
 

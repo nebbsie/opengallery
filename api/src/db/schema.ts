@@ -302,7 +302,7 @@ export const UiSettingsTable = sqliteTable(
 
 export const SystemSettingsTable = sqliteTable("system_settings", {
   id: id(),
-  uploadPath: text("upload_path").notNull(),
+  uploadPath: text("upload_path"),
   variantsPath: text("variants_path"),
   allowsSelfRegistration: integer("allows_self_registration", {
     mode: "boolean",
@@ -313,6 +313,7 @@ export const SystemSettingsTable = sqliteTable("system_settings", {
   ioConcurrency: integer("io_concurrency").notNull().default(2),
   thumbnailQuality: integer("thumbnail_quality").notNull().default(70),
   optimizedQuality: integer("optimized_quality").notNull().default(80),
+  gpuEncoding: integer("gpu_encoding", { mode: "boolean" }).notNull().default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
