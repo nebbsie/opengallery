@@ -72,15 +72,17 @@ export const settingsRouter = router({
         selectedGpu: z.optional(z.string().nullable()),
         uploadPath: z.optional(z.string().nullable()),
         variantsPath: z.optional(z.string().nullable()),
-      })
+      }),
     )
     .mutation(async (ctx) => {
       // Create directories if paths are being set
       if (ctx.input.uploadPath) {
-        await mkdir(ctx.input.uploadPath, { recursive: true }).catch(() => { });
+        await mkdir(ctx.input.uploadPath, { recursive: true }).catch(() => {});
       }
       if (ctx.input.variantsPath) {
-        await mkdir(ctx.input.variantsPath, { recursive: true }).catch(() => { });
+        await mkdir(ctx.input.variantsPath, { recursive: true }).catch(
+          () => {},
+        );
       }
 
       // Check if row exists
@@ -174,51 +176,72 @@ export const settingsRouter = router({
 
     try {
       // Check for NVENC support (cross-platform command)
-      const { stdout, stderr } = await execAsync('ffmpeg -encoders');
+      const { stdout, stderr } = await execAsync("ffmpeg -encoders");
       const output = stdout + stderr;
-      const hasNvenc = output.includes('h264_nvenc');
-      const hasVideotoolbox = output.includes('h264_videotoolbox'); // macOS
-      const hasVaapi = output.includes('h264_vaapi'); // Intel/AMD Linux
+      const hasNvenc = output.includes("h264_nvenc");
+      const hasVideotoolbox = output.includes("h264_videotoolbox"); // macOS
+      const hasVaapi = output.includes("h264_vaapi"); // Intel/AMD Linux
 
       const gpus: Array<{ id: string; name: string; encoder: string }> = [];
 
       // Detect NVIDIA GPUs (includes Docker/container support)
       if (hasNvenc) {
         try {
-          const { stdout: nvidiaStdout } = await execAsync('nvidia-smi --query-gpu=index,name --format=csv,noheader');
-          const nvidiaGpus = nvidiaStdout.trim().split('\n').filter(line => line.trim());
+          const { stdout: nvidiaStdout } = await execAsync(
+            "nvidia-smi --query-gpu=index,name --format=csv,noheader",
+          );
+          const nvidiaGpus = nvidiaStdout
+            .trim()
+            .split("\n")
+            .filter((line) => line.trim());
           for (const gpuLine of nvidiaGpus) {
-            const parts = gpuLine.split(',');
+            const parts = gpuLine.split(",");
             if (parts.length >= 2) {
               const index = parts[0]?.trim();
               const name = parts[1]?.trim();
               if (index && name) {
-                gpus.push({ id: `nvidia:${index}`, name: `NVIDIA ${name}`, encoder: 'h264_nvenc' });
+                gpus.push({
+                  id: `nvidia:${index}`,
+                  name: `NVIDIA ${name}`,
+                  encoder: "h264_nvenc",
+                });
               }
             }
           }
         } catch {
           // nvidia-smi failed - check for Docker/container GPU
-          const containerGpuName = process.env.NVIDIA_VISIBLE_DEVICES
-            ? 'NVIDIA GPU (Docker/container)'
-            : 'NVIDIA GPU (NVENC available)';
-          gpus.push({ id: 'nvidia:0', name: containerGpuName, encoder: 'h264_nvenc' });
+          const containerGpuName = process.env["NVIDIA_VISIBLE_DEVICES"]
+            ? "NVIDIA GPU (Docker/container)"
+            : "NVIDIA GPU (NVENC available)";
+          gpus.push({
+            id: "nvidia:0",
+            name: containerGpuName,
+            encoder: "h264_nvenc",
+          });
           // Check if NVIDIA runtime is available via environment or fallback
         }
       }
 
       // Detect Intel/AMD VAAPI
       if (hasVaapi) {
-        gpus.push({ id: 'vaapi', name: 'Intel/AMD GPU (VAAPI)', encoder: 'h264_vaapi' });
+        gpus.push({
+          id: "vaapi",
+          name: "Intel/AMD GPU (VAAPI)",
+          encoder: "h264_vaapi",
+        });
       }
 
       // Detect Apple VideoToolbox
       if (hasVideotoolbox) {
-        gpus.push({ id: 'videotoolbox', name: 'Apple Silicon/Intel Mac', encoder: 'h264_videotoolbox' });
+        gpus.push({
+          id: "videotoolbox",
+          name: "Apple Silicon/Intel Mac",
+          encoder: "h264_videotoolbox",
+        });
       }
 
       // Always add CPU fallback
-      gpus.push({ id: 'cpu', name: 'CPU (Software)', encoder: 'libx264' });
+      gpus.push({ id: "cpu", name: "CPU (Software)", encoder: "libx264" });
 
       return {
         availableEncoders: {
@@ -228,14 +251,15 @@ export const settingsRouter = router({
           cpu: true,
         },
         detectedGpus: gpus,
-        defaultGpu: gpus.find(g => g.id.startsWith('nvidia'))?.id ??
-                    gpus.find(g => g.id === 'vaapi')?.id ??
-                    gpus.find(g => g.id === 'videotoolbox')?.id ??
-                    'cpu',
+        defaultGpu:
+          gpus.find((g) => g.id.startsWith("nvidia"))?.id ??
+          gpus.find((g) => g.id === "vaapi")?.id ??
+          gpus.find((g) => g.id === "videotoolbox")?.id ??
+          "cpu",
       };
     } catch (e) {
       // FFmpeg not available
-      console.error('[getEncoderInfo] FFmpeg detection failed:', e);
+      console.error("[getEncoderInfo] FFmpeg detection failed:", e);
       return {
         availableEncoders: {
           nvenc: false,
@@ -243,8 +267,10 @@ export const settingsRouter = router({
           vaapi: false,
           cpu: false,
         },
-        detectedGpus: [{ id: 'cpu', name: 'CPU (Software)', encoder: 'libx264' }],
-        defaultGpu: 'cpu',
+        detectedGpus: [
+          { id: "cpu", name: "CPU (Software)", encoder: "libx264" },
+        ],
+        defaultGpu: "cpu",
         error: String(e),
       };
     }
