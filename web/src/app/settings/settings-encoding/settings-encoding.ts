@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
@@ -28,22 +35,31 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
       <!-- Encoder Status Card -->
       <div class="hover:bg-accent/50 mb-6 grid max-w-lg gap-3 rounded-lg border p-3">
         <h2 class="text-foreground font-semibold">Hardware Status</h2>
-        
+
         @if (encoderInfo.isSuccess()) {
           <div class="flex items-center gap-2">
             <span class="text-sm">Detected:</span>
             @if (hasGpuDetected()) {
-              <span class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30">
+              <span
+                class="inline-flex items-center rounded bg-green-100 px-2 py-0.5 text-xs text-green-800 dark:bg-green-900/30"
+              >
                 <span class="mr-1 inline-block h-2 w-2 rounded-full bg-green-500"></span>
                 {{ primaryGpuName() }}
               </span>
-            } @else if (encoderInfo.data().detectedGpus.length === 1 && encoderInfo.data().detectedGpus[0].id === 'cpu') {
-              <span class="inline-flex items-center rounded bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800 dark:bg-yellow-900/30">
+            } @else if (
+              encoderInfo.data().detectedGpus.length === 1 &&
+              encoderInfo.data().detectedGpus[0].id === 'cpu'
+            ) {
+              <span
+                class="inline-flex items-center rounded bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800 dark:bg-yellow-900/30"
+              >
                 <span class="mr-1 inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
                 CPU Only (no GPU detected)
               </span>
             } @else {
-              <span class="inline-flex items-center rounded bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-900/30">
+              <span
+                class="inline-flex items-center rounded bg-red-100 px-2 py-0.5 text-xs text-red-800 dark:bg-red-900/30"
+              >
                 <span class="mr-1 inline-block h-2 w-2 rounded-full bg-red-500"></span>
                 FFmpeg not available
               </span>
@@ -71,18 +87,18 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           />
         </div>
         <p class="text-muted-foreground text-xs">
-          Use NVIDIA NVENC for video encoding (5-10x faster). Requires NVIDIA GPU with NVENC support.
-          Falls back to CPU if unavailable.
+          Use NVIDIA NVENC for video encoding (5-10x faster). Requires NVIDIA GPU with NVENC
+          support. Falls back to CPU if unavailable.
         </p>
 
         @if (hasMultipleGpus() && gpuEncoding()) {
-          <div class="flex items-center justify-between mt-2">
+          <div class="mt-2 flex items-center justify-between">
             <label for="gpu-select" class="text-sm">Select GPU</label>
             <select
               id="gpu-select"
               [value]="selectedGpu() ?? encoderInfo.data()?.defaultGpu"
               (change)="onGpuSelectChange($any($event.target).value)"
-              class="text-sm border rounded px-2 py-1 bg-background"
+              class="bg-background rounded border px-2 py-1 text-sm"
             >
               @for (gpu of encoderInfo.data()?.detectedGpus; track gpu.id) {
                 <option [value]="gpu.id">{{ gpu.name }}</option>
@@ -92,15 +108,16 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           <p class="text-muted-foreground text-xs">Choose which GPU to use for encoding.</p>
 
           @if (isBetaGpu()) {
-            <div class="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded">
-              <p class="text-yellow-600 text-xs">
-                <strong>Note:</strong> {{ selectedGpuName() }} support is experimental. NVIDIA NVENC is recommended for best compatibility.
+            <div class="mt-2 rounded border border-yellow-500/20 bg-yellow-500/10 p-2">
+              <p class="text-xs text-yellow-600">
+                <strong>Note:</strong> {{ selectedGpuName() }} support is experimental. NVIDIA NVENC
+                is recommended for best compatibility.
               </p>
             </div>
           }
         }
 
-        <div class="flex items-center justify-between mt-2">
+        <div class="mt-2 flex items-center justify-between">
           <label for="concurrency" class="text-sm">Encoding Concurrency</label>
           <span class="text-muted-foreground text-sm">{{ concurrency() }}</span>
         </div>
@@ -112,9 +129,11 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           [value]="concurrency()"
           (input)="onEncodingChange($any($event.target).value)"
         />
-        <p class="text-muted-foreground text-xs">Number of images to encode in parallel. Default is 2.</p>
+        <p class="text-muted-foreground text-xs">
+          Number of images to encode in parallel. Default is 2.
+        </p>
 
-        <div class="flex items-center justify-between mt-2">
+        <div class="mt-2 flex items-center justify-between">
           <label for="io-concurrency" class="text-sm">I/O Concurrency</label>
           <span class="text-muted-foreground text-sm">{{ ioConcurrency() }}</span>
         </div>
@@ -126,12 +145,14 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           [value]="ioConcurrency()"
           (input)="onIoChange($any($event.target).value)"
         />
-        <p class="text-muted-foreground text-xs">Limits simultaneous file reads/writes. Lower this if disk is slow. Default is 2.</p>
+        <p class="text-muted-foreground text-xs">
+          Limits simultaneous file reads/writes. Lower this if disk is slow. Default is 2.
+        </p>
       </div>
 
       <div class="hover:bg-accent/50 mb-10 grid max-w-lg gap-3 rounded-lg border p-3">
         <h2 class="text-foreground font-semibold">Image Quality</h2>
-        
+
         <div class="flex items-center justify-between">
           <label for="thumb-quality" class="text-sm">Thumbnail Quality</label>
           <span class="text-muted-foreground text-sm">{{ thumbQuality() }}%</span>
@@ -144,9 +165,11 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           [value]="thumbQuality()"
           (input)="onThumbQualityChange($any($event.target).value)"
         />
-        <p class="text-muted-foreground text-xs">Quality for thumbnails (used in grids). Lower = smaller files. Default is 70.</p>
+        <p class="text-muted-foreground text-xs">
+          Quality for thumbnails (used in grids). Lower = smaller files. Default is 70.
+        </p>
 
-        <div class="flex items-center justify-between mt-2">
+        <div class="mt-2 flex items-center justify-between">
           <label for="opt-quality" class="text-sm">Optimized Quality</label>
           <span class="text-muted-foreground text-sm">{{ optQuality() }}%</span>
         </div>
@@ -158,10 +181,15 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
           [value]="optQuality()"
           (input)="onOptQualityChange($any($event.target).value)"
         />
-        <p class="text-muted-foreground text-xs">Quality for full-size optimized images. Higher = better quality but larger files. Default is 80.</p>
-        
+        <p class="text-muted-foreground text-xs">
+          Quality for full-size optimized images. Higher = better quality but larger files. Default
+          is 80.
+        </p>
+
         @if (hasQualityChanged()) {
-          <p class="text-amber-500 text-xs mt-2">Quality changed - images will be re-encoded on next scan or manually triggered.</p>
+          <p class="mt-2 text-xs text-amber-500">
+            Quality changed - images will be re-encoded on next scan or manually triggered.
+          </p>
         }
       </div>
 
@@ -216,19 +244,22 @@ export class SettingsEncoding {
 
   hasGpuDetected = computed(() => {
     const info = this.encoderInfo.data();
-    return info?.detectedGpus?.some(g => g.id !== 'cpu') ?? false;
+    return info?.detectedGpus?.some((g: { id: string }) => g.id !== 'cpu') ?? false;
   });
 
   primaryGpuName = computed(() => {
     const info = this.encoderInfo.data();
     if (!info) return 'Unknown';
     // Find first non-CPU GPU
-    const gpu = info.detectedGpus?.find(g => g.id !== 'cpu');
+    const gpu = info.detectedGpus?.find((g: { id: string; name: string }) => g.id !== 'cpu');
     return gpu?.name ?? 'No GPU';
   });
 
   hasQualityChanged(): boolean {
-    return this.thumbQuality() !== this.originalThumbQuality || this.optQuality() !== this.originalOptQuality;
+    return (
+      this.thumbQuality() !== this.originalThumbQuality ||
+      this.optQuality() !== this.originalOptQuality
+    );
   }
 
   activeEncoderName = computed(() => {
@@ -237,14 +268,16 @@ export class SettingsEncoding {
     if (!info) return 'Unknown';
 
     // Find the selected GPU info
-    const gpu = info.detectedGpus?.find(g => g.id === selected);
+    const gpu = info.detectedGpus?.find((g: { id: string; name: string }) => g.id === selected);
     if (gpu) {
       return gpu.name;
     }
 
     // Fallback to default detection
     if (info.detectedGpus?.length > 0) {
-      const defaultGpu = info.detectedGpus.find(g => g.id === info.defaultGpu);
+      const defaultGpu = info.detectedGpus.find(
+        (g: { id: string; name: string }) => g.id === info.defaultGpu,
+      );
       return defaultGpu?.name || 'Unknown';
     }
 
@@ -264,7 +297,7 @@ export class SettingsEncoding {
   selectedGpuName = computed(() => {
     const info = this.encoderInfo.data();
     const selected = this.selectedGpu() ?? info?.defaultGpu;
-    const gpu = info?.detectedGpus?.find(g => g.id === selected);
+    const gpu = info?.detectedGpus?.find((g: { id: string; name: string }) => g.id === selected);
     return gpu?.name ?? 'Unknown';
   });
 
