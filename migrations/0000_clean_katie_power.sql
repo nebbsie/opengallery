@@ -77,6 +77,7 @@ CREATE TABLE `file_task` (
 	`started_at` text,
 	`finished_at` text,
 	`last_error` text,
+	`progress` integer DEFAULT 0,
 	`created_at` text NOT NULL,
 	`updatedAt` text NOT NULL,
 	FOREIGN KEY (`file_id`) REFERENCES `file`(`id`) ON UPDATE no action ON DELETE no action
@@ -145,6 +146,7 @@ CREATE TABLE `library_file` (
 --> statement-breakpoint
 CREATE INDEX `library_file_library_id_idx` ON `library_file` (`library_id`);--> statement-breakpoint
 CREATE INDEX `library_file_file_id_idx` ON `library_file` (`file_id`);--> statement-breakpoint
+CREATE INDEX `library_file_library_deleted_idx` ON `library_file` (`library_id`,`deleted_at`);--> statement-breakpoint
 CREATE TABLE `library` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
@@ -154,6 +156,7 @@ CREATE TABLE `library` (
 	FOREIGN KEY (`user_id`) REFERENCES `user`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
+CREATE INDEX `library_user_id_idx` ON `library` (`user_id`);--> statement-breakpoint
 CREATE TABLE `log` (
 	`id` text PRIMARY KEY NOT NULL,
 	`type` text NOT NULL,
@@ -177,6 +180,7 @@ CREATE UNIQUE INDEX `media_path_user_path_uidx` ON `media_path` (`user_id`,`path
 CREATE TABLE `media_settings` (
 	`id` text PRIMARY KEY NOT NULL,
 	`auto_import_albums` integer DEFAULT true NOT NULL,
+	`hide_undated` integer DEFAULT false NOT NULL,
 	`user_id` text NOT NULL,
 	`created_at` text NOT NULL,
 	`updatedAt` text NOT NULL,
@@ -211,13 +215,15 @@ CREATE TABLE `shared_item` (
 --> statement-breakpoint
 CREATE TABLE `system_settings` (
 	`id` text PRIMARY KEY NOT NULL,
-	`upload_path` text NOT NULL,
+	`upload_path` text,
 	`variants_path` text,
 	`allows_self_registration` integer DEFAULT false NOT NULL,
 	`encoding_concurrency` integer DEFAULT 2 NOT NULL,
 	`io_concurrency` integer DEFAULT 2 NOT NULL,
 	`thumbnail_quality` integer DEFAULT 70 NOT NULL,
 	`optimized_quality` integer DEFAULT 80 NOT NULL,
+	`gpu_encoding` integer DEFAULT false NOT NULL,
+	`selected_gpu` text,
 	`created_at` text NOT NULL,
 	`updatedAt` text NOT NULL
 );

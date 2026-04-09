@@ -1,1 +1,0 @@
-ALTER TABLE `media_settings` ADD `hide_undated` integer DEFAULT false NOT NULL;
