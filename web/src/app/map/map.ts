@@ -3,7 +3,9 @@ import {
   Component,
   ElementRef,
   OnDestroy,
+  afterNextRender,
   effect,
+  signal,
   viewChild,
 } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
@@ -105,6 +107,7 @@ export class Map implements OnDestroy {
   private readonly trpc = injectTrpc();
   private map: L.Map | null = null;
   private clusterGroup: L.MarkerClusterGroup | null = null;
+  private readonly clientReady = signal(false);
   protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
   locations = injectQuery(() => ({
@@ -113,10 +116,16 @@ export class Map implements OnDestroy {
   }));
 
   constructor() {
+    // Defer map initialization until the browser has completed its first render.
+    // This prevents conflicts with Angular SSR hydration and ensures the DOM is stable.
+    afterNextRender(() => {
+      this.clientReady.set(true);
+    });
+
     effect(() => {
+      if (!this.clientReady()) return;
       const data = this.locations.data();
       const container = this.mapContainer();
-
       if (data && container) {
         this.initMap(data);
       }
@@ -135,12 +144,13 @@ export class Map implements OnDestroy {
     const container = this.mapContainer();
     if (!container || this.map) return;
 
+    // Use local assets instead of CDN so the map works without internet access
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (L.Icon.Default.prototype as any)._getIconUrl;
     L.Icon.Default.mergeOptions({
-      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      iconRetinaUrl: 'assets/leaflet/marker-icon-2x.png',
+      iconUrl: 'assets/leaflet/marker-icon.png',
+      shadowUrl: 'assets/leaflet/marker-shadow.png',
     });
 
     this.map = L.map(container.nativeElement, {
@@ -151,24 +161,29 @@ export class Map implements OnDestroy {
     });
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '© OpenStreetMap contributors © CARTO',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 20,
+      subdomains: 'abcd',
     }).addTo(this.map);
 
+    // Cluster radius scales with zoom: large radius at world-view collapses continents,
+    // shrinks progressively so city/town/road groupings emerge as the user zooms in.
     this.clusterGroup = L.markerClusterGroup({
       maxClusterRadius: (zoom: number) => {
-        if (zoom <= 3) return 120;
-        if (zoom <= 6) return 80;
-        if (zoom <= 10) return 60;
-        if (zoom <= 14) return 40;
-        return 20;
+        if (zoom <= 4) return 100;  // continent / country level
+        if (zoom <= 7) return 80;   // country / region level
+        if (zoom <= 10) return 60;  // region / county level
+        if (zoom <= 13) return 40;  // city / town level
+        if (zoom <= 16) return 25;  // neighbourhood / road level
+        return 15;                  // street / building level
       },
       spiderfyOnMaxZoom: true,
       showCoverageOnHover: false,
       zoomToBoundsOnClick: true,
       animate: true,
       animateAddingMarkers: false,
-      disableClusteringAtZoom: 18,
+      disableClusteringAtZoom: 19,
+      chunkedLoading: true,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
         const childMarkers = cluster.getAllChildMarkers();
         let totalCount = 0;
@@ -208,12 +223,12 @@ export class Map implements OnDestroy {
         photoCount: location.count,
       } as L.MarkerOptions);
 
+      const photoLabel = `${location.count} photo${location.count > 1 ? 's' : ''}`;
       marker.bindPopup(`
-        <div class="p-2 text-center">
-          <p class="font-semibold">${location.count} photo${location.count > 1 ? 's' : ''}</p>
+        <div style="text-align:center;min-width:120px">
+          <p style="font-weight:600;margin:0 0 4px">${photoLabel}</p>
           <a href="/locations/${location.lat}/${location.lon}"
-             class="text-blue-600 hover:text-blue-800 underline"
-             target="_self">
+             style="color:#2563eb;text-decoration:underline">
             View photos
           </a>
         </div>
@@ -226,7 +241,7 @@ export class Map implements OnDestroy {
     this.map.addLayer(this.clusterGroup);
 
     if (bounds.length > 0 && this.map) {
-      this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 10 });
+      this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
     }
   }
 }

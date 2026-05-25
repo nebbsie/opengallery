@@ -370,6 +370,7 @@ export class Asset implements OnDestroy {
   protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
   protected readonly cameraMake = this.route.snapshot.queryParamMap.get('cameraMake');
   protected readonly cameraModel = this.route.snapshot.queryParamMap.get('cameraModel');
+  protected readonly kind = this.route.snapshot.queryParamMap.get('kind') as 'image' | 'video' | 'all' | null;
 
   protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
@@ -402,14 +403,15 @@ export class Asset implements OnDestroy {
       const albumId = this.albumId ?? undefined;
       const cameraMake = this.cameraMake ?? undefined;
       const cameraModel = this.cameraModel ?? undefined;
+      const kind = this.kind ?? undefined;
 
       const prefetch = async (id: string | null) => {
         if (!id) return;
-        const key = [CacheKey.AssetSingle, id, this.albumId, this.cameraMake, this.cameraModel];
+        const key = [CacheKey.AssetSingle, id, this.albumId, this.cameraMake, this.cameraModel, this.kind];
         await this.queryClient.prefetchQuery({
           queryKey: key,
           queryFn: () =>
-            this.trpc.files.viewFile.query({ fileId: id, albumId, cameraMake, cameraModel }),
+            this.trpc.files.viewFile.query({ fileId: id, albumId, cameraMake, cameraModel, kind }),
           staleTime: 60_000,
         });
 
@@ -447,7 +449,7 @@ export class Asset implements OnDestroy {
   id = input.required<string>();
 
   file = injectQuery(() => ({
-    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId, this.cameraMake, this.cameraModel],
+    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId, this.cameraMake, this.cameraModel, this.kind],
     staleTime: Infinity,
     networkMode: 'offlineFirst',
     queryFn: async () =>
@@ -456,6 +458,7 @@ export class Asset implements OnDestroy {
         albumId: this.albumId ?? undefined,
         cameraMake: this.cameraMake ?? undefined,
         cameraModel: this.cameraModel ?? undefined,
+        kind: this.kind ?? undefined,
       }),
   }));
 
@@ -467,6 +470,7 @@ export class Asset implements OnDestroy {
     if (this.backLink) qp['from'] = this.backLink;
     if (this.cameraMake) qp['cameraMake'] = this.cameraMake;
     if (this.cameraModel) qp['cameraModel'] = this.cameraModel;
+    if (this.kind) qp['kind'] = this.kind;
     return Object.keys(qp).length ? qp : null;
   }
 

@@ -59,7 +59,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
           (seekTo)="onSeekTo($event)"
         >
           <ng-template let-asset>
-            <app-asset-thumbnail from="/" [asset]="asset" />
+            <app-asset-thumbnail from="/gallery" kind="all" [asset]="asset" />
           </ng-template>
         </app-virtual-thumbnail-grid>
       }

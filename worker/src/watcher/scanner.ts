@@ -146,7 +146,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
     const files = byFolder.get(folder) ?? [];
 
     // Get all the files already in the database for this folder.
-    const alreadySavedFiles = (await trpc.files.getFilesInDir.mutate(toHostPath(folder))) as Array<{
+    const alreadySavedFiles = (await trpc.files.getFilesInDir.query(toHostPath(folder))) as Array<{
       id: string;
       dir: string;
       name: string;

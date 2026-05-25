@@ -6,6 +6,7 @@ import {
   getAccessScope,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
+import { cameraSortExpr, galleryOrderBy } from "../db/file-sort.js";
 import {
   FileTable,
   FileVariantTable,
@@ -129,7 +130,7 @@ export const cameraRouter = router({
             ...(cursorCondition ? [cursorCondition] : []),
           ),
         )
-        .orderBy(desc(ImageMetadataTable.takenAt))
+        .orderBy(...galleryOrderBy(cameraSortExpr))
         .limit(limit + 1);
 
       const data = rows.map((r) => ({

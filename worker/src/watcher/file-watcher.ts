@@ -186,7 +186,7 @@ export class FileWatcherService {
       const name = basename(filePath);
 
       // Check if file already exists in database
-      const existingFiles = (await trpc.files.getFilesInDir.mutate(dir)) as Array<{
+      const existingFiles = (await trpc.files.getFilesInDir.query(dir)) as Array<{
         id: string;
         name: string;
         dir: string;
@@ -323,7 +323,7 @@ export class FileWatcherService {
       const name = basename(filePath);
 
       // Find and remove the file from database
-      const existingFiles = (await trpc.files.getFilesInDir.mutate(dir)) as Array<{
+      const existingFiles = (await trpc.files.getFilesInDir.query(dir)) as Array<{
         id: string;
         name: string;
       }>;

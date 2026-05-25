@@ -19,6 +19,13 @@ import {
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
+  cameraSortExpr,
+  fileSortExpr,
+  galleryOrderBy,
+  keysetAfter,
+  keysetBefore,
+} from "../db/file-sort.js";
+import {
   AlbumFileTable,
   AlbumTable,
   FileTable,
@@ -121,10 +128,11 @@ export const filesRouter = router({
         albumId: z.string().uuid().optional(),
         cameraMake: z.string().optional(),
         cameraModel: z.string().optional(),
+        kind: z.enum(['image', 'video', 'all']).optional(),
       }),
     )
     .query(async ({ input, ctx: { userId, session } }) => {
-      const { fileId, albumId, cameraMake, cameraModel } = input;
+      const { fileId, albumId, cameraMake, cameraModel, kind } = input;
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
@@ -203,64 +211,87 @@ export const filesRouter = router({
         .where(eq(GeoLocationTable.fileId, file.id))
         .limit(1);
 
-      // Compute prev/next IDs efficiently by fetching only adjacent items
-      // Instead of loading ALL file IDs, we use the current file's sort value
-      // to find the immediate prev/next items (O(1) queries instead of O(n))
+      // Compute prev/next IDs using keyset pagination on the same total order
+      // used by the grid: (coalesce(takenAt, createdAt) DESC, files.id DESC).
+      // We must include id as a tiebreaker in BOTH the WHERE comparison and the
+      // ORDER BY, otherwise navigation is non-deterministic for items that share
+      // a sort value (e.g. burst shots, missing takenAt). Without this, right →
+      // left does not round-trip back to the starting asset.
       const currentSortValue = imageMetadata?.takenAt ?? file.createdAt;
+      const currentId = file.id;
 
       let prevId: string | null = null;
       let nextId: string | null = null;
 
+      const kindFilter = kind && kind !== 'all' ? eq(FileTable.type, kind) : undefined;
+
+      // Only navigate to files that are fully encoded and visible in the gallery,
+      // matching the same filters getUsersFiles applies.
+      const hasThumbnail = exists(
+        db
+          .select()
+          .from(FileVariantTable)
+          .where(
+            and(
+              eq(FileVariantTable.originalFileId, FileTable.id),
+              eq(FileVariantTable.type, "thumbnail"),
+            ),
+          ),
+      );
+      const hasOptimised = exists(
+        db
+          .select()
+          .from(FileVariantTable)
+          .where(
+            and(
+              eq(FileVariantTable.originalFileId, FileTable.id),
+              eq(FileVariantTable.type, "optimised"),
+            ),
+          ),
+      );
+
       if (albumId) {
-        // Album context: find prev (newer/left in visual order) and next (older/right in visual order) within album
-        // Albums display items in DESC order (newest first), so left/right arrows navigate through that visual order
+        // Album context: keyset on the same total order the album grid uses.
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(AlbumFileTable)
           .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .leftJoin(
-            ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id),
-          )
+          .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),
               buildFileAccessFilter(accessScope, FileTable.id),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) > ${currentSortValue}`,
+              kindFilter,
+              hasThumbnail,
+              hasOptimised,
+              keysetAfter(fileSortExpr, currentSortValue, currentId),
             ),
           )
-          .orderBy(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) ASC`,
-          )
+          .orderBy(sql`${fileSortExpr} ASC`, FileTable.id)
           .limit(1);
 
         const [next] = await db
           .select({ id: FileTable.id })
           .from(AlbumFileTable)
           .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .leftJoin(
-            ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id),
-          )
+          .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),
               buildFileAccessFilter(accessScope, FileTable.id),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${currentSortValue}`,
+              kindFilter,
+              hasThumbnail,
+              hasOptimised,
+              keysetBefore(fileSortExpr, currentSortValue, currentId),
             ),
           )
-          .orderBy(
-            desc(
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
-            ),
-          )
+          .orderBy(...galleryOrderBy(fileSortExpr))
           .limit(1);
 
         prevId = prev?.id ?? null;
         nextId = next?.id ?? null;
       } else if (cameraMake && cameraModel) {
-        // Camera context: find prev (newer/left in visual order) and next (older/right in visual order) within same camera
-        // Camera files display in DESC order (newest first), so left/right arrows navigate through that visual order
+        // Camera context: keyset on the same total order the camera grid uses.
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(ImageMetadataTable)
@@ -268,13 +299,16 @@ export const filesRouter = router({
           .where(
             and(
               buildFileAccessFilter(accessScope, FileTable.id),
+              kindFilter,
+              hasThumbnail,
+              hasOptimised,
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
-              sql`${ImageMetadataTable.takenAt} > ${currentSortValue}`,
+              keysetAfter(cameraSortExpr, currentSortValue, currentId),
             ),
           )
-          .orderBy(sql`${ImageMetadataTable.takenAt} ASC`)
+          .orderBy(sql`${cameraSortExpr} ASC`, FileTable.id)
           .limit(1);
 
         const [next] = await db
@@ -284,56 +318,52 @@ export const filesRouter = router({
           .where(
             and(
               buildFileAccessFilter(accessScope, FileTable.id),
+              kindFilter,
+              hasThumbnail,
+              hasOptimised,
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
-              sql`${ImageMetadataTable.takenAt} < ${currentSortValue}`,
+              keysetBefore(cameraSortExpr, currentSortValue, currentId),
             ),
           )
-          .orderBy(desc(ImageMetadataTable.takenAt))
+          .orderBy(...galleryOrderBy(cameraSortExpr))
           .limit(1);
 
         prevId = prev?.id ?? null;
         nextId = next?.id ?? null;
       } else {
-        // Global library context: find prev (newer/left in visual order) and next (older/right in visual order) in user's entire library
-        // Library files display in DESC order (newest first), so left/right arrows navigate through that visual order
+        // Global library context: keyset on the same total order getUsersFiles uses.
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(FileTable)
-          .leftJoin(
-            ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id),
-          )
+          .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
           .where(
             and(
               buildFileAccessFilter(accessScope, FileTable.id),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) > ${currentSortValue}`,
+              kindFilter,
+              hasThumbnail,
+              hasOptimised,
+              keysetAfter(fileSortExpr, currentSortValue, currentId),
             ),
           )
-          .orderBy(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) ASC`,
-          )
+          .orderBy(sql`${fileSortExpr} ASC`, FileTable.id)
           .limit(1);
 
         const [next] = await db
           .select({ id: FileTable.id })
           .from(FileTable)
-          .leftJoin(
-            ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id),
-          )
+          .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
           .where(
             and(
               buildFileAccessFilter(accessScope, FileTable.id),
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt}) < ${currentSortValue}`,
+              kindFilter,
+              hasThumbnail,
+              hasOptimised,
+              keysetBefore(fileSortExpr, currentSortValue, currentId),
             ),
           )
-          .orderBy(
-            desc(
-              sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
-            ),
-          )
+          .orderBy(...galleryOrderBy(fileSortExpr))
           .limit(1);
 
         prevId = prev?.id ?? null;
@@ -600,13 +630,12 @@ const getUsersFiles = async (
     getAccessScope(userId, session),
     getHideUndated(userId),
   ]);
-  const sortExpr = sql<string>`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`;
 
   // seekCursor is used when jumping to a specific date (e.g. clicking a year/month on the timeline).
   // It acts as the cursor when no regular pagination cursor is provided.
   const effectiveCursor = cursor ?? seekCursor;
   const cursorCondition = effectiveCursor
-    ? sql`${sortExpr} < ${effectiveCursor}`
+    ? sql`${fileSortExpr} < ${effectiveCursor}`
     : undefined;
 
   const rows = await db
@@ -614,7 +643,7 @@ const getUsersFiles = async (
       file: FileTable,
       blurhash: ImageMetadataTable.blurhash,
       takenAt: ImageMetadataTable.takenAt,
-      sortAt: sortExpr,
+      sortAt: fileSortExpr,
     })
     .from(FileTable)
     .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
@@ -651,7 +680,7 @@ const getUsersFiles = async (
         ...(cursorCondition ? [cursorCondition] : []),
       ),
     )
-    .orderBy(desc(sortExpr))
+    .orderBy(...galleryOrderBy(fileSortExpr))
     .limit(limit + 1);
 
   const data = rows.map((r) => ({

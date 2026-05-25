@@ -19,7 +19,7 @@ export class PrefetchService {
    */
   prefetchAsset(
     assetId: string,
-    opts?: { albumId?: string; cameraMake?: string; cameraModel?: string },
+    opts?: { albumId?: string; cameraMake?: string; cameraModel?: string; kind?: 'image' | 'video' | 'all' },
   ): void {
     if (this.pendingTimers.has(assetId)) return;
 
@@ -93,7 +93,7 @@ export class PrefetchService {
 
   private async doPrefetchAsset(
     assetId: string,
-    opts?: { albumId?: string; cameraMake?: string; cameraModel?: string },
+    opts?: { albumId?: string; cameraMake?: string; cameraModel?: string; kind?: 'image' | 'video' | 'all' },
   ): Promise<void> {
     const queryKey = [
       CacheKey.AssetSingle,
@@ -101,6 +101,7 @@ export class PrefetchService {
       opts?.albumId ?? null,
       opts?.cameraMake ?? null,
       opts?.cameraModel ?? null,
+      opts?.kind ?? null,
     ];
 
     // Prefetch the asset metadata via TanStack Query
@@ -112,6 +113,7 @@ export class PrefetchService {
           albumId: opts?.albumId,
           cameraMake: opts?.cameraMake,
           cameraModel: opts?.cameraModel,
+          kind: opts?.kind,
         }),
       staleTime: 60_000,
     });

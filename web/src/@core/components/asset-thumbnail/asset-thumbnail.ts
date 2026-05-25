@@ -68,6 +68,7 @@ export class AssetThumbnail {
   albumId = input<string>();
   cameraMake = input<string>();
   cameraModel = input<string>();
+  kind = input<'image' | 'video' | 'all'>();
 
   protected queryParams = () => {
     const params: Record<string, string | undefined> = {
@@ -75,6 +76,7 @@ export class AssetThumbnail {
       albumId: this.albumId(),
       cameraMake: this.cameraMake(),
       cameraModel: this.cameraModel(),
+      kind: this.kind(),
     };
     // Filter out undefined values
     return Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined));
@@ -90,6 +92,7 @@ export class AssetThumbnail {
       albumId: this.albumId(),
       cameraMake: this.cameraMake(),
       cameraModel: this.cameraModel(),
+      kind: this.kind(),
     });
   }
 

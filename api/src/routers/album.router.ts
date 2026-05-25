@@ -7,6 +7,7 @@ import {
   getAccessScope,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
+import { fileSortExpr, galleryOrderBy } from "../db/file-sort.js";
 import {
   AlbumFileTable,
   AlbumTable,
@@ -499,7 +500,7 @@ export const albumRouter = router({
       const rel = stripPrefix(normalize(albumRow.dir), rootPath);
       const relSegments = rel.split("/").filter(Boolean);
 
-      // files - order consistently with asset view: coalesce(takenAt, createdAt) DESC
+      // files - order matches the asset view's prev/next navigation
       const files = await db
         .select({ file: FileTable })
         .from(AlbumFileTable)
@@ -537,11 +538,7 @@ export const albumRouter = router({
             ),
           ),
         )
-        .orderBy(
-          desc(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
-          ),
-        );
+        .orderBy(...galleryOrderBy(fileSortExpr));
 
       // child albums
       const children = await db
