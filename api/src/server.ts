@@ -37,9 +37,12 @@ function parseMediaPathMap(raw?: string): MediaPathMap[] {
 
 const mediaPathMap = parseMediaPathMap(process.env["MEDIA_PATH_MAP"]);
 
-function resolveAssetPath(absPath: string): string {
+async function resolveAssetPath(absPath: string): Promise<string> {
   const resolved = path.resolve(absPath);
-  if (fs.existsSync(resolved)) return resolved;
+  try {
+    await fs.promises.access(resolved);
+    return resolved;
+  } catch {}
 
   for (const map of mediaPathMap) {
     if (
@@ -48,7 +51,10 @@ function resolveAssetPath(absPath: string): string {
     ) {
       const rel = path.relative(map.from, resolved);
       const candidate = path.resolve(map.to, rel);
-      if (fs.existsSync(candidate)) return candidate;
+      try {
+        await fs.promises.access(candidate);
+        return candidate;
+      } catch {}
     }
   }
 
@@ -142,7 +148,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     return reply.code(404).send({ error: `Variant not found: ${v}` });
   }
 
-  const abs = resolveAssetPath(
+  const abs = await resolveAssetPath(
     path.resolve(path.join(target.dir, target.name)),
   );
   const updatedAt = new Date(target.updatedAt);

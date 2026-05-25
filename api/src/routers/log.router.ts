@@ -2,10 +2,10 @@ import { and, desc, inArray, ne, or, sql } from "drizzle-orm";
 import z from "zod";
 import { db } from "../db/index.js";
 import { LogTable } from "../db/schema.js";
-import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { adminProcedure, internalProcedure, router } from "../trpc.js";
 
 export const logRouter = router({
-  get: privateProcedure
+  get: adminProcedure
     .input(
       z.object({
         types: z.array(z.enum(["error", "info", "warn", "debug"])).optional(),

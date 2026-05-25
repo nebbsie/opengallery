@@ -71,7 +71,7 @@ export const filesRouter = router({
 
   getFilesInDir: privateProcedure
     .input(z.string())
-    .mutation(({ input }) =>
+    .query(({ input }) =>
       db.select().from(FileTable).where(eq(FileTable.dir, input)),
     ),
 

@@ -10,7 +10,7 @@ import {
   FileVariantTable,
   SystemSettingsTable,
 } from "../db/schema.js";
-import { privateProcedure, publicProcedure, router } from "../trpc.js";
+import { adminProcedure, privateProcedure, publicProcedure, router } from "../trpc.js";
 
 export interface StorageStats {
   original: {
@@ -60,7 +60,7 @@ export const settingsRouter = router({
     return res?.allowsSelfRegistration ?? false;
   }),
 
-  update: privateProcedure
+  update: adminProcedure
     .input(
       z.object({
         allowsSelfRegistration: z.optional(z.boolean()),
@@ -118,7 +118,7 @@ export const settingsRouter = router({
       }
     }),
 
-  getStorageStats: privateProcedure.query<StorageStats>(async () => {
+  getStorageStats: adminProcedure.query<StorageStats>(async () => {
     const fv = alias(FileVariantTable, "fv");
 
     const result = await db
@@ -171,7 +171,7 @@ export const settingsRouter = router({
     return stats;
   }),
 
-  getEncoderInfo: privateProcedure.query(async () => {
+  getEncoderInfo: adminProcedure.query(async () => {
     const execAsync = promisify(exec);
 
     try {

@@ -18,6 +18,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
   standalone: true,
   imports: [HlmSpinner, HlmButton, ErrorAlert],
   template: `
+    <div class="flex-1 min-h-0 overflow-y-auto">
     @if (settings.isPending()) {
       <hlm-spinner />
     }
@@ -197,7 +198,11 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
         <button hlmBtn (click)="save()" [disabled]="saveMutation.isPending()">Save</button>
       </div>
     }
+    </div>
   `,
+  host: {
+    class: 'flex flex-col w-full h-full min-h-0 overflow-hidden',
+  },
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SettingsEncoding {

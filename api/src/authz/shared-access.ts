@@ -39,11 +39,29 @@ export type AccessScope = {
 export const isAdminSession = (session: SessionLike) =>
   session?.user?.type === "admin";
 
+type CacheEntry = { scope: AccessScope; expires: number };
+const scopeCache = new Map<string, CacheEntry>();
+const SCOPE_TTL_MS = 60_000;
+
+export function clearScopeCache(userId?: string): void {
+  if (userId) {
+    scopeCache.delete(`${userId}:0`);
+    scopeCache.delete(`${userId}:1`);
+  } else {
+    scopeCache.clear();
+  }
+}
+
 export async function getAccessScope(
   userId: string,
   session: SessionLike,
 ): Promise<AccessScope> {
   const isAdmin = isAdminSession(session);
+  const cacheKey = `${userId}:${isAdmin ? "1" : "0"}`;
+  const cached = scopeCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return cached.scope;
+  }
 
   if (isAdmin) {
     const [libraries, albums] = await Promise.all([
@@ -51,7 +69,7 @@ export async function getAccessScope(
       db.select({ id: AlbumTable.id }).from(AlbumTable),
     ]);
 
-    return {
+    const scope: AccessScope = {
       isAdmin,
       userId,
       ownedLibraryIds: new Set(libraries.map((row) => row.id)),
@@ -60,6 +78,8 @@ export async function getAccessScope(
       recursiveAlbumIds: new Set(albums.map((row) => row.id)),
       directFileIds: new Set<string>(),
     };
+    scopeCache.set(cacheKey, { scope, expires: Date.now() + SCOPE_TTL_MS });
+    return scope;
   }
 
   const [ownedLibraries, sharedItems, allAlbums, albumFileRows] =
@@ -174,7 +194,7 @@ export async function getAccessScope(
     }
   }
 
-  return {
+  const scope: AccessScope = {
     isAdmin,
     userId,
     ownedLibraryIds,
@@ -183,6 +203,8 @@ export async function getAccessScope(
     recursiveAlbumIds,
     directFileIds,
   };
+  scopeCache.set(cacheKey, { scope, expires: Date.now() + SCOPE_TTL_MS });
+  return scope;
 }
 
 /**

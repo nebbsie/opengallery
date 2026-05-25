@@ -1,0 +1,5 @@
+* text=auto
+
+# Shell scripts must always use LF — CRLF breaks shebangs in Linux containers
+*.sh text eol=lf
+entrypoint.unified.sh text eol=lf

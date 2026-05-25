@@ -371,7 +371,7 @@ export class Asset implements OnDestroy {
   protected readonly cameraMake = this.route.snapshot.queryParamMap.get('cameraMake');
   protected readonly cameraModel = this.route.snapshot.queryParamMap.get('cameraModel');
 
-  protected readonly infoOpen = signal(false);
+  protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
   private map: L.Map | null = null;
   protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');

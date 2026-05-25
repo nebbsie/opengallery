@@ -120,7 +120,7 @@ export class SettingsUsers {
   private auth = inject(Auth);
 
   settings = injectQuery(() => ({
-    queryKey: [CacheKey.MediaSourcesSettings],
+    queryKey: [CacheKey.SystemSettings],
     queryFn: async () => this.trpc.settings.get.query(),
   }));
 

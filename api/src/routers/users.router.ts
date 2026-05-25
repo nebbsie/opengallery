@@ -14,7 +14,7 @@ import {
   UiSettingsTable,
   UserTable,
 } from "../db/schema.js";
-import { privateProcedure, publicProcedure, router } from "../trpc.js";
+import { adminProcedure, privateProcedure, publicProcedure, router } from "../trpc.js";
 
 export const usersRouter = router({
   isFirstSignup: publicProcedure.query(async () => {

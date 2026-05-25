@@ -88,13 +88,24 @@ export default fp(async function metrics(app: FastifyInstance) {
       .observe(dur);
   });
 
-  app.get("/metrics", async (_req, reply) => {
+  const checkInternalToken = (req: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply): boolean => {
+    const token = (req.headers["authorization"] ?? "").replace(/^Bearer\s+/, "");
+    if (!process.env["INTERNAL_TOKEN"] || token !== process.env["INTERNAL_TOKEN"]) {
+      reply.status(401).send({ error: "Unauthorized" });
+      return false;
+    }
+    return true;
+  };
+
+  app.get("/metrics", async (req, reply) => {
+    if (!checkInternalToken(req, reply)) return;
     reply.header("Content-Type", register.contentType);
     return reply.send(await register.metrics());
   });
 
   // Internal endpoint for worker to report encoding metrics
   app.post("/metrics/encode", async (req, reply) => {
+    if (!checkInternalToken(req, reply)) return;
     const body = req.body as {
       durationMs?: number;
       type?: "image" | "video";

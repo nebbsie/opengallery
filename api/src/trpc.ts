@@ -51,7 +51,7 @@ const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
       headers: toHeaders(ctx.req.headers),
     });
     const expiresAt = session?.session?.expiresAt;
-    const expired = expiresAt && new Date(expiresAt) <= new Date();
+    const expired = !expiresAt || new Date(expiresAt) <= new Date();
     if (!expired) {
       userId = (session?.user?.id as string | undefined) ?? null;
     }
@@ -82,6 +82,17 @@ const AuthenticatedMiddleware = t.middleware(({ ctx, next }) => {
   return next({ ctx: ctx as PrivateContext });
 });
 
+// Admin-only middleware (real user + admin role)
+const AdminMiddleware = t.middleware(({ ctx, next }) => {
+  if (ctx.isInternal || !ctx.userId) {
+    throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+  if (ctx.session?.user?.type !== "admin") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
+  }
+  return next({ ctx: ctx as PrivateContext });
+});
+
 // Internal-only middleware
 const InternalMiddleware = t.middleware(({ ctx, next }) => {
   if (!ctx.isInternal) {
@@ -92,11 +103,6 @@ const InternalMiddleware = t.middleware(({ ctx, next }) => {
 
 const TimingMiddleware = t.middleware(async ({ next, path, input }) => {
   const start = Date.now();
-
-  if (t._config.isDev && false) {
-    const waitMs = Math.floor(Math.random() * 700) + 100;
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
 
   const result = await next();
   const end = Date.now();
@@ -130,6 +136,12 @@ export const strictPrivateProcedure = t.procedure
   .use(TimingMiddleware)
   .use(AuthMiddleware)
   .use(AuthenticatedMiddleware);
+
+// Admin-only endpoints (real user with admin role).
+export const adminProcedure = t.procedure
+  .use(TimingMiddleware)
+  .use(AuthMiddleware)
+  .use(AdminMiddleware);
 
 // Internal-only endpoints.
 export const internalProcedure = t.procedure

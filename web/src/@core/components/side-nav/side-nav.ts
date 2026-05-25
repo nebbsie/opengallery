@@ -1,7 +1,8 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { SideNavDefault } from '@core/components/side-nav/side-nav-default/side-nav-default';
 import { SideNavSettings } from '@core/components/side-nav/side-nav-settings/side-nav-settings';
 import { Sidebar } from '@core/services/sidebar/sidebar';
+import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideCamera,
@@ -19,6 +20,7 @@ import { RouterLink } from '@angular/router';
 import { Logo } from '@core/components/logo/logo';
 import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
 import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-side-nav',
@@ -89,10 +91,17 @@ import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
               routerLink="/settings"
               [variant]="'menu'"
             >
-              <ng-icon hlm size="sm" name="lucideSettings" />
+              <div class="relative">
+                <ng-icon hlm size="sm" name="lucideSettings" />
+                @if (hasPendingWork()) {
+                  <span class="absolute -right-1 -top-1 h-2 w-2 animate-pulse rounded-full bg-blue-500"></span>
+                }
+              </div>
             </a>
 
-            <span *brnTooltipContent class="flex items-center"> Settings </span>
+            <span *brnTooltipContent class="flex items-center">
+              Settings @if (hasPendingWork()) { · encoding }
+            </span>
           </hlm-tooltip>
         }
       }
@@ -102,6 +111,15 @@ import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 })
 export class SideNav {
   private readonly sidebar = inject(Sidebar);
+  private readonly trpc = injectTrpc();
 
   sideBarType = this.sidebar.content;
+
+  private readonly queueCounts = injectQuery(() => ({
+    queryKey: ['queue', 'encodingCounts'],
+    queryFn: () => this.trpc.queue.encodingCounts.query(),
+    refetchInterval: 10_000,
+  }));
+
+  hasPendingWork = computed(() => (this.queueCounts.data()?.totalPending ?? 0) > 0);
 }

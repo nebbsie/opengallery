@@ -4,7 +4,7 @@ import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { z } from "zod";
-import { privateProcedure, router } from "../trpc.js";
+import { adminProcedure, router } from "../trpc.js";
 
 const ROOT = os.platform() === "win32" ? path.parse(process.cwd()).root : "/";
 // When running in Docker, the host root is usually mounted at /host.
@@ -18,7 +18,7 @@ const expand = (p?: string) => {
 };
 
 export const directoryRouter = router({
-  ls: privateProcedure.input(z.string().optional()).query(async ({ input }) => {
+  ls: adminProcedure.input(z.string().optional()).query(async ({ input }) => {
     // Host-visible path (what we return to the client)
     const hostPath = path.resolve(expand(input));
 

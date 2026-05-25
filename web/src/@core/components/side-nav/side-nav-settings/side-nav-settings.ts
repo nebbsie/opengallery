@@ -1,10 +1,12 @@
-import { ChangeDetectionStrategy, Component, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, output } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
+import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideActivity,
   lucideBadgeAlert,
   lucideHardDrive,
+  lucideListChecks,
   lucideLogs,
   lucideMonitor,
   lucideUser,
@@ -14,6 +16,7 @@ import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
 import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-side-nav-settings',
@@ -33,6 +36,7 @@ import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
       lucideUsers,
       lucideMonitor,
       lucideBadgeAlert,
+      lucideListChecks,
       lucideActivity,
       lucideUser,
     }),
@@ -182,9 +186,18 @@ import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
         [routerLinkActiveOptions]="{ exact: true }"
         (click)="handleClicked()"
       >
-        <ng-icon hlm size="sm" name="lucideBadgeAlert" />
+        <div class="relative">
+          <ng-icon hlm size="sm" name="lucideListChecks" />
+          @if (pendingCount() > 0) {
+            <span class="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
+              {{ pendingCount() > 99 ? '99+' : pendingCount() }}
+            </span>
+          }
+        </div>
       </a>
-      <span *brnTooltipContent class="flex items-center"> Tasks </span>
+      <span *brnTooltipContent class="flex items-center">
+        Tasks @if (pendingCount() > 0) { ({{ pendingCount() }} pending) }
+      </span>
     </hlm-tooltip>
 
     <hlm-tooltip>
@@ -209,6 +222,16 @@ import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 })
 export class SideNavSettings {
   clicked = output<void>();
+
+  private readonly trpc = injectTrpc();
+
+  private readonly queueCounts = injectQuery(() => ({
+    queryKey: ['queue', 'encodingCounts'],
+    queryFn: () => this.trpc.queue.encodingCounts.query(),
+    refetchInterval: 10_000,
+  }));
+
+  pendingCount = computed(() => this.queueCounts.data()?.totalPending ?? 0);
 
   handleClicked() {
     this.clicked.emit();
