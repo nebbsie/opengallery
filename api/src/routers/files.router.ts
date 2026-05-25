@@ -39,6 +39,7 @@ import {
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 import { deleteFilesWithCascade } from "../utils/file-operations.js";
+import { wsManager } from "../ws-manager.js";
 
 export const filesRouter = router({
   create: internalProcedure
@@ -467,6 +468,11 @@ export const filesRouter = router({
           });
 
         result[v.type] = { id: res.id, dir: v.dir, name: v.name };
+
+        wsManager.broadcast("file:variant-saved", {
+          originalFileId,
+          variantType: v.type,
+        });
       }
 
       return result;

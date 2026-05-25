@@ -3,5 +3,6 @@ export type Environment = {
   readonly api: {
     readonly url: string;
     readonly authUrl: string;
+    readonly wsUrl: string;
   };
 };

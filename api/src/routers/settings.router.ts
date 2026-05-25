@@ -181,6 +181,7 @@ export const settingsRouter = router({
       const hasNvenc = output.includes("h264_nvenc");
       const hasVideotoolbox = output.includes("h264_videotoolbox"); // macOS
       const hasVaapi = output.includes("h264_vaapi"); // Intel/AMD Linux
+      const hasAmf = output.includes("h264_amf"); // AMD AMF (Windows/cross-platform)
 
       const gpus: Array<{ id: string; name: string; encoder: string }> = [];
 
@@ -222,12 +223,35 @@ export const settingsRouter = router({
         }
       }
 
-      // Detect Intel/AMD VAAPI
+      // Detect Intel/AMD VAAPI (Linux)
       if (hasVaapi) {
+        try {
+          const { stdout: vaapiStdout } = await execAsync(
+            "vainfo 2>&1 | grep -i 'driver version\\|VA-API version'",
+          );
+          const isAmd = vaapiStdout.toLowerCase().includes("radeon") ||
+            vaapiStdout.toLowerCase().includes("amdgpu") ||
+            vaapiStdout.toLowerCase().includes("mesa gallium");
+          gpus.push({
+            id: "vaapi",
+            name: isAmd ? "AMD GPU (VAAPI)" : "Intel/AMD GPU (VAAPI)",
+            encoder: "h264_vaapi",
+          });
+        } catch {
+          gpus.push({
+            id: "vaapi",
+            name: "Intel/AMD GPU (VAAPI)",
+            encoder: "h264_vaapi",
+          });
+        }
+      }
+
+      // Detect AMD AMF (Windows / cross-platform)
+      if (hasAmf) {
         gpus.push({
-          id: "vaapi",
-          name: "Intel/AMD GPU (VAAPI)",
-          encoder: "h264_vaapi",
+          id: "amd-amf",
+          name: "AMD GPU (AMF)",
+          encoder: "h264_amf",
         });
       }
 
@@ -248,11 +272,13 @@ export const settingsRouter = router({
           nvenc: hasNvenc,
           videotoolbox: hasVideotoolbox,
           vaapi: hasVaapi,
+          amf: hasAmf,
           cpu: true,
         },
         detectedGpus: gpus,
         defaultGpu:
           gpus.find((g) => g.id.startsWith("nvidia"))?.id ??
+          gpus.find((g) => g.id === "amd-amf")?.id ??
           gpus.find((g) => g.id === "vaapi")?.id ??
           gpus.find((g) => g.id === "videotoolbox")?.id ??
           "cpu",

@@ -7,5 +7,6 @@ export const environment: Environment = {
   api: {
     url: 'http://localhost:3000',
     authUrl: 'http://localhost:3000',
+    wsUrl: 'ws://localhost:3000/ws',
   },
 };

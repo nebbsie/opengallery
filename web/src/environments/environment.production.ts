@@ -4,10 +4,13 @@ import { Environment } from './envorinment.types';
 // better-auth client automatically appends /api/auth to baseURL
 const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4321';
 
+const wsOrigin = origin.replace(/^http/, 'ws');
+
 export const environment: Environment = {
   environment: 'production',
   api: {
     url: `${origin}/api`,
     authUrl: origin,
+    wsUrl: `${wsOrigin}/api/ws`,
   },
 };

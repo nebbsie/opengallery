@@ -1,4 +1,5 @@
 import cors from "@fastify/cors";
+import websocket from "@fastify/websocket";
 import {
   fastifyTRPCPlugin,
   type FastifyTRPCPluginOptions,
@@ -16,6 +17,7 @@ import { logger } from "./logger.js";
 import metricsPlugin from "./metrics.js";
 import { appRouter, type AppRouter } from "./router.js";
 import { createContext, toHeaders } from "./trpc.js";
+import { wsManager } from "./ws-manager.js";
 
 const server: FastifyInstance = Fastify();
 
@@ -83,6 +85,20 @@ await server.register(cors, {
 await server.register(metricsPlugin);
 
 server.get("/health", async () => ({ status: "ok" }));
+
+await server.register(websocket);
+
+server.get("/ws", { websocket: true }, async (socket, req) => {
+  const session = await auth.api.getSession({
+    headers: toHeaders(req.headers),
+  });
+  const userId = session?.user?.id as string | undefined;
+  if (!userId) {
+    socket.close(4001, "Unauthorized");
+    return;
+  }
+  wsManager.add(socket, userId);
+});
 
 server.get("/asset/:id/:variant?", async (req, reply) => {
   const { id, variant } = req.params as { id: string; variant?: string };

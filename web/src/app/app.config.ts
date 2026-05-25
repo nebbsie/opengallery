@@ -12,6 +12,7 @@ import { Auth } from '@core/services/auth/auth';
 import { provideBetterAuthClient } from '@core/services/auth/better-auth-client';
 import { Theme } from '@core/services/theme/theme';
 import { provideTrpcClient } from '@core/services/trpc';
+import { WebSocketService } from '@core/services/websocket/websocket.service';
 import { environment } from '@env/environment';
 import {
   provideTanStackQuery,
@@ -48,6 +49,7 @@ export const appConfig: ApplicationConfig = {
         theme.set(theme.get());
       }
       inject(Auth).initialize();
+      inject(WebSocketService);
       const elapsed = performance.now() - timer;
       console.log(`App initialized in ${elapsed.toFixed(2)} ms`);
     }),

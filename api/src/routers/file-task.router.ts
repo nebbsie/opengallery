@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { FileTaskTable, SystemSettingsTable } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { wsManager } from "../ws-manager.js";
 
 export const fileTaskRouter = router({
   getCountsByType: internalProcedure.query(async () => {
@@ -133,6 +134,15 @@ export const fileTaskRouter = router({
           )
         )
         .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
+
+      if (row && input.status === "succeeded") {
+        wsManager.broadcast("file:task-completed", {
+          fileId: input.fileId,
+          type: input.type,
+          status: "succeeded",
+        });
+      }
+
       return row ?? null;
     }),
 
@@ -164,6 +174,7 @@ export const fileTaskRouter = router({
       // Group items by status to batch updates where possible
       const now = new Date().toISOString();
       const results: Array<{ id: string; status: string } | null> = [];
+      const succeededBroadcasts: Array<{ fileId: string; type: string }> = [];
 
       // Group items with same status and no special fields for batch update
       const simpleSucceeded = input.filter(
@@ -196,6 +207,9 @@ export const fileTaskRouter = router({
           .where(sql`${sql.join(conditions, sql` OR `)}`)
           .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
         results.push(...batchResults);
+        for (const item of simpleSucceeded) {
+          succeededBroadcasts.push({ fileId: item.fileId, type: item.type });
+        }
       }
 
       // Batch update failed items
@@ -259,6 +273,17 @@ export const fileTaskRouter = router({
           )
           .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
         results.push(row ?? null);
+        if (item.status === "succeeded") {
+          succeededBroadcasts.push({ fileId: item.fileId, type: item.type });
+        }
+      }
+
+      for (const b of succeededBroadcasts) {
+        wsManager.broadcast("file:task-completed", {
+          fileId: b.fileId,
+          type: b.type,
+          status: "succeeded",
+        });
       }
 
       return results;
