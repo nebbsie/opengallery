@@ -8,7 +8,7 @@ import { UiSettingsService } from '@core/services/ui-settings/ui-settings';
 @Component({
   selector: 'app-root',
   host: {
-    class: 'flex flex-col h-screen',
+    class: 'flex flex-col h-[100dvh]',
   },
   template: `
     <main class="relative flex flex-1 overflow-hidden">

@@ -91,6 +91,8 @@
 html,
 body {
   overscroll-behavior-y: none; /** Stop vertical bounce; keep horizontal swipe navigation */
+  overflow: hidden;
+  height: 100%;
 }
 
 /*Custom Video Player Styles - Required because tailwind alone can not change all the needed styles*/

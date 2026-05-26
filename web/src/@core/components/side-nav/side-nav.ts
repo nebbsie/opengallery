@@ -58,7 +58,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       </a>
     </div>
 
-    <div class="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
+    <div class="flex min-h-0 flex-1 flex-col p-3">
       @switch (sideBarType()) {
         @case ('settings') {
           <app-side-nav-settings />
