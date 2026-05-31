@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -41,7 +41,9 @@ export type ProcessingStage =
 export type FileTaskType =
   | "encode_thumbnail"
   | "encode_optimised"
-  | "video_poster";
+  | "video_poster"
+  | "detect_faces"
+  | "extract_geolocation";
 // FileTaskStatusEnum semantics:
 // - pending: queued to be processed, not yet started
 // - in_progress: worker picked it up and is running
@@ -80,10 +82,33 @@ export const FileTable = sqliteTable(
     mime: text("mime").notNull(),
     size: integer("size").notNull(),
     contentHash: text("content_hash"),
+    // Denormalized copy of image_metadata.taken_at. The gallery/album/people/
+    // location sorts are coalesce(taken_at, created_at) / coalesce(taken_at,
+    // <sentinel>); keeping taken_at on the file row makes those single-table
+    // expression indexes (below), turning the grid + asset prev/next into
+    // indexed keyset scans instead of full scans + filesort. Kept in sync by
+    // imageMetadata.save; backfilled by the 0005 migration.
+    takenAt: text("taken_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("file_path_uidx").on(t.dir, t.name)],
+  (t) => [
+    uniqueIndex("file_path_uidx").on(t.dir, t.name),
+    // Global gallery + asset prev/next: undated media sinks to the sentinel
+    // bottom. The sentinel is an inline literal (NOT a bound param) so it
+    // matches the ORDER BY expression and SQLite can use this index.
+    index("file_gallery_sort_idx").on(
+      sql`coalesce(${t.takenAt}, '0000-01-01T00:00:00.000Z')`,
+      t.id,
+    ),
+    // Albums, people, locations: undated falls back to import time.
+    index("file_taken_created_sort_idx").on(
+      sql`coalesce(${t.takenAt}, ${t.createdAt})`,
+      t.id,
+    ),
+    // Camera view + timeline buckets: order by real capture date.
+    index("file_taken_at_idx").on(t.takenAt, t.id),
+  ],
 );
 
 export const LibraryFileTable = sqliteTable(
@@ -244,7 +269,90 @@ export const GeoLocationTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("geo_location_file_id_idx").on(t.fileId)],
+  // Unique on fileId: one coordinate row per file, and the upsert in
+  // geoLocation.save relies on this constraint as its ON CONFLICT target.
+  (t) => [uniqueIndex("geo_location_file_id_idx").on(t.fileId)],
+);
+
+// A "person" is a cluster of detected faces. name is null until the user
+// names the cluster (Google-Photos style). centroid is the running mean of the
+// cluster's face embeddings, stored as a JSON float array for fast matching.
+export const PersonTable = sqliteTable(
+  "person",
+  {
+    id: id(),
+    libraryId: text("library_id")
+      .notNull()
+      .references(() => LibraryTable.id),
+    name: text("name"),
+    // Avatar face for the cluster. Plain text (no FK) to avoid a circular
+    // reference with FaceTable; cleaned up in application code.
+    coverFaceId: text("cover_face_id"),
+    centroid: text("centroid"), // JSON number[] — mean embedding
+    faceCount: integer("face_count").notNull().default(0),
+    hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("person_library_id_idx").on(t.libraryId),
+    // Supports the anyHiddenPeople() short-circuit and the hidden-person photo
+    // exclusion filter applied across the browse queries.
+    index("person_hidden_idx").on(t.hidden),
+  ],
+);
+
+// A single detected face within a file, linked to a person cluster.
+// Bounding box is normalized 0..1 relative to the source image.
+export const FaceTable = sqliteTable(
+  "face",
+  {
+    id: id(),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => FileTable.id),
+    personId: text("person_id").references(() => PersonTable.id),
+    embedding: text("embedding").notNull(), // JSON number[]
+    boxX: real("box_x").notNull(),
+    boxY: real("box_y").notNull(),
+    boxW: real("box_w").notNull(),
+    boxH: real("box_h").notNull(),
+    detScore: real("det_score"),
+    cropDir: text("crop_dir"),
+    cropName: text("crop_name"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("face_file_id_idx").on(t.fileId),
+    index("face_person_id_idx").on(t.personId),
+  ],
+);
+
+// Pairs of person clusters the user has dismissed as "not the same person", so
+// the merge-suggestion query (faces.listMergeSuggestions) stops offering them.
+// Stored as a canonical ordered pair (personIdLow < personIdHigh) so a pair is
+// dismissed once regardless of which way round it was suggested. No FK to person:
+// clusters are deleted on merge, and a dangling dismissal simply never matches a
+// live pair — harmless, and proactively cleaned in mergePeople/deletePerson.
+export const PersonMergeDismissedTable = sqliteTable(
+  "person_merge_dismissed",
+  {
+    id: id(),
+    libraryId: text("library_id")
+      .notNull()
+      .references(() => LibraryTable.id),
+    personIdLow: text("person_id_low").notNull(),
+    personIdHigh: text("person_id_high").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("person_merge_dismissed_pair_uidx").on(
+      t.personIdLow,
+      t.personIdHigh,
+    ),
+    index("person_merge_dismissed_library_idx").on(t.libraryId),
+  ],
 );
 
 export const MediaPathTable = sqliteTable(
@@ -315,6 +423,11 @@ export const SystemSettingsTable = sqliteTable("system_settings", {
   optimizedQuality: integer("optimized_quality").notNull().default(80),
   gpuEncoding: integer("gpu_encoding", { mode: "boolean" }).notNull().default(false),
   selectedGpu: text("selected_gpu"), // Selected GPU for encoding (e.g., 'nvidia:0', 'intel', 'amd')
+  faceConcurrency: integer("face_concurrency").notNull().default(2),
+  // Cosine-similarity threshold for joining a face to an existing person cluster.
+  // Higher = stricter (fewer false merges, more cluster fragmentation). Tunable
+  // in Settings → Faces. See assignFace in faces.router.ts.
+  faceMatchThreshold: real("face_match_threshold").notNull().default(0.4),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

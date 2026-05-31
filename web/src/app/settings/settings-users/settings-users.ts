@@ -5,6 +5,7 @@ import { Confirm } from '@core/dialogs/confirm/confirm';
 import { CreateUser } from '@core/dialogs/create-user/create-user';
 import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
+import { optimisticEdit } from '@core/services/optimistic';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCrown, lucidePlus, lucideTrash2, lucideUser } from '@ng-icons/lucide';
@@ -12,19 +13,19 @@ import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-users',
   providers: [provideIcons({ lucidePlus, lucideTrash2, lucideUser, lucideCrown })],
-  imports: [ErrorAlert, HlmCheckbox, HlmSpinner, HlmButton, HlmIcon, NgIcon, DatePipe],
+  imports: [ErrorAlert, HlmCheckbox, Loading, HlmButton, HlmIcon, NgIcon, DatePipe],
   host: {
     class: 'w-full',
   },
   template: `
     @if (settings.isPending() || users.isPending()) {
-      <hlm-spinner />
+      <app-loading />
     }
 
     @if (settings.isError() || users.isError()) {
@@ -129,10 +130,38 @@ export class SettingsUsers {
     queryFn: async () => this.trpc.users.getAll.query(),
   }));
 
+  // Optimistic delete: the row disappears immediately and is restored if the
+  // server rejects.
   deleteUserMutation = injectMutation(() => ({
     mutationFn: (userId: string) => this.trpc.users.delete.mutate({ id: userId }),
-    onSuccess: () => {
+    onMutate: async (userId) => {
+      await this.queryClient.cancelQueries({ queryKey: ['users'] });
+      return optimisticEdit(this.queryClient, [
+        {
+          queryKey: ['users'],
+          update: (old) =>
+            (old as { id: string }[] | undefined)?.filter((u) => u.id !== userId),
+        },
+      ]);
+    },
+    onError: (_err, _userId, ctx) => ctx?.rollback(),
+    onSettled: () => {
       this.queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+  }));
+
+  // Optimistic toggle: the checkbox flips instantly and reverts on failure.
+  private selfRegistrationMutation = injectMutation(() => ({
+    mutationFn: (checked: boolean) =>
+      this.trpc.settings.update.mutate({ allowsSelfRegistration: checked }),
+    onMutate: (checked) => {
+      const prev = this.allowsSelfRegistration();
+      this.allowsSelfRegistration.set(checked);
+      return { prev };
+    },
+    onError: (_err, _checked, ctx) => this.allowsSelfRegistration.set(ctx?.prev ?? false),
+    onSettled: () => {
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.SystemSettings] });
     },
   }));
 
@@ -159,7 +188,7 @@ export class SettingsUsers {
   }
 
   clickedAllowsSelfRegistration(checked: boolean) {
-    this.trpc.settings.update.mutate({ allowsSelfRegistration: checked });
+    this.selfRegistrationMutation.mutate(checked);
   }
 
   openCreateUserDialog() {

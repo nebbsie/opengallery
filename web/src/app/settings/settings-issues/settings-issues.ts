@@ -1,14 +1,15 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
+import { optimisticEdit } from '@core/services/optimistic';
 import { injectTrpc } from '@core/services/trpc';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-issues',
-  imports: [HlmSpinner, ErrorAlert, HlmButton],
+  imports: [Loading, ErrorAlert, HlmButton],
   host: { class: 'flex flex-col w-full h-full overflow-hidden' },
   template: `
     <div class="flex items-center justify-between gap-4 pb-3 shrink-0">
@@ -32,7 +33,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
     </div>
 
     @if (issues.isPending()) {
-      <hlm-spinner />
+      <app-loading />
     }
 
     @if (issues.isError()) {
@@ -83,16 +84,36 @@ export class SettingsIssues {
     queryFn: async () => this.trpc.issues.list.query(),
   }));
 
+  // Optimistic: the retried issue(s) leave the list immediately (they're now
+  // re-queued), and are restored if the retry call fails.
   retryMutation = injectMutation(() => ({
     mutationFn: (fileId: string) => this.trpc.issues.retry.mutate({ fileId }),
-    onSuccess: () => {
+    onMutate: async (fileId) => {
+      await this.queryClient.cancelQueries({ queryKey: [CacheKey.Logs, 'issues'] });
+      return optimisticEdit(this.queryClient, [
+        {
+          queryKey: [CacheKey.Logs, 'issues'],
+          update: (old) =>
+            (old as { fileId: string }[] | undefined)?.filter((i) => i.fileId !== fileId),
+        },
+      ]);
+    },
+    onError: (_err, _fileId, ctx) => ctx?.rollback(),
+    onSettled: () => {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.Logs, 'issues'] });
     },
   }));
 
   retryAllMutation = injectMutation(() => ({
     mutationFn: () => this.trpc.issues.retryAll.mutate(),
-    onSuccess: () => {
+    onMutate: async () => {
+      await this.queryClient.cancelQueries({ queryKey: [CacheKey.Logs, 'issues'] });
+      return optimisticEdit(this.queryClient, [
+        { queryKey: [CacheKey.Logs, 'issues'], update: () => [] },
+      ]);
+    },
+    onError: (_err, _vars, ctx) => ctx?.rollback(),
+    onSettled: () => {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.Logs, 'issues'] });
     },
   }));

@@ -3,6 +3,7 @@ import { albumRouter } from "./routers/album.router.js";
 import { cameraRouter } from "./routers/camera.router.js";
 import { directoryRouter } from "./routers/directory.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
+import { facesRouter } from "./routers/faces.router.js";
 import { fileTaskRouter } from "./routers/file-task.router.js";
 import { filesRouter } from "./routers/files.router.js";
 import { geoLocationRouter } from "./routers/geo-location.router.js";
@@ -25,6 +26,7 @@ export const appRouter = router({
   directory: directoryRouter,
   files: filesRouter,
   fileTask: fileTaskRouter,
+  faces: facesRouter,
   log: logRouter,
   library: libraryRouter,
   libraryFile: libraryFileRouter,

@@ -1,19 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
+import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { ErrorAlert } from '@core/components/error/error';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-camera-detail',
-  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid],
+  imports: [ErrorAlert, Loading, AssetThumbnail, VirtualThumbnailGrid],
+  hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {

@@ -1,19 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
+import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-location-detail',
-  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, RouterLink],
+  imports: [ErrorAlert, Loading, AssetThumbnail, RouterLink],
+  hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
@@ -35,7 +37,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
         }
       </div>
 
-      <div class="flex flex-1 overflow-y-auto">
+      <div class="flex flex-1 overflow-y-auto pb-20 sm:pb-0">
         @if (allItems().length > 0) {
           <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             @for (asset of allItems(); track asset.id) {

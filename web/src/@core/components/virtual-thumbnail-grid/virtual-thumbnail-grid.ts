@@ -52,6 +52,16 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
   private _heights: number[] = [];
   private _cum: number[] = [0];
   private _maxBuf = 800;
+  // Extra scrollable space appended after the last row so content can scroll
+  // clear of the fixed mobile bottom nav (0 on desktop). Folded into the total
+  // height only — it never affects index/offset math, which stays row-based.
+  private _bottomPadding = 0;
+
+  setBottomPadding(px: number): void {
+    if (px === this._bottomPadding) return;
+    this._bottomPadding = px;
+    if (this._viewport) this._updateTotal();
+  }
 
   updateConfig(heights: number[], _minBuf: number, maxBuf: number): void {
     this._heights = heights;
@@ -69,7 +79,7 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
   }
 
   get totalHeight(): number {
-    return this._cum[this._cum.length - 1] ?? 0;
+    return (this._cum[this._cum.length - 1] ?? 0) + this._bottomPadding;
   }
 
   offsetForIndex(i: number): number {
@@ -262,44 +272,17 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
                 </div>
               }
 
-              @for (marker of monthMarkers(); track marker.year + '-' + marker.month) {
-                <button
-                  [class]="
-                    marker.year === activeTimelineMarker()?.year &&
-                    marker.monthName === activeTimelineMarker()?.month
-                      ? 'group absolute left-1/2 z-[2] flex -translate-x-[calc(50%+4px)] -translate-y-1/2 items-center gap-1'
-                      : 'group absolute left-1/2 z-[1] flex h-5 w-5 translate-x-1 -translate-y-1/2 items-center justify-center'
-                  "
-                  [style.top.%]="marker.position"
-                  [attr.aria-label]="marker.monthName + ' ' + marker.year"
-                  (click)="jumpToTimelineMonth(marker); $event.stopPropagation()"
-                >
-                  @if (
-                    marker.year === activeTimelineMarker()?.year &&
-                    marker.monthName === activeTimelineMarker()?.month
-                  ) {
-                    <span
-                      class="text-[10px] leading-none font-semibold whitespace-nowrap text-white/90"
-                      >{{ marker.monthName }}</span
-                    >
-                    <span
-                      class="block h-2 w-2 rounded-full bg-white/90 shadow-[0_0_0_2px_rgba(255,255,255,0.18)]"
-                    ></span>
-                  } @else {
-                    <span
-                      class="block rounded-full bg-white/35 transition-all duration-150 ease-out group-hover:bg-white/80"
-                      [style.width.px]="marker.dotSize"
-                      [style.height.px]="marker.dotSize"
-                    ></span>
-                    <span
-                      class="pointer-events-none absolute left-full ml-1 rounded bg-zinc-900/90 px-2 py-1 text-[10px] leading-none font-medium whitespace-nowrap text-white opacity-0 shadow-lg ring-1 ring-white/10 backdrop-blur-sm transition-opacity duration-150 group-hover:opacity-100"
-                      >{{ marker.monthName }} {{ marker.year }}</span
-                    >
-                  }
-                </button>
+              <!-- Tick marks: every year boundary gets a small tick, even
+                   when its label is thinned out, so the scale stays legible. -->
+              @for (tick of yearTicks(); track tick.position) {
+                <div
+                  class="absolute left-1/2 h-px w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/20"
+                  [style.top.%]="tick.position"
+                  aria-hidden="true"
+                ></div>
               }
 
-              @for (marker of yearMarkers(); track marker.year) {
+              @for (marker of displayedYearMarkers(); track marker.year) {
                 <button
                   type="button"
                   class="group absolute left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap transition-all duration-200 ease-out"
@@ -410,12 +393,28 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   private boundDragMove: ((e: MouseEvent) => void) | null = null;
   private boundDragEnd: (() => void) | null = null;
 
+  // On mobile (where the fixed bottom nav floats over the content) reserve a
+  // strip of scrollable space below the last row so it can be scrolled up clear
+  // of the nav. Keyed off content width since the nav is hidden at the sm
+  // breakpoint (≥640px), where this collapses to 0.
+  protected readonly bottomInset = computed(() => {
+    const w = this.width();
+    return w > 0 && w < 640 ? 80 : 0;
+  });
+
   constructor() {
     // Keep custom scroll strategy in sync with row heights
     effect(() => {
       const heights = this._rowHeights();
       const rowH = this.rowHeight();
       this.scrollStrategy.updateConfig(heights, rowH * 3, rowH * 6);
+    });
+
+    // Push the mobile bottom-nav clearance into the scroll strategy's total
+    // height so the last row can clear the nav.
+    effect(() => {
+      this.scrollStrategy.setBottomPadding(this.bottomInset());
+      this.viewport?.checkViewportSize();
     });
 
     // Effect to handle scroll restoration when items load
@@ -682,32 +681,36 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     return markers;
   });
 
-  protected readonly monthMarkers = computed(() => {
-    const { months, monthPositions, total } = this.timelineLogScale();
-    if (!months.length || !total)
-      return [] as {
-        year: number;
-        month: number;
-        monthName: string;
-        position: number;
-        offset: number;
-        dotSize: number;
-      }[];
+  /** Small ticks at every year boundary (cheap, never crowded since it's
+   *  one per year and years are spread by MIN_YEAR_GAP). */
+  protected readonly yearTicks = computed(() =>
+    this.yearMarkers().map((m) => ({ position: m.position })),
+  );
 
-    const globalMaxCount = Math.max(...months.map((m) => m.count), 1);
-    const sqrtMax = Math.sqrt(globalMaxCount);
+  /** Year labels, thinned so they never overlap regardless of how many years
+   *  the library spans. Always keeps the first and last year; drops interior
+   *  labels that fall within MIN_LABEL_GAP_PCT of the previously kept one.
+   *  Dropped years still get a tick (yearTicks) and remain reachable via
+   *  hover/drag scrubbing. Mirrors Google Photos' sparse year scale. */
+  protected readonly displayedYearMarkers = computed(() => {
+    const markers = this.yearMarkers();
+    if (markers.length <= 2) return markers;
 
-    return months.map((month, i) => {
-      const dotSize = Math.round(3 + (Math.sqrt(Math.max(1, month.count)) / sqrtMax) * 3);
-      return {
-        year: month.year,
-        month: month.month,
-        monthName: month.monthName,
-        offset: month.offset,
-        position: monthPositions[i],
-        dotSize,
-      };
-    });
+    const MIN_LABEL_GAP_PCT = 6; // ~ one 11px label + breathing room
+    const active = this.activeTimelineMarker()?.year ?? null;
+    const lastIdx = markers.length - 1;
+    const kept: typeof markers = [];
+    let lastPos = -Infinity;
+
+    for (let i = 0; i < markers.length; i++) {
+      const m = markers[i];
+      const isAnchor = i === 0 || i === lastIdx || m.year === active;
+      if (isAnchor || m.position - lastPos >= MIN_LABEL_GAP_PCT) {
+        kept.push(m);
+        lastPos = m.position;
+      }
+    }
+    return kept;
   });
 
   /** Map the current scroll position to a percentage on the timeline.

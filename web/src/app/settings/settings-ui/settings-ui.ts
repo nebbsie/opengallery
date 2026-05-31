@@ -60,20 +60,20 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
     </div>
 
     <label
-      for="hide-undated"
+      for="show-undated"
       class="hover:bg-accent/50 mb-10 flex max-w-lg cursor-pointer items-center justify-between rounded-lg border p-3"
     >
       <div class="grid gap-1.5 font-normal">
-        <p class="text-sm leading-none font-bold">Hide Undated Media</p>
+        <p class="text-sm leading-none font-bold">Show Undated Media</p>
         <p class="text-muted-foreground text-sm">
-          Hide photos and videos without a date taken from the gallery, photos, and videos feeds.
-          They will still appear in albums.
+          Show photos and videos that have no date taken. When on, they appear at the bottom of
+          the gallery, photos, and videos feeds. They always appear in albums.
         </p>
       </div>
       <hlm-switch
-        id="hide-undated"
-        [checked]="hideUndated()"
-        (changed)="toggleHideUndated($event)"
+        id="show-undated"
+        [checked]="showUndated()"
+        (changed)="toggleShowUndated($event)"
       />
     </label>
   `,
@@ -88,7 +88,8 @@ export class SettingsUi {
   private readonly trpc = injectTrpc();
   private readonly queryClient = inject(QueryClient);
   protected readonly theme = inject(Theme);
-  protected readonly hideUndated = signal(false);
+  // "Show undated" is the inverse of the stored hideUndated flag.
+  protected readonly showUndated = signal(true);
 
   private readonly mediaSettings = injectQuery(() => ({
     queryKey: [CacheKey.MediaSourcesSettings],
@@ -100,7 +101,7 @@ export class SettingsUi {
     effect(() => {
       const data = this.mediaSettings.data();
       if (data) {
-        this.hideUndated.set(data.hideUndated);
+        this.showUndated.set(!data.hideUndated);
       }
     });
   }
@@ -109,9 +110,9 @@ export class SettingsUi {
     this.theme.toggle();
   }
 
-  async toggleHideUndated(checked: boolean) {
-    this.hideUndated.set(checked);
-    await this.trpc.mediaSourcesSettings.updateSettings.mutate({ hideUndated: checked });
+  async toggleShowUndated(checked: boolean) {
+    this.showUndated.set(checked);
+    await this.trpc.mediaSourcesSettings.updateSettings.mutate({ hideUndated: !checked });
     // Invalidate gallery and timeline queries so they refetch with the new filter
     this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryAll] });
     this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryPhotos] });

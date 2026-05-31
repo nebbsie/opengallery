@@ -14,19 +14,19 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideMap } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
-import * as L from 'leaflet';
-import 'leaflet.markercluster';
+import type * as L from 'leaflet';
+import { loadLeafletWithCluster } from './leaflet-cluster';
 
 @Component({
   selector: 'app-map',
   providers: [provideIcons({ lucideMap })],
-  imports: [ErrorAlert, HlmSpinner, NgIcon, HlmIcon],
+  imports: [ErrorAlert, Loading, NgIcon, HlmIcon],
   host: { class: 'block h-full' },
   template: `
     @if (locations.isPending() && !locations.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (locations.isError() && !locations.data()) {
       <app-error-alert [error]="locations.error()" />
     } @else {
@@ -46,67 +46,14 @@ import 'leaflet.markercluster';
       }
     }
   `,
-  styles: `
-    :host ::ng-deep .photo-cluster {
-      background: transparent;
-    }
-    :host ::ng-deep .photo-cluster-inner {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 9999px;
-      font-weight: 600;
-      color: white;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      box-shadow:
-        0 2px 8px rgba(0, 0, 0, 0.2),
-        0 0 0 4px rgba(59, 130, 246, 0.3);
-      transition: transform 0.15s ease;
-    }
-    :host ::ng-deep .photo-cluster-inner:hover {
-      transform: scale(1.1);
-    }
-    :host ::ng-deep .photo-cluster-small .photo-cluster-inner {
-      width: 36px;
-      height: 36px;
-      font-size: 12px;
-      background: #3b82f6;
-    }
-    :host ::ng-deep .photo-cluster-medium .photo-cluster-inner {
-      width: 44px;
-      height: 44px;
-      font-size: 13px;
-      background: #8b5cf6;
-    }
-    :host ::ng-deep .photo-cluster-large .photo-cluster-inner {
-      width: 54px;
-      height: 54px;
-      font-size: 14px;
-      background: #ec4899;
-    }
-    :host ::ng-deep .photo-marker {
-      background: transparent;
-      border: none;
-    }
-    :host ::ng-deep .photo-marker-dot {
-      width: 14px;
-      height: 14px;
-      background: #3b82f6;
-      border: 2.5px solid white;
-      border-radius: 9999px;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-      transition: transform 0.15s ease;
-    }
-    :host ::ng-deep .photo-marker-dot:hover {
-      transform: scale(1.3);
-    }
-  `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class Map implements OnDestroy {
   private readonly trpc = injectTrpc();
   private map: L.Map | null = null;
   private clusterGroup: L.MarkerClusterGroup | null = null;
+  // Guards against the init effect re-entering during the async leaflet load.
+  private initializing = false;
   private readonly clientReady = signal(false);
   protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
@@ -127,7 +74,7 @@ export class Map implements OnDestroy {
       const data = this.locations.data();
       const container = this.mapContainer();
       if (data && container) {
-        this.initMap(data);
+        void this.initMap(data);
       }
     });
   }
@@ -140,27 +87,40 @@ export class Map implements OnDestroy {
     }
   }
 
-  private initMap(locations: { lat: number; lon: number; count: number }[]): void {
+  private async initMap(
+    locations: { lat: number; lon: number; count: number }[],
+  ): Promise<void> {
     const container = this.mapContainer();
-    if (!container || this.map) return;
+    if (!container || this.map || this.initializing) return;
+    this.initializing = true;
+
+    // Load leaflet + the markercluster plugin against a shared global `L`. See
+    // leaflet-cluster.ts for why this can't be a plain top-level import.
+    const leaflet = await loadLeafletWithCluster();
+
+    // The component may have been destroyed while leaflet was loading.
+    if (this.map) {
+      this.initializing = false;
+      return;
+    }
 
     // Use local assets instead of CDN so the map works without internet access
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    L.Icon.Default.mergeOptions({
+    delete (leaflet.Icon.Default.prototype as any)._getIconUrl;
+    leaflet.Icon.Default.mergeOptions({
       iconRetinaUrl: 'assets/leaflet/marker-icon-2x.png',
       iconUrl: 'assets/leaflet/marker-icon.png',
       shadowUrl: 'assets/leaflet/marker-shadow.png',
     });
 
-    this.map = L.map(container.nativeElement, {
+    this.map = leaflet.map(container.nativeElement, {
       center: [20, 0],
       zoom: 2,
       zoomControl: true,
       attributionControl: true,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    leaflet.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 20,
       subdomains: 'abcd',
@@ -168,7 +128,7 @@ export class Map implements OnDestroy {
 
     // Cluster radius scales with zoom: large radius at world-view collapses continents,
     // shrinks progressively so city/town/road groupings emerge as the user zooms in.
-    this.clusterGroup = L.markerClusterGroup({
+    this.clusterGroup = leaflet.markerClusterGroup({
       maxClusterRadius: (zoom: number) => {
         if (zoom <= 4) return 100;  // continent / country level
         if (zoom <= 7) return 80;   // country / region level
@@ -191,21 +151,22 @@ export class Map implements OnDestroy {
           totalCount += (m.options as { photoCount?: number }).photoCount || 1;
         });
 
-        let sizeClass = 'photo-cluster-small';
-        if (totalCount >= 100) {
-          sizeClass = 'photo-cluster-large';
-        } else if (totalCount >= 10) {
-          sizeClass = 'photo-cluster-medium';
-        }
-
+        const size = totalCount >= 100 ? 54 : totalCount >= 10 ? 44 : 36;
+        const bg = totalCount >= 100 ? '#ec4899' : totalCount >= 10 ? '#8b5cf6' : '#3b82f6';
         const label =
           totalCount >= 1000 ? `${Math.round(totalCount / 100) / 10}k` : `${totalCount}`;
 
-        return L.divIcon({
-          html: `<div class="photo-cluster-inner">${label}</div>`,
-          className: `photo-cluster ${sizeClass}`,
-          iconSize: L.point(54, 54),
-          iconAnchor: L.point(27, 27),
+        // Inline styles (not CSS classes) so the bubble always renders — Leaflet
+        // builds these nodes in JS, outside Angular's view encapsulation.
+        return leaflet.divIcon({
+          html:
+            `<div style="display:flex;align-items:center;justify-content:center;` +
+            `width:${size}px;height:${size}px;border-radius:9999px;background:${bg};` +
+            `color:#fff;font-weight:600;font-size:13px;` +
+            `box-shadow:0 2px 8px rgba(0,0,0,0.2),0 0 0 4px rgba(59,130,246,0.3)">${label}</div>`,
+          className: '',
+          iconSize: leaflet.point(size, size),
+          iconAnchor: leaflet.point(size / 2, size / 2),
         });
       },
     });
@@ -213,12 +174,15 @@ export class Map implements OnDestroy {
     const bounds: [number, number][] = [];
 
     locations.forEach((location) => {
-      const marker = L.marker([location.lat, location.lon], {
-        icon: L.divIcon({
-          html: '<div class="photo-marker-dot"></div>',
-          className: 'photo-marker',
-          iconSize: L.point(14, 14),
-          iconAnchor: L.point(7, 7),
+      const marker = leaflet.marker([location.lat, location.lon], {
+        icon: leaflet.divIcon({
+          html:
+            '<div style="width:14px;height:14px;background:#3b82f6;' +
+            'border:2.5px solid #fff;border-radius:9999px;' +
+            'box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>',
+          className: '',
+          iconSize: leaflet.point(14, 14),
+          iconAnchor: leaflet.point(7, 7),
         }),
         photoCount: location.count,
       } as L.MarkerOptions);
@@ -239,9 +203,22 @@ export class Map implements OnDestroy {
     });
 
     this.map.addLayer(this.clusterGroup);
+    this.initializing = false;
 
-    if (bounds.length > 0 && this.map) {
-      this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
-    }
+    // Leaflet measures the container at init time. In this async/SPA flow the
+    // map div is created the moment data arrives, before its width/height has
+    // settled, so the map renders grey/blank with no tiles. Recalculate the
+    // size once layout settles, then fit to the markers. We poke it on the next
+    // frame and again shortly after, because a freshly-inserted element with a
+    // viewport-relative (calc) height can still report 0 in the first frame.
+    const settle = () => {
+      if (!this.map) return;
+      this.map.invalidateSize();
+      if (bounds.length > 0) {
+        this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+      }
+    };
+    requestAnimationFrame(settle);
+    setTimeout(settle, 250);
   }
 }

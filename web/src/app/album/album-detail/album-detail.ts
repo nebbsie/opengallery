@@ -7,6 +7,7 @@ import { LoadingThumbnail } from '@core/components/loading-thumbnail/loading-thu
 import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { ShareItem } from '@core/dialogs/share-item/share-item';
+import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -14,13 +15,13 @@ import { lucideShare2 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-album-detail',
   imports: [
-    HlmSpinner,
+    Loading,
     ErrorAlert,
     AssetThumbnail,
     AlbumThumbnail,
@@ -33,10 +34,11 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     NgIcon,
   ],
   providers: [provideIcons({ lucideShare2 })],
+  hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (response.isPending() && !response.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error()" />
     } @else {

@@ -1,14 +1,11 @@
 import { ChangeDetectionStrategy, Component, output } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { PrefetchRouteDirective } from '@core/directives/prefetch-route/prefetch-route.directive';
-import { CacheKey } from '@core/services/cache-key.types';
-import { injectTrpc } from '@core/services/trpc';
 import { NgIcon } from '@ng-icons/core';
 import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
-import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-side-nav-default',
@@ -106,6 +103,24 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         hlmTooltipTrigger
         position="right"
         hlmBtn
+        routerLink="/faces"
+        flPrefetchRoute
+        routerLinkActive="active"
+        size="icon"
+        #rlaFaces="routerLinkActive"
+        [variant]="rlaFaces.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideUsers" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> People </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
         routerLink="/albums"
         flPrefetchRoute
         routerLinkActive="active"
@@ -142,13 +157,6 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 })
 export class SideNavDefault {
   clicked = output<void>();
-
-  private readonly trpc = injectTrpc();
-
-  albums = injectQuery(() => ({
-    queryKey: [CacheKey.AlbumsAll, 'with-children'],
-    queryFn: async () => this.trpc.album.getAllUserAlbums.query(),
-  }));
 
   handleClicked() {
     this.clicked.emit();

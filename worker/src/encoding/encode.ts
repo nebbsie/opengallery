@@ -17,6 +17,52 @@ type File = RouterOutputs['files']['getFileById']['raw'];
 type EncodeStatus = 'success' | 'failed';
 type EncodeResult = { type: 'image' | 'video'; status: EncodeStatus };
 
+// Open an image tolerantly. Real-world libraries contain truncated / slightly
+// corrupt JPEGs (e.g. "VipsJpeg: Invalid SOS parameters for sequential JPEG").
+// libvips defaults to failOn:'warning', which aborts on these; 'none' lets it
+// decode whatever valid scan data exists so we still get a usable variant
+// instead of permanently failing the file.
+function openImage(input: string | Buffer): sharp.Sharp {
+  return sharp(input, { failOn: 'none' });
+}
+
+// Thrown when an image cannot be decoded by libvips OR the ffmpeg fallback.
+// The caller marks the task terminally skipped rather than failed, so an
+// unrecoverable file stops consuming retries forever.
+class UndecodableImageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UndecodableImageError';
+  }
+}
+
+// Last-resort decode for images libvips rejects. ffmpeg's mjpeg decoder is far
+// more tolerant of truncated / malformed JPEGs; we ask it to emit a single
+// clean PNG frame to stdout, which sharp can then re-encode normally. Returns
+// null if ffmpeg also can't recover a frame.
+async function ffmpegDecodeToPng(path: string): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const args = [
+      '-y',
+      '-v', 'error',
+      '-err_detect', 'ignore_err',
+      '-i', path,
+      '-frames:v', '1',
+      '-f', 'image2pipe',
+      '-vcodec', 'png',
+      'pipe:1',
+    ];
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks: Buffer[] = [];
+    child.stdout.on('data', (d) => chunks.push(d as Buffer));
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => {
+      const buf = Buffer.concat(chunks);
+      resolve(code === 0 && buf.length > 0 ? buf : null);
+    });
+  });
+}
+
 // Get a stable identifier for encoding folder names.
 // Prefers contentHash (true deduplication) if available, falls back to path hash.
 // This stays consistent even if the DB is reset and file gets a new UUID.
@@ -56,21 +102,25 @@ async function encodeImage(
   const path = toContainerPath(hostPath);
   const fileId = file.id;
 
-  // Use Sharp's file path input instead of loading entire file into memory
-  // This is more memory efficient for large images (RAW files can be 50MB+)
-  const sharpInstance = sharp(path);
-
-  // Extract metadata (width/height) early using sharp
-  const metadata = await sharpInstance.metadata();
-  const width = metadata.width ?? null;
-  const height = metadata.height ?? null;
+  // Extract metadata (width/height) early using sharp. Tolerant: a corrupt
+  // header shouldn't hard-fail here before the thumbnail step gets a chance to
+  // recover the image via ffmpeg, so fall back to unknown dimensions.
+  let width: number | null = null;
+  let height: number | null = null;
+  try {
+    const metadata = await openImage(path).metadata();
+    width = metadata.width ?? null;
+    height = metadata.height ?? null;
+  } catch (e) {
+    logger.warn(`[encode:image] metadata read failed for id=${fileId}`, e as Error);
+  }
   timings['metadata'] = Date.now() - stepStart;
   stepStart = Date.now();
 
   // Generate blurhash from a small version of the image
   let blurhash: string | null = null;
   try {
-    const smallImg = await sharp(path)
+    const smallImg = await openImage(path)
       .rotate()
       .resize(32, 32, { fit: 'inside' })
       .ensureAlpha()
@@ -123,34 +173,45 @@ async function encodeImage(
       );
     }
 
-    try {
-      // Use file path input for Sharp (more memory efficient)
-      const thumbResult = await sharp(path)
+    // Render thumbnail + optimised from a sharp source. The fast path streams
+    // straight from the original file (memory efficient for large RAW/JPEG); the
+    // source factory is swapped to a repaired in-memory buffer on the fallback.
+    const renderThumb = (src: () => sharp.Sharp) =>
+      src()
         .rotate()
         .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
         .avif({ quality: thumbQuality, effort: 4 })
         .toBuffer({ resolveWithObject: true });
-      thumb = { data: thumbResult.data, info: { size: thumbResult.data.length } };
-    } catch (e) {
-      logger.error(`[encode:image] thumbnail failed for id=${fileId}`, e as Error);
-      throw e;
-    }
-
-    timings['thumbnail'] = Date.now() - stepStart;
-    stepStart = Date.now();
-
-    try {
-      const optResult = await sharp(path)
+    const renderOpt = (src: () => sharp.Sharp) =>
+      src()
         .rotate()
         .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
         .avif({ quality: optQuality, effort: 3 })
         .toBuffer({ resolveWithObject: true });
-      opt = { data: optResult.data, info: { size: optResult.data.length } };
+
+    let thumbResult: { data: Buffer };
+    let optResult: { data: Buffer };
+    try {
+      thumbResult = await renderThumb(() => openImage(path));
+      optResult = await renderOpt(() => openImage(path));
     } catch (e) {
-      logger.error(`[encode:image] optimise failed for id=${fileId}`, e as Error);
-      throw e;
+      // libvips couldn't decode it even with failOn:'none'. Try to recover a
+      // clean frame via ffmpeg; if that also fails the file is unrecoverable.
+      logger.warn(
+        `[encode:image] libvips decode failed for id=${fileId}, attempting ffmpeg repair`,
+        e as Error,
+      );
+      const repaired = await ffmpegDecodeToPng(path);
+      if (!repaired) {
+        throw new UndecodableImageError((e as Error)?.message ?? 'decode failed');
+      }
+      thumbResult = await renderThumb(() => openImage(repaired));
+      optResult = await renderOpt(() => openImage(repaired));
+      logger.info(`[encode:image] recovered via ffmpeg for id=${fileId}`);
     }
-    timings['optimised'] = Date.now() - stepStart;
+    thumb = { data: thumbResult.data, info: { size: thumbResult.data.length } };
+    opt = { data: optResult.data, info: { size: optResult.data.length } };
+    timings['thumbnail'] = Date.now() - stepStart;
     stepStart = Date.now();
 
     // Write files sequentially with I/O throttling to reduce disk pressure
@@ -333,26 +394,35 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
       ]);
       return { type: 'image', status: 'success' };
     } catch (e) {
-      logger.error(`[encode] image failed fileId=${fileId}`, e as Error);
+      // An image that neither libvips nor ffmpeg can decode is unrecoverable —
+      // mark it terminally `skipped` (not `failed`) so it never re-enters the
+      // retry/revive cycle. Everything else stays `failed` and retries normally.
+      const undecodable = e instanceof UndecodableImageError;
+      const status = undecodable ? ('skipped' as const) : ('failed' as const);
+      if (undecodable) {
+        logger.warn(`[encode] image undecodable, skipping fileId=${fileId}`, e as Error);
+      } else {
+        logger.error(`[encode] image failed fileId=${fileId}`, e as Error);
+      }
       try {
         await trpc.fileTask.setManyStatusByFileAndType.mutate([
           {
             fileId,
             type: 'encode_thumbnail',
-            status: 'failed',
+            status,
             error: (e as Error)?.message,
-            incrementAttempts: true,
+            incrementAttempts: !undecodable,
           },
           {
             fileId,
             type: 'encode_optimised',
-            status: 'failed',
+            status,
             error: (e as Error)?.message,
-            incrementAttempts: true,
+            incrementAttempts: !undecodable,
           },
         ]);
       } catch (statusErr) {
-        logger.error('[encode] failed to mark image tasks failed', statusErr as Error);
+        logger.error('[encode] failed to mark image tasks', statusErr as Error);
       }
       return { type: 'image', status: 'failed' };
     }

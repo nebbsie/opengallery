@@ -8,17 +8,17 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideImage } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-photos',
   providers: [provideIcons({ lucideImage })],
-  imports: [ErrorAlert, HlmSpinner, AssetThumbnail, VirtualThumbnailGrid, NgIcon, HlmIcon],
+  imports: [ErrorAlert, Loading, AssetThumbnail, VirtualThumbnailGrid, NgIcon, HlmIcon],
   host: { class: 'block h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {

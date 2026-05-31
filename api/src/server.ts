@@ -10,58 +10,19 @@ import Fastify, { type FastifyInstance } from "fastify";
 import * as fs from "node:fs";
 import path from "path";
 import { auth } from "./auth/auth.js";
+import { getCachedSession } from "./auth/session-cache.js";
 import { canUserViewFile } from "./authz/shared-access.js";
 import { db } from "./db/index.js";
-import { FileTable, FileVariantTable } from "./db/schema.js";
+import { FaceTable, FileTable, FileVariantTable } from "./db/schema.js";
 import { logger } from "./logger.js";
 import metricsPlugin from "./metrics.js";
+import { beginRequestStats, type RequestStats } from "./request-context.js";
 import { appRouter, type AppRouter } from "./router.js";
 import { createContext, toHeaders } from "./trpc.js";
+import { resolveAssetPath } from "./utils/media-path.js";
 import { wsManager } from "./ws-manager.js";
 
 const server: FastifyInstance = Fastify();
-
-type MediaPathMap = { from: string; to: string };
-
-function parseMediaPathMap(raw?: string): MediaPathMap[] {
-  if (!raw) return [];
-  return raw
-    .split(";")
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      const [from, to] = entry.split("=");
-      if (!from || !to) return null;
-      return { from: path.resolve(from), to: path.resolve(to) };
-    })
-    .filter((m): m is MediaPathMap => m !== null);
-}
-
-const mediaPathMap = parseMediaPathMap(process.env["MEDIA_PATH_MAP"]);
-
-async function resolveAssetPath(absPath: string): Promise<string> {
-  const resolved = path.resolve(absPath);
-  try {
-    await fs.promises.access(resolved);
-    return resolved;
-  } catch {}
-
-  for (const map of mediaPathMap) {
-    if (
-      resolved === map.from ||
-      resolved.startsWith(`${map.from}${path.sep}`)
-    ) {
-      const rel = path.relative(map.from, resolved);
-      const candidate = path.resolve(map.to, rel);
-      try {
-        await fs.promises.access(candidate);
-        return candidate;
-      } catch {}
-    }
-  }
-
-  return resolved;
-}
 
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 const allowAll = !rawOrigins || rawOrigins.trim() === "*";
@@ -84,14 +45,41 @@ await server.register(cors, {
 
 await server.register(metricsPlugin);
 
+// Slow-request logging. Every request opens a DB-query stats scope; on response
+// anything over SLOW_REQUEST_MS is logged with how much of the time was spent
+// in SQL (and the single slowest query), so the logs show whether a slow page
+// or a slow thumbnail/asset download is query-bound or not. Set to 0 to log all.
+const SLOW_REQUEST_MS = Number(process.env["SLOW_REQUEST_MS"] ?? 500);
+
+server.addHook("onRequest", async (req) => {
+  (req as { __reqStart?: bigint }).__reqStart = process.hrtime.bigint();
+  (req as { __stats?: RequestStats }).__stats = beginRequestStats();
+});
+
+server.addHook("onResponse", async (req, reply) => {
+  const start = (req as { __reqStart?: bigint }).__reqStart;
+  if (start === undefined) return;
+  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+  if (ms < SLOW_REQUEST_MS) return;
+
+  const stats = (req as { __stats?: RequestStats }).__stats;
+  logger.warn(
+    `[http] SLOW ${req.method} ${req.url} → ${reply.statusCode} ${ms.toFixed(0)}ms`,
+    {
+      queries: stats?.queryCount ?? 0,
+      dbMs: stats ? Number(stats.queryMs.toFixed(1)) : 0,
+      slowestQueryMs: stats?.slowest ? Number(stats.slowest.ms.toFixed(1)) : 0,
+      slowestQuery: stats?.slowest?.sql,
+    },
+  );
+});
+
 server.get("/health", async () => ({ status: "ok" }));
 
 await server.register(websocket);
 
 server.get("/ws", { websocket: true }, async (socket, req) => {
-  const session = await auth.api.getSession({
-    headers: toHeaders(req.headers),
-  });
+  const session = await getCachedSession(toHeaders(req.headers));
   const userId = session?.user?.id as string | undefined;
   if (!userId) {
     socket.close(4001, "Unauthorized");
@@ -103,9 +91,7 @@ server.get("/ws", { websocket: true }, async (socket, req) => {
 server.get("/asset/:id/:variant?", async (req, reply) => {
   const { id, variant } = req.params as { id: string; variant?: string };
 
-  const session = await auth.api.getSession({
-    headers: toHeaders(req.headers),
-  });
+  const session = await getCachedSession(toHeaders(req.headers));
   const sessionUserId = (session?.user?.id as string | undefined) ?? null;
 
   if (!sessionUserId) {
@@ -117,19 +103,11 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     return reply.code(403).send({ error: "Forbidden" });
   }
 
-  const [base] = await db
-    .select()
-    .from(FileTable)
-    .where(eq(FileTable.id, id))
-    .limit(1);
-  if (!base) return reply.code(404).send({ error: "Asset not found" });
-
-  // normalize variant
+  // Normalize the variant up front so an invalid one is rejected before any query.
   const v =
     variant?.toLowerCase() === "thumbnail"
       ? "thumbnail"
-      : variant?.toLowerCase() === "optimised" ||
-          variant?.toLowerCase() === "optimised"
+      : variant?.toLowerCase() === "optimised"
         ? "optimised"
         : variant
           ? "invalid"
@@ -141,10 +119,18 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
       .send({ error: "Variant must be thumbnail | optimised" });
   }
 
-  // pick target file row: original or its variant
+  // Single query on the hot thumbnail path: fetch either the original row or the
+  // variant's file row directly. A variant request doesn't need the base row, so
+  // we skip it (previously two queries: base + variant join).
   const target =
     v == null
-      ? base
+      ? (
+          await db
+            .select()
+            .from(FileTable)
+            .where(eq(FileTable.id, id))
+            .limit(1)
+        )[0]
       : (
           await db
             .select({ file: FileTable })
@@ -152,7 +138,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
             .innerJoin(FileTable, eq(FileVariantTable.fileId, FileTable.id))
             .where(
               and(
-                eq(FileVariantTable.originalFileId, base.id),
+                eq(FileVariantTable.originalFileId, id),
                 eq(FileVariantTable.type, v),
               ),
             )
@@ -160,8 +146,9 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
         )[0]?.file;
 
   if (!target) {
-    logger.error(`Variant ${v} not found for file: ${id}`);
-    return reply.code(404).send({ error: `Variant not found: ${v}` });
+    return reply
+      .code(404)
+      .send({ error: v == null ? "Asset not found" : `Variant not found: ${v}` });
   }
 
   const abs = await resolveAssetPath(
@@ -195,6 +182,53 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
 
     return reply.send(fs.createReadStream(abs, { start, end }));
   }
+
+  return reply.send(fs.createReadStream(abs));
+});
+
+// Serve a cropped face thumbnail (the avatar for a person cluster). Mirrors the
+// /asset handler: authorize against the face's source file, then stream the crop.
+server.get("/face/:faceId", async (req, reply) => {
+  const { faceId } = req.params as { faceId: string };
+
+  const session = await getCachedSession(toHeaders(req.headers));
+  const sessionUserId = (session?.user?.id as string | undefined) ?? null;
+  if (!sessionUserId) return reply.code(401).send({ error: "Unauthorized" });
+
+  const [face] = await db
+    .select()
+    .from(FaceTable)
+    .where(eq(FaceTable.id, faceId))
+    .limit(1);
+  if (!face) return reply.code(404).send({ error: "Face not found" });
+  if (!face.cropDir || !face.cropName) {
+    return reply.code(404).send({ error: "Face crop not available" });
+  }
+
+  const canView = await canUserViewFile(sessionUserId, session, face.fileId);
+  if (!canView) return reply.code(403).send({ error: "Forbidden" });
+
+  const abs = await resolveAssetPath(
+    path.resolve(path.join(face.cropDir, face.cropName)),
+  );
+
+  let stats: fs.Stats;
+  try {
+    stats = await fs.promises.stat(abs);
+  } catch {
+    return reply.code(404).send({ error: "Face crop file missing" });
+  }
+
+  const updatedAt = new Date(face.updatedAt);
+  const etag = `${face.id}-${stats.size}-${Math.floor(updatedAt.getTime() / 1000)}`;
+  if (req.headers["if-none-match"] === etag) return reply.code(304).send();
+
+  reply
+    .header("Content-Type", "image/avif")
+    .header("Content-Length", String(stats.size))
+    .header("ETag", etag)
+    .header("Last-Modified", updatedAt.toUTCString())
+    .header("Cache-Control", "public, max-age=31536000, immutable");
 
   return reply.send(fs.createReadStream(abs));
 });

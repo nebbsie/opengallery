@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { MediaPathTable, MediaSettingsTable } from "../db/schema.js";
 import { internalProcedure, router, strictPrivateProcedure } from "../trpc.js";
+import { invalidateMediaSettings } from "../utils/settings-cache.js";
 
 export const mediaSourcesSettingsRouter = router({
   createSource: strictPrivateProcedure
@@ -34,11 +35,13 @@ export const mediaSourcesSettingsRouter = router({
       }),
     )
     .mutation(async ({ input, ctx: { userId } }) => {
-      return db
+      const result = await db
         .update(MediaSettingsTable)
         .set(input)
         .where(eq(MediaSettingsTable.userId, userId))
         .returning();
+      invalidateMediaSettings(userId);
+      return result;
     }),
 
   get: strictPrivateProcedure.query(async ({ ctx: { userId } }) => {

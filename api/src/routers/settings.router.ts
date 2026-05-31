@@ -11,6 +11,10 @@ import {
   SystemSettingsTable,
 } from "../db/schema.js";
 import { adminProcedure, privateProcedure, publicProcedure, router } from "../trpc.js";
+import {
+  getCachedSystemSettings,
+  invalidateSystemSettings,
+} from "../utils/settings-cache.js";
 
 export interface StorageStats {
   original: {
@@ -37,7 +41,7 @@ export interface StorageStats {
 
 export const settingsRouter = router({
   get: privateProcedure.query(async () => {
-    const [res] = await db.select().from(SystemSettingsTable).limit(1);
+    const res = await getCachedSystemSettings();
     return (
       res ?? {
         id: "",
@@ -49,6 +53,9 @@ export const settingsRouter = router({
         thumbnailQuality: 70,
         optimizedQuality: 80,
         gpuEncoding: false,
+        selectedGpu: null,
+        faceConcurrency: 2,
+        faceMatchThreshold: 0.4,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -56,7 +63,7 @@ export const settingsRouter = router({
   }),
 
   allowsSelfRegistration: publicProcedure.query(async () => {
-    const [res] = await db.select().from(SystemSettingsTable).limit(1);
+    const res = await getCachedSystemSettings();
     return res?.allowsSelfRegistration ?? false;
   }),
 
@@ -70,6 +77,8 @@ export const settingsRouter = router({
         optimizedQuality: z.optional(z.number().int().min(1).max(100)),
         gpuEncoding: z.optional(z.boolean()),
         selectedGpu: z.optional(z.string().nullable()),
+        faceConcurrency: z.optional(z.number().int().min(1).max(16)),
+        faceMatchThreshold: z.optional(z.number().min(0.2).max(0.7)),
         uploadPath: z.optional(z.string().nullable()),
         variantsPath: z.optional(z.string().nullable()),
       }),
@@ -95,6 +104,7 @@ export const settingsRouter = router({
           .set({ ...ctx.input, updatedAt: new Date().toISOString() })
           .where(eq(SystemSettingsTable.id, existing.id))
           .returning();
+        invalidateSystemSettings();
         return res;
       } else {
         // Insert new row with defaults + input
@@ -109,11 +119,14 @@ export const settingsRouter = router({
             thumbnailQuality: 70,
             optimizedQuality: 80,
             gpuEncoding: false,
+            faceConcurrency: 2,
+            faceMatchThreshold: 0.4,
             ...ctx.input,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           })
           .returning();
+        invalidateSystemSettings();
         return res;
       }
     }),

@@ -80,18 +80,14 @@ export const cameraRouter = router({
       if (cursor) {
         const [cursorRecord] = await db
           .select({
-            sortTs: ImageMetadataTable.takenAt,
+            sortTs: FileTable.takenAt,
           })
           .from(FileTable)
-          .innerJoin(
-            ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id),
-          )
           .where(eq(FileTable.id, cursor))
           .limit(1);
 
         if (cursorRecord?.sortTs) {
-          cursorCondition = sql`${ImageMetadataTable.takenAt} < ${cursorRecord.sortTs}`;
+          cursorCondition = sql`${FileTable.takenAt} < ${cursorRecord.sortTs}`;
         }
       }
 
@@ -100,6 +96,7 @@ export const cameraRouter = router({
           file: FileTable,
           libraryId: LibraryTable.id,
           libraryFileId: LibraryFileTable.id,
+          blurhash: ImageMetadataTable.blurhash,
         })
         .from(ImageMetadataTable)
         .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
@@ -137,6 +134,7 @@ export const cameraRouter = router({
         ...r.file,
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
+        blurhash: r.blurhash,
       }));
 
       const hasMore = data.length > limit;

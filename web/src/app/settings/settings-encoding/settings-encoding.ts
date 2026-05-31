@@ -10,17 +10,17 @@ import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { HlmButton } from '@spartan-ng/helm/button';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-encoding',
   standalone: true,
-  imports: [HlmSpinner, HlmButton, ErrorAlert],
+  imports: [Loading, HlmButton, ErrorAlert],
   template: `
     <div class="flex-1 min-h-0 overflow-y-auto">
     @if (settings.isPending()) {
-      <hlm-spinner />
+      <app-loading />
     }
 
     @if (settings.isError()) {
@@ -189,8 +189,54 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
 
         @if (hasQualityChanged()) {
           <p class="mt-2 text-xs text-amber-500">
-            Quality changed - images will be re-encoded on next scan or manually triggered.
+            Quality changed - save, then use Re-encode below to apply it to existing media.
           </p>
+        }
+      </div>
+
+      <div class="hover:bg-accent/50 mb-10 grid max-w-lg gap-3 rounded-lg border p-3">
+        <h2 class="text-foreground font-semibold">Re-encode Media</h2>
+        <p class="text-muted-foreground text-xs">
+          Re-run encoding across your existing library after changing the settings above.
+          Save your changes first.
+        </p>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            hlmBtn
+            size="sm"
+            variant="outline"
+            (click)="reencode('images')"
+            [disabled]="reencodeMutation.isPending()"
+          >
+            {{ reencodeMutation.isPending() && reencodeTarget() === 'images'
+              ? 'Queuing…'
+              : 'Re-encode all images' }}
+          </button>
+          <button
+            hlmBtn
+            size="sm"
+            variant="outline"
+            (click)="reencode('videos')"
+            [disabled]="reencodeMutation.isPending()"
+          >
+            {{ reencodeMutation.isPending() && reencodeTarget() === 'videos'
+              ? 'Queuing…'
+              : 'Re-encode all videos' }}
+          </button>
+        </div>
+
+        <p class="text-muted-foreground text-xs">
+          Images: only files whose quality changed are re-encoded; existing thumbnails keep
+          showing until replaced. Videos: all variants are regenerated from the originals.
+          Work runs in the background — track it on the Tasks page.
+        </p>
+
+        @if (reencodeMessage()) {
+          <p class="text-xs text-green-600 dark:text-green-400">{{ reencodeMessage() }}</p>
+        }
+        @if (reencodeMutation.isError()) {
+          <app-error-alert [error]="reencodeMutation.error() || undefined" />
         }
       </div>
 
@@ -364,5 +410,35 @@ export class SettingsEncoding {
 
   save() {
     this.saveMutation.mutate();
+  }
+
+  // Re-encode existing media after a settings change. Which type is currently
+  // running, so only the clicked button shows its busy label.
+  reencodeTarget = signal<'images' | 'videos' | null>(null);
+  reencodeMessage = signal<string | null>(null);
+
+  reencodeMutation = injectMutation(() => ({
+    mutationFn: async (target: 'images' | 'videos') =>
+      this.trpc.fileTask.reencode.mutate({ target }),
+    onSuccess: (data) => {
+      const queued = data.tasksReset;
+      this.reencodeMessage.set(
+        data.target === 'videos'
+          ? `Queued ${queued} video task(s) and cleared ${data.variantsDeleted} variant file(s) for re-encoding.`
+          : `Queued ${queued} image task(s). Files whose quality changed will re-encode in the background.`,
+      );
+    },
+    onSettled: () => this.reencodeTarget.set(null),
+  }));
+
+  reencode(target: 'images' | 'videos') {
+    const label =
+      target === 'videos'
+        ? 'Re-encode ALL videos? This deletes existing video thumbnails/optimised versions and regenerates them — it can take a while.'
+        : 'Re-encode all images using the current quality settings?';
+    if (!confirm(label)) return;
+    this.reencodeMessage.set(null);
+    this.reencodeTarget.set(target);
+    this.reencodeMutation.mutate(target);
   }
 }

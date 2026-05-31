@@ -8,6 +8,7 @@ import {
   lucideHardDrive,
   lucideListChecks,
   lucideLogs,
+  lucideMapPin,
   lucideMonitor,
   lucideUser,
   lucideUsers,
@@ -39,6 +40,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       lucideListChecks,
       lucideActivity,
       lucideUser,
+      lucideMapPin,
     }),
   ],
   host: {
@@ -135,6 +137,42 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         <ng-icon hlm size="sm" name="lucideActivity" />
       </a>
       <span *brnTooltipContent class="flex items-center"> Encoding </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/settings/faces"
+        routerLinkActive="active"
+        size="icon"
+        #rlaFaces="routerLinkActive"
+        [variant]="rlaFaces.isActive ? 'menu_active' : 'menu'"
+        [routerLinkActiveOptions]="{ exact: true }"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideUsers" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Faces </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/settings/locations"
+        routerLinkActive="active"
+        size="icon"
+        #rlaLocations="routerLinkActive"
+        [variant]="rlaLocations.isActive ? 'menu_active' : 'menu'"
+        [routerLinkActiveOptions]="{ exact: true }"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideMapPin" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Locations </span>
     </hlm-tooltip>
 
     <hlm-tooltip>

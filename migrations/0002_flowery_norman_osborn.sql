@@ -1,0 +1,1 @@
+ALTER TABLE `system_settings` ADD `face_match_threshold` real DEFAULT 0.62 NOT NULL;

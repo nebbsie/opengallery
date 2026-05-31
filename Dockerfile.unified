@@ -2,14 +2,19 @@
 # OpenGallery Unified Dockerfile
 # Combines API, Web, and Worker into a single container using supervisord
 # ============================================================================
+#
+# Base images use Debian (glibc), NOT Alpine (musl). The @tensorflow/tfjs-node
+# native addon and the BtbN ffmpeg builds are glibc-linked prebuilts: on musl
+# they fail at load with "__memcpy_chk: symbol not found" / "libmvec.so.1: not
+# found", which kills the worker process (and with it all encode + face work).
+# Keep the worker deps and runtime stages on glibc.
 
 # -------- Base image --------
-FROM node:22-alpine AS base
+FROM node:22-slim AS base
 WORKDIR /app
 
 # -------- Build API --------
 FROM base AS build-api
-RUN apk add --no-cache libc6-compat
 
 # Install deps for API
 ENV NODE_ENV=development
@@ -31,8 +36,9 @@ COPY migrations ./api/migrations
 RUN npm --prefix ./api run build
 
 # -------- Worker deps (production only) --------
+# glibc base: the tfjs-node prebuilt libtensorflow.so.2 fetched here is copied
+# verbatim into the runner, so this stage must match the runtime libc.
 FROM base AS deps-worker
-RUN apk add --no-cache ffmpeg
 COPY package.json package-lock.json ./
 COPY worker/package.json ./worker/package.json
 COPY packages/types/package.json ./packages/types/package.json
@@ -41,7 +47,9 @@ RUN npm ci --omit=dev --workspace ./worker
 
 # -------- Build Worker --------
 FROM base AS build-worker
-RUN apk add --no-cache ffmpeg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=development
 COPY package.json package-lock.json ./
@@ -61,7 +69,27 @@ COPY worker/src ./worker/src
 COPY packages/types ./packages/types
 RUN npm --prefix ./worker run build
 
+# -------- Build face-service (Python venv + InsightFace model) --------
+# Built on the same Debian/glibc base as the runner so the venv's interpreter
+# path and native wheels (onnxruntime, opencv) are runtime-compatible.
+FROM node:22-slim AS build-face
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-venv python3-dev build-essential cmake \
+      curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV INSIGHTFACE_HOME=/opt/insightface
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY face-service/requirements.txt /opt/face/requirements.txt
+# numpy + cython up front so insightface's native build finds its headers.
+RUN pip install --no-cache-dir numpy==1.26.4 cython \
+    && pip install --no-cache-dir -r /opt/face/requirements.txt
+# Pre-download buffalo_l into the model root so the service runs offline.
+COPY scripts/download-face-models.sh /opt/face/download-face-models.sh
+RUN bash /opt/face/download-face-models.sh
+
 # -------- Build Web --------
+# Web build emits static assets only (no native runtime), so musl/glibc is moot.
 FROM node:20-alpine AS build-web
 WORKDIR /app
 
@@ -76,19 +104,21 @@ WORKDIR /app/web
 RUN npm run build:prod
 
 # -------- Runtime --------
-FROM node:22-alpine AS runner
+FROM node:22-slim AS runner
 
-# Install runtime dependencies
-RUN apk add --no-cache supervisor nginx
+# Install runtime dependencies (Debian/glibc). python3 runs the face-service venv;
+# libgomp1 (onnxruntime) + libglib2.0-0 (opencv-headless) are its shared-lib deps.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      supervisor nginx wget xz-utils ca-certificates \
+      python3 libgomp1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install FFmpeg with NVENC support using static build
-RUN apk add --no-cache wget tar xz && \
-    wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz && \
+# Install FFmpeg with NVENC/AMD support using the BtbN glibc static build.
+RUN wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz && \
     tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz && \
     mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg && \
     mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/ffprobe && \
-    rm -rf ffmpeg-master-latest-linux64-gpl* && \
-    apk del wget tar xz
+    rm -rf ffmpeg-master-latest-linux64-gpl*
 
 WORKDIR /app
 
@@ -121,6 +151,11 @@ COPY packages/types /app/worker/packages/types
 COPY --from=build-web /app/web/dist/opengallery /app/web/dist/opengallery
 COPY web/package*.json /app/web/
 
+# -------- Copy face-service (Python venv + model + app) --------
+COPY --from=build-face /opt/venv /opt/venv
+COPY --from=build-face /opt/insightface /opt/insightface
+COPY face-service /app/face-service
+
 # -------- Copy config files --------
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY entrypoint.unified.sh /app/entrypoint.sh
@@ -136,6 +171,8 @@ EXPOSE 4321
 # Environment defaults
 ENV NODE_ENV=production
 ENV API_PORT=3219
+ENV FACE_PORT=3220
+ENV INSIGHTFACE_HOME=/opt/insightface
 ENV DATABASE_PATH=/data/opengallery.db
 ENV STORAGE_PATH=/data
 ENV HOST_ROOT_PREFIX=/host

@@ -24,10 +24,13 @@ import {
   galleryOrderBy,
   keysetAfter,
   keysetBefore,
+  UNDATED_SORT_SENTINEL,
+  undatedBottomSortExpr,
 } from "../db/file-sort.js";
 import {
   AlbumFileTable,
   AlbumTable,
+  FaceTable,
   FileTable,
   FileTaskTable,
   FileVariantTable,
@@ -35,10 +38,12 @@ import {
   ImageMetadataTable,
   LibraryFileTable,
   LibraryTable,
-  MediaSettingsTable,
+  PersonTable,
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { hiddenPeopleFilter } from "../db/file-filters.js";
 import { deleteFilesWithCascade } from "../utils/file-operations.js";
+import { getCachedMediaSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
 
 export const filesRouter = router({
@@ -65,10 +70,15 @@ export const filesRouter = router({
         if (f.type === "image") {
           taskRows.push({ fileId: f.id, type: "encode_thumbnail" });
           taskRows.push({ fileId: f.id, type: "encode_optimised" });
+          taskRows.push({ fileId: f.id, type: "detect_faces" });
         } else {
           taskRows.push({ fileId: f.id, type: "video_poster" });
           taskRows.push({ fileId: f.id, type: "encode_optimised" });
         }
+        // GPS extraction runs independently of encoding (it only reads EXIF /
+        // ffprobe tags off the original) so geolocation lands even when the
+        // encode step is skipped because variants already exist.
+        taskRows.push({ fileId: f.id, type: "extract_geolocation" });
       }
       if (taskRows.length) {
         await db.insert(FileTaskTable).values(taskRows);
@@ -138,7 +148,11 @@ export const filesRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      const accessScope = await getAccessScope(userId, session);
+      const [accessScope, hideUndated, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        getHideUndated(userId),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
 
       // Load the file and ensure it exists and is an image
       const [file] = await db
@@ -211,6 +225,48 @@ export const filesRouter = router({
         .from(GeoLocationTable)
         .where(eq(GeoLocationTable.fileId, file.id))
         .limit(1);
+
+      // People detected in this file: one entry per clustered person, using
+      // the face crop from *this* image as the avatar. We prefer a face that
+      // has an avatar crop on disk so the chip renders, and skip people the
+      // user has explicitly hidden.
+      const faceRows = await db
+        .select({
+          faceId: FaceTable.id,
+          personId: FaceTable.personId,
+          name: PersonTable.name,
+          cropName: FaceTable.cropName,
+        })
+        .from(FaceTable)
+        .innerJoin(PersonTable, eq(PersonTable.id, FaceTable.personId))
+        .where(
+          and(eq(FaceTable.fileId, file.id), eq(PersonTable.hidden, false)),
+        );
+
+      const peopleByPerson = new Map<
+        string,
+        { personId: string; faceId: string; name: string | null; hasCrop: boolean }
+      >();
+      for (const row of faceRows) {
+        if (!row.personId) continue;
+        const hasCrop = !!row.cropName;
+        const existing = peopleByPerson.get(row.personId);
+        // Keep the first face we see for a person, but upgrade to one that has
+        // a crop avatar if the earlier pick didn't have one.
+        if (!existing || (!existing.hasCrop && hasCrop)) {
+          peopleByPerson.set(row.personId, {
+            personId: row.personId,
+            faceId: row.faceId,
+            name: row.name,
+            hasCrop,
+          });
+        }
+      }
+      // Named people first, then unnamed — matches the People page ordering.
+      const people = [...peopleByPerson.values()].sort((a, b) => {
+        if (!!a.name === !!b.name) return 0;
+        return a.name ? -1 : 1;
+      });
 
       // Compute prev/next IDs using keyset pagination on the same total order
       // used by the grid: (coalesce(takenAt, createdAt) DESC, files.id DESC).
@@ -303,6 +359,7 @@ export const filesRouter = router({
               kindFilter,
               hasThumbnail,
               hasOptimised,
+              hiddenFilter,
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
@@ -322,6 +379,7 @@ export const filesRouter = router({
               kindFilter,
               hasThumbnail,
               hasOptimised,
+              hiddenFilter,
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
@@ -334,7 +392,14 @@ export const filesRouter = router({
         prevId = prev?.id ?? null;
         nextId = next?.id ?? null;
       } else {
-        // Global library context: keyset on the same total order getUsersFiles uses.
+        // Global library context: keyset on the same total order getUsersFiles
+        // uses — undated sunk to the bottom via the sentinel, and undated hidden
+        // entirely when the user has that turned off.
+        const globalSortValue = imageMetadata?.takenAt ?? UNDATED_SORT_SENTINEL;
+        const undatedFilter = hideUndated
+          ? isNotNull(ImageMetadataTable.takenAt)
+          : undefined;
+
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(FileTable)
@@ -345,10 +410,12 @@ export const filesRouter = router({
               kindFilter,
               hasThumbnail,
               hasOptimised,
-              keysetAfter(fileSortExpr, currentSortValue, currentId),
+              hiddenFilter,
+              undatedFilter,
+              keysetAfter(undatedBottomSortExpr, globalSortValue, currentId),
             ),
           )
-          .orderBy(sql`${fileSortExpr} ASC`, FileTable.id)
+          .orderBy(sql`${undatedBottomSortExpr} ASC`, FileTable.id)
           .limit(1);
 
         const [next] = await db
@@ -361,10 +428,12 @@ export const filesRouter = router({
               kindFilter,
               hasThumbnail,
               hasOptimised,
-              keysetBefore(fileSortExpr, currentSortValue, currentId),
+              hiddenFilter,
+              undatedFilter,
+              keysetBefore(undatedBottomSortExpr, globalSortValue, currentId),
             ),
           )
-          .orderBy(...galleryOrderBy(fileSortExpr))
+          .orderBy(...galleryOrderBy(undatedBottomSortExpr))
           .limit(1);
 
         prevId = prev?.id ?? null;
@@ -377,6 +446,7 @@ export const filesRouter = router({
         file,
         imageMetadata: imageMetadata ?? null,
         geoLocation: geoLocation ?? null,
+        people,
         prevId,
         nextId,
         canManageShares:
@@ -552,11 +622,15 @@ export const filesRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      const [accessScope, hideUndated] = await Promise.all([
+      const [accessScope, hiddenFilter] = await Promise.all([
         getAccessScope(userId, session),
-        getHideUndated(userId),
+        hiddenPeopleFilter(FileTable.id),
       ]);
-      const sortExpr = sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`;
+      // The timeline is a date scrubber: it only buckets dated media. Undated
+      // items have no month and render as a block at the bottom of the grid, so
+      // they are always excluded here regardless of the show-undated setting.
+      // Reads the denormalized file.taken_at so it can lean on file_taken_at_idx.
+      const sortExpr = sql`${FileTable.takenAt}`;
 
       const months = await db
         .select({
@@ -573,7 +647,8 @@ export const filesRouter = router({
           and(
             buildFileAccessFilter(accessScope, FileTable.id),
             ...(input.kind === "all" ? [] : [eq(FileTable.type, input.kind)]),
-            ...(hideUndated ? [isNotNull(ImageMetadataTable.takenAt)] : []),
+            isNotNull(ImageMetadataTable.takenAt),
+            ...(hiddenFilter ? [hiddenFilter] : []),
             exists(
               db
                 .select()
@@ -613,11 +688,7 @@ export const filesRouter = router({
 });
 
 const getHideUndated = async (userId: string): Promise<boolean> => {
-  const [settings] = await db
-    .select({ hideUndated: MediaSettingsTable.hideUndated })
-    .from(MediaSettingsTable)
-    .where(eq(MediaSettingsTable.userId, userId))
-    .limit(1);
+  const settings = await getCachedMediaSettings(userId);
   return settings?.hideUndated ?? false;
 };
 
@@ -632,24 +703,38 @@ const getUsersFiles = async (
   },
 ) => {
   const { kind, limit, cursor, seekCursor } = params;
-  const [accessScope, hideUndated] = await Promise.all([
+  const [accessScope, hideUndated, hiddenFilter] = await Promise.all([
     getAccessScope(userId, session),
     getHideUndated(userId),
+    hiddenPeopleFilter(FileTable.id),
   ]);
 
-  // seekCursor is used when jumping to a specific date (e.g. clicking a year/month on the timeline).
-  // It acts as the cursor when no regular pagination cursor is provided.
-  const effectiveCursor = cursor ?? seekCursor;
-  const cursorCondition = effectiveCursor
-    ? sql`${fileSortExpr} < ${effectiveCursor}`
-    : undefined;
+  // Undated media (no takenAt) is sunk to the bottom via the sentinel sort.
+  const sortExpr = undatedBottomSortExpr;
+
+  // Two cursor shapes:
+  //  - Pagination cursor ("<sortAt>|<id>"): a full keyset so a block of items
+  //    that share a sort value (notably all undated, which collapse to the
+  //    sentinel) paginates correctly instead of being dropped at the boundary.
+  //  - seekCursor (bare timestamp from a timeline jump): start just below the
+  //    given date. Only ever sent for the first page.
+  let cursorCondition: ReturnType<typeof sql> | undefined;
+  if (cursor && cursor.includes("|")) {
+    const sep = cursor.lastIndexOf("|");
+    const ts = cursor.slice(0, sep);
+    const id = cursor.slice(sep + 1);
+    cursorCondition = keysetBefore(sortExpr, ts, id);
+  } else {
+    const effectiveCursor = cursor ?? seekCursor;
+    if (effectiveCursor) cursorCondition = sql`${sortExpr} < ${effectiveCursor}`;
+  }
 
   const rows = await db
     .select({
       file: FileTable,
       blurhash: ImageMetadataTable.blurhash,
       takenAt: ImageMetadataTable.takenAt,
-      sortAt: fileSortExpr,
+      sortAt: sortExpr,
     })
     .from(FileTable)
     .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
@@ -659,6 +744,8 @@ const getUsersFiles = async (
         ...(kind === "all" ? [] : [eq(FileTable.type, kind)]),
         // When hideUndated is on, only show files with a takenAt date
         ...(hideUndated ? [isNotNull(ImageMetadataTable.takenAt)] : []),
+        // Exclude photos of any hidden person (admin curation).
+        ...(hiddenFilter ? [hiddenFilter] : []),
         // Only include files that have BOTH thumbnail and optimised variants
         exists(
           db
@@ -682,11 +769,10 @@ const getUsersFiles = async (
               ),
             ),
         ),
-        // Cursor-based pagination: only get items older than cursor timestamp
         ...(cursorCondition ? [cursorCondition] : []),
       ),
     )
-    .orderBy(...galleryOrderBy(fileSortExpr))
+    .orderBy(...galleryOrderBy(sortExpr))
     .limit(limit + 1);
 
   const data = rows.map((r) => ({
@@ -698,6 +784,8 @@ const getUsersFiles = async (
 
   const hasMore = data.length > limit;
   const items = hasMore ? data.slice(0, limit) : data;
-  const nextCursor = hasMore ? (items[items.length - 1]?.sortAt ?? null) : null;
+  const last = items[items.length - 1];
+  // Encode the full keyset (sortAt + id) so the next page resumes deterministically.
+  const nextCursor = hasMore && last ? `${last.sortAt}|${last.id}` : null;
   return { items, nextCursor } as const;
 };

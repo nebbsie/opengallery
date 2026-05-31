@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
-import { ImageMetadataTable } from "../db/schema.js";
+import { FileTable, ImageMetadataTable } from "../db/schema.js";
 import { internalProcedure, router } from "../trpc.js";
 
 export const imageMetadataRouter = router({
@@ -49,6 +49,14 @@ export const imageMetadataRouter = router({
           },
         })
         .returning();
+
+      // Keep the denormalized sort key on the file row in sync so the gallery /
+      // album / location sorts (coalesce(taken_at, …)) stay indexed. See
+      // FileTable.takenAt in schema.ts.
+      await db
+        .update(FileTable)
+        .set({ takenAt: values.takenAt, updatedAt: new Date().toISOString() })
+        .where(eq(FileTable.id, input.fileId));
 
       return result;
     }),

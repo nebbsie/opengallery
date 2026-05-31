@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { DatePipe, NgClass } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -24,6 +24,7 @@ import {
   lucideDownload,
   lucideInfo,
   lucideShare2,
+  lucideUser,
   lucideX,
 } from '@ng-icons/lucide';
 import { HlmBadge } from '@spartan-ng/helm/badge';
@@ -37,7 +38,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
 @Component({
   selector: 'app-asset',
-  imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, HlmBadge, DatePipe],
+  imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, HlmBadge, DatePipe, NgClass],
   providers: [
     provideIcons({
       lucideChevronLeft,
@@ -46,6 +47,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
       lucideDownload,
       lucideInfo,
       lucideShare2,
+      lucideUser,
       lucideX,
     }),
   ],
@@ -59,22 +61,29 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
     }
 
     @if (file.isSuccess() && file.data(); as data) {
+      <!-- Scrim so the controls stay legible over bright photos -->
       <div
-        class="mx-auto absolute z-50 flex w-full items-center {{
-          backLink ? ' justify-between' : 'justify-end'
-        }} mb-1"
+        class="pointer-events-none absolute inset-x-0 top-0 z-40 h-20 bg-gradient-to-b from-black/40 to-transparent"
+        aria-hidden="true"
+      ></div>
+
+      <div
+        class="absolute z-50 flex w-full items-center p-2 {{
+          backLink ? 'justify-between' : 'justify-end'
+        }}"
       >
         @if (backLink) {
-          <a hlmBtn variant="ghost" size="icon" [routerLink]="backLink">
+          <a hlmBtn variant="ghost" size="icon" class="{{ ctrlBtn }}" [routerLink]="backLink">
             <ng-icon hlm name="lucideX" />
           </a>
         }
 
-        <div class="flex items-center gap-1">
+        <div class="flex items-center gap-1.5">
           <a
             hlmBtn
             variant="ghost"
             size="icon"
+            class="{{ ctrlBtn }}"
             [href]="apiUrl + '/asset/' + data.file.id"
             [download]="data.file.name"
             title="Download original"
@@ -87,6 +96,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               hlmBtn
               variant="ghost"
               size="icon"
+              class="{{ ctrlBtn }}"
               type="button"
               title="Share"
               (click)="openShareDialog()"
@@ -95,7 +105,14 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
             </button>
           }
 
-          <button hlmBtn variant="ghost" size="icon" (click)="infoOpen.set(!infoOpen())">
+          <button
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            class="{{ ctrlBtn }}"
+            title="Info"
+            (click)="infoOpen.set(!infoOpen())"
+          >
             <ng-icon hlm name="lucideInfo" />
           </button>
         </div>
@@ -127,7 +144,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               <a
                 [routerLink]="'/asset/' + data.prevId"
                 [queryParams]="getNavQueryParams()"
-                class="absolute top-1/2 left-3 -translate-y-1/2 bg-neutral-800/60"
+                class="absolute top-1/2 left-3 -translate-y-1/2 {{ ctrlBtn }}"
                 hlmBtn
                 variant="ghost"
                 size="icon"
@@ -139,7 +156,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               <a
                 [routerLink]="'/asset/' + data.nextId"
                 [queryParams]="getNavQueryParams()"
-                class="absolute top-1/2 right-3 -translate-y-1/2 bg-neutral-800/60"
+                class="absolute top-1/2 right-3 -translate-y-1/2 {{ ctrlBtn }}"
                 hlmBtn
                 variant="ghost"
                 size="icon"
@@ -151,13 +168,12 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
           <!-- Info panel -->
           <aside
-            class="overflow-hidden transition-all duration-150 ease-in-out"
-            [class.h-0]="!infoOpen()"
-            [class.h-auto]="infoOpen()"
-            [class.sm:w-0]="!infoOpen()"
-            [class.sm:w-80]="infoOpen()"
-            [class.sm:flex-shrink-0]="true"
-            [class.w-full]="true"
+            class="bg-background w-full overflow-hidden transition-all duration-150 ease-in-out sm:flex-shrink-0"
+            [ngClass]="
+              infoOpen()
+                ? 'h-[50vh] border-t border-border sm:h-full sm:w-80 sm:border-t-0 sm:border-l'
+                : 'h-0 sm:w-0'
+            "
           >
             <div
               class="h-full overflow-y-auto p-4 transition-opacity duration-150"
@@ -201,6 +217,51 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                     }
                   </div>
                 </section>
+
+                @if (data.people && data.people.length) {
+                  <div class="border-border border-t pt-6">
+                    <section>
+                      <h4
+                        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
+                      >
+                        People
+                      </h4>
+                      <div class="flex flex-wrap gap-3">
+                        @for (person of data.people; track person.personId) {
+                          <a
+                            [routerLink]="['/faces', person.personId]"
+                            class="group flex w-16 flex-col items-center gap-1.5"
+                            [title]="person.name || 'Unnamed person'"
+                          >
+                            <div
+                              class="bg-muted ring-border group-hover:ring-primary h-14 w-14 overflow-hidden rounded-full ring-1 transition"
+                            >
+                              @if (person.hasCrop) {
+                                <img
+                                  [src]="apiUrl + '/face/' + person.faceId"
+                                  [alt]="person.name || 'Unnamed person'"
+                                  class="h-full w-full object-cover transition-transform group-hover:scale-105"
+                                  loading="lazy"
+                                />
+                              } @else {
+                                <div
+                                  class="text-muted-foreground grid h-full w-full place-items-center"
+                                >
+                                  <ng-icon hlm name="lucideUser" />
+                                </div>
+                              }
+                            </div>
+                            <span
+                              class="text-muted-foreground group-hover:text-foreground w-full truncate text-center text-xs transition-colors"
+                            >
+                              {{ person.name || 'Unnamed' }}
+                            </span>
+                          </a>
+                        }
+                      </div>
+                    </section>
+                  </div>
+                }
 
                 @if (
                   data.imageMetadata &&
@@ -359,6 +420,11 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 })
 export class Asset implements OnDestroy {
   readonly apiUrl = environment.api.url;
+
+  // Shared style for media-overlay controls: a translucent dark pill with a
+  // white icon so they stay legible over any photo, in light or dark theme.
+  protected readonly ctrlBtn =
+    'border-0 bg-black/35 text-white backdrop-blur-sm hover:bg-black/55 hover:text-white';
 
   protected readonly trpc = injectTrpc();
   private readonly router = inject(Router);

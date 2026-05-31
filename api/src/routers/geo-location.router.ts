@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, exists, isNull, notExists, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   buildFileAccessFilter,
@@ -7,13 +7,20 @@ import {
 import { db } from "../db/index.js";
 import {
   FileTable,
+  FileTaskTable,
   FileVariantTable,
   GeoLocationTable,
   ImageMetadataTable,
   LibraryFileTable,
   LibraryTable,
 } from "../db/schema.js";
-import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import {
+  adminProcedure,
+  internalProcedure,
+  privateProcedure,
+  router,
+} from "../trpc.js";
+import { hiddenPeopleFilter } from "../db/file-filters.js";
 
 export const geoLocationRouter = router({
   save: internalProcedure
@@ -59,7 +66,10 @@ export const geoLocationRouter = router({
         throw new Error("Unauthorized");
       }
 
-      const accessScope = await getAccessScope(userId, session);
+      const [accessScope, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
 
       const locations = await db
         .select({
@@ -78,6 +88,7 @@ export const geoLocationRouter = router({
           and(
             buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
+            hiddenFilter,
             // Only include files that have BOTH thumbnail and optimised variants
             exists(
               db
@@ -130,24 +141,23 @@ export const geoLocationRouter = router({
 
       const { lat, lon, limit, cursor } = input;
       const radiusDegrees = 5 / 69;
-      const accessScope = await getAccessScope(userId, session);
+      const [accessScope, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
 
       let cursorCondition: ReturnType<typeof sql> | undefined;
       if (cursor) {
         const [cursorRecord] = await db
           .select({
-            sortTs: ImageMetadataTable.takenAt,
+            sortTs: FileTable.takenAt,
           })
           .from(FileTable)
-          .innerJoin(
-            ImageMetadataTable,
-            eq(ImageMetadataTable.fileId, FileTable.id),
-          )
           .where(eq(FileTable.id, cursor))
           .limit(1);
 
         if (cursorRecord?.sortTs) {
-          cursorCondition = sql`${ImageMetadataTable.takenAt} < ${cursorRecord.sortTs}`;
+          cursorCondition = sql`${FileTable.takenAt} < ${cursorRecord.sortTs}`;
         }
       }
 
@@ -175,6 +185,7 @@ export const geoLocationRouter = router({
           and(
             buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
+            hiddenFilter,
             sql`${GeoLocationTable.lat} BETWEEN ${lat - radiusDegrees} AND ${lat + radiusDegrees}`,
             sql`${GeoLocationTable.lon} BETWEEN ${lon - radiusDegrees} AND ${lon + radiusDegrees}`,
             sql`(6371 * acos(cos(radians(${lat})) * cos(radians(${GeoLocationTable.lat})) * cos(radians(${GeoLocationTable.lon}) - radians(${lon})) + sin(radians(${lat})) * sin(radians(${GeoLocationTable.lat})))) < 8.04672`,
@@ -205,9 +216,7 @@ export const geoLocationRouter = router({
           ),
         )
         .orderBy(
-          desc(
-            sql`coalesce(${ImageMetadataTable.takenAt}, ${FileTable.createdAt})`,
-          ),
+          desc(sql`coalesce(${FileTable.takenAt}, ${FileTable.createdAt})`),
         )
         .limit(limit + 1);
 
@@ -224,4 +233,221 @@ export const geoLocationRouter = router({
 
       return { items, nextCursor };
     }),
+
+  // Wipe all stored coordinates and re-queue GPS extraction for the entire
+  // library. Use after importing media that was encoded before geolocation
+  // extraction existed (the encode step skips already-encoded files, so their
+  // GPS was never read). Cheap: the worker only re-reads EXIF / ffprobe tags,
+  // it does not re-encode. Admin-only since it touches every file.
+  rescanAll: adminProcedure.mutation(async () => {
+    const now = new Date().toISOString();
+
+    // Count before mutating. `.returning()` on a whole-library delete/update
+    // would materialise one row object per affected file; on a large library
+    // that overflows the call stack, so we read counts separately instead.
+    const [coordRow] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(GeoLocationTable);
+    const coordinatesDeleted = Number(coordRow?.count ?? 0);
+
+    const [taskRow] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(FileTaskTable)
+      .where(eq(FileTaskTable.type, "extract_geolocation"));
+    const tasksReset = Number(taskRow?.count ?? 0);
+
+    // 1. Drop every stored coordinate so the rescan is authoritative.
+    await db.delete(GeoLocationTable);
+
+    // 2. Reset existing extract_geolocation tasks back to pending.
+    await db
+      .update(FileTaskTable)
+      .set({
+        status: "pending",
+        attempts: 0,
+        startedAt: null,
+        finishedAt: null,
+        lastError: null,
+        progress: 0,
+        updatedAt: now,
+      })
+      .where(eq(FileTaskTable.type, "extract_geolocation"));
+
+    // 3. Create tasks for any files that predate the extract_geolocation task
+    //    (imported before this feature) and therefore have no task row yet.
+    const missing = await db
+      .select({ id: FileTable.id })
+      .from(FileTable)
+      .where(
+        and(
+          // Skip thumbnail/optimised outputs: they are stored as their own file
+          // rows (files.saveVariants) but carry no EXIF GPS of their own.
+          notExists(
+            db
+              .select()
+              .from(FileVariantTable)
+              .where(eq(FileVariantTable.fileId, FileTable.id)),
+          ),
+          notExists(
+            db
+              .select()
+              .from(FileTaskTable)
+              .where(
+                and(
+                  eq(FileTaskTable.fileId, FileTable.id),
+                  eq(FileTaskTable.type, "extract_geolocation"),
+                ),
+              ),
+          ),
+        ),
+      );
+
+    // Insert in chunks: a single multi-thousand-row INSERT builds a deeply
+    // nested statement that overflows the call stack in better-sqlite3.
+    const CHUNK = 500;
+    for (let i = 0; i < missing.length; i += CHUNK) {
+      await db
+        .insert(FileTaskTable)
+        .values(
+          missing.slice(i, i + CHUNK).map((m) => ({
+            fileId: m.id,
+            type: "extract_geolocation" as const,
+          })),
+        )
+        .onConflictDoNothing();
+    }
+
+    return {
+      coordinatesDeleted,
+      tasksReset,
+      tasksCreated: missing.length,
+    };
+  }),
+
+  // Reconcile extract_geolocation tasks against the current library. Idempotent
+  // and self-healing, so the geo worker runs it on every boot:
+  //   1. Delete tasks targeting variant outputs (thumbnail/optimised files carry
+  //      no EXIF GPS of their own and would skip forever, polluting the queue).
+  //   2. Seed a task for every real file (image or video) that lacks one.
+  //   3. Revive dead tasks (failed at the attempt cap) so a fix to a systemic
+  //      failure — e.g. the geo_location upsert constraint — re-drives them
+  //      instead of leaving coordinates permanently unread.
+  backfillTasks: internalProcedure.mutation(async () => {
+    // 1. Drop bogus tasks on variant outputs.
+    const purged = await db
+      .delete(FileTaskTable)
+      .where(
+        and(
+          eq(FileTaskTable.type, "extract_geolocation"),
+          exists(
+            db
+              .select()
+              .from(FileVariantTable)
+              .where(eq(FileVariantTable.fileId, FileTaskTable.fileId)),
+          ),
+        ),
+      )
+      .returning({ id: FileTaskTable.id });
+
+    // 2. Seed for real files (non-variant) that have no task yet.
+    const missing = await db
+      .select({ id: FileTable.id })
+      .from(FileTable)
+      .where(
+        and(
+          notExists(
+            db
+              .select()
+              .from(FileVariantTable)
+              .where(eq(FileVariantTable.fileId, FileTable.id)),
+          ),
+          notExists(
+            db
+              .select()
+              .from(FileTaskTable)
+              .where(
+                and(
+                  eq(FileTaskTable.fileId, FileTable.id),
+                  eq(FileTaskTable.type, "extract_geolocation"),
+                ),
+              ),
+          ),
+        ),
+      );
+
+    let seeded = 0;
+    const CHUNK = 500;
+    for (let i = 0; i < missing.length; i += CHUNK) {
+      const res = await db
+        .insert(FileTaskTable)
+        .values(
+          missing.slice(i, i + CHUNK).map((m) => ({
+            fileId: m.id,
+            type: "extract_geolocation" as const,
+          })),
+        )
+        .onConflictDoNothing()
+        .returning({ id: FileTaskTable.id });
+      seeded += res.length;
+    }
+
+    // 3. Revive dead tasks so a deploy that fixes the underlying cause re-drives
+    //    them. Cheap: extraction only re-reads EXIF / ffprobe tags.
+    const now = new Date().toISOString();
+    const revived = await db
+      .update(FileTaskTable)
+      .set({
+        status: "pending",
+        attempts: 0,
+        startedAt: null,
+        finishedAt: null,
+        lastError: null,
+        progress: 0,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(FileTaskTable.type, "extract_geolocation"),
+          eq(FileTaskTable.status, "failed"),
+          sql`${FileTaskTable.attempts} >= 3`,
+        ),
+      )
+      .returning({ id: FileTaskTable.id });
+
+    // 4. Re-drive tasks marked succeeded that have no coordinate row. A
+    //    succeeded geo task should always have a geo_location row (no GPS ->
+    //    skipped, not succeeded); a missing row means the coordinate was lost
+    //    (e.g. the pre-unique-constraint era) and the file's GPS is unread.
+    const reconciled = await db
+      .update(FileTaskTable)
+      .set({
+        status: "pending",
+        attempts: 0,
+        startedAt: null,
+        finishedAt: null,
+        lastError: null,
+        progress: 0,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(FileTaskTable.type, "extract_geolocation"),
+          eq(FileTaskTable.status, "succeeded"),
+          notExists(
+            db
+              .select()
+              .from(GeoLocationTable)
+              .where(eq(GeoLocationTable.fileId, FileTaskTable.fileId)),
+          ),
+        ),
+      )
+      .returning({ id: FileTaskTable.id });
+
+    return {
+      seeded,
+      purged: purged.length,
+      revived: revived.length,
+      reconciled: reconciled.length,
+    };
+  }),
 });

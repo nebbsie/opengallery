@@ -1,7 +1,8 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
-import { auth } from "./auth/auth.js";
+import { getCachedSession } from "./auth/session-cache.js";
 import { logger } from "./logger.js";
+import { getRequestStats } from "./request-context.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 export type Context = {
@@ -47,9 +48,7 @@ const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
   let userId: string | null = null;
 
   if (!isInternal) {
-    session = await auth.api.getSession({
-      headers: toHeaders(ctx.req.headers),
-    });
+    session = await getCachedSession(toHeaders(ctx.req.headers));
     const expiresAt = session?.session?.expiresAt;
     const expired = !expiresAt || new Date(expiresAt) <= new Date();
     if (!expired) {
@@ -101,16 +100,26 @@ const InternalMiddleware = t.middleware(({ ctx, next }) => {
   return next({ ctx: ctx as InternalContext });
 });
 
+// Procedures slower than this get logged with how many DB queries they ran and
+// how long those took. Query counts are deltas off the shared per-request stats
+// scope; under request batching (multiple procedures in one HTTP request) they
+// can interleave, so treat the per-procedure counts as approximate.
+const SLOW_TRPC_MS = Number(process.env["SLOW_TRPC_MS"] ?? 200);
+
 const TimingMiddleware = t.middleware(async ({ next, path, input }) => {
+  const stats = getRequestStats();
+  const startCount = stats?.queryCount ?? 0;
+  const startDbMs = stats?.queryMs ?? 0;
   const start = Date.now();
 
   const result = await next();
-  const end = Date.now();
-  const duration = end - start;
+  const duration = Date.now() - start;
 
-  if (duration > 200) {
+  if (duration > SLOW_TRPC_MS) {
     logger.warn(`[TRPC] SLOW REQUEST ${path} took ${duration}ms`, {
-      input: JSON.stringify(input, null, 2),
+      queries: (stats?.queryCount ?? 0) - startCount,
+      dbMs: Number(((stats?.queryMs ?? 0) - startDbMs).toFixed(1)),
+      input: JSON.stringify(input),
     });
   }
 

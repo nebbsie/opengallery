@@ -18,7 +18,7 @@ import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 function formatBytes(bytes: number): string {
@@ -39,13 +39,13 @@ function formatBytes(bytes: number): string {
       lucideTrash2,
     }),
   ],
-  imports: [HlmSpinner, ErrorAlert, NgIcon, HlmIcon, HlmButton, HlmInput, ReactiveFormsModule],
+  imports: [Loading, ErrorAlert, NgIcon, HlmIcon, HlmButton, HlmInput, ReactiveFormsModule],
   host: {
     class: 'w-full',
   },
   template: `
     @if (stats.isPending() || settings.isPending() || sources.isPending()) {
-      <hlm-spinner />
+      <app-loading />
     }
 
     @if (stats.isError()) {

@@ -22,6 +22,82 @@ import {
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
+// Albums are hierarchical via parentId (no closure table). These helpers let item
+// counts and cover photos roll up through sub-albums, so a folder-style album with
+// no direct items still reflects what's nested inside it.
+
+// parent -> direct children, restricted to the accessible album set so we never
+// recurse into (or count) albums the user can't see.
+function buildChildrenMap(
+  albums: Array<{ id: string; parentId: string | null }>,
+  allowed: Set<string>,
+): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const a of albums) {
+    if (!allowed.has(a.id) || !a.parentId || !allowed.has(a.parentId)) continue;
+    const list = map.get(a.parentId) ?? [];
+    list.push(a.id);
+    map.set(a.parentId, list);
+  }
+  return map;
+}
+
+// Every album id in the subtree rooted at albumId (including itself), breadth-first.
+// The visited guard makes a stray parentId cycle safe rather than an infinite loop.
+function collectSubtree(
+  albumId: string,
+  childrenByParent: Map<string, string[]>,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const queue = [albumId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    queue.push(...(childrenByParent.get(id) ?? []));
+  }
+  return out;
+}
+
+// Distinct viewable files across an album's whole subtree, given a per-album set
+// of that album's own direct file ids. Distinct so a file sitting in both a parent
+// and a child album isn't double-counted.
+function recursiveItemCount(
+  albumId: string,
+  directFilesByAlbum: Map<string, Set<string>>,
+  childrenByParent: Map<string, string[]>,
+): number {
+  const seen = new Set<string>();
+  for (const id of collectSubtree(albumId, childrenByParent)) {
+    const files = directFilesByAlbum.get(id);
+    if (files) for (const f of files) seen.add(f);
+  }
+  return seen.size;
+}
+
+// Cover for an album: its own first direct image, else the first image found by
+// walking descendants breadth-first (the album's own photos win, then the nearest
+// sub-album's), else null.
+function resolveRecursiveCover(
+  albumId: string,
+  firstImageByAlbum: Map<string, string>,
+  childrenByParent: Map<string, string[]>,
+): string | null {
+  const seen = new Set<string>();
+  const queue = [albumId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const img = firstImageByAlbum.get(id);
+    if (img) return img;
+    queue.push(...(childrenByParent.get(id) ?? []));
+  }
+  return null;
+}
+
 export const albumRouter = router({
   createMultiAlbums: privateProcedure
     .input(
@@ -217,109 +293,106 @@ export const albumRouter = router({
           }
         >;
 
-      // Count items per album
-      const itemsRes = await db
+      // Build the accessible album tree so counts and covers roll up through
+      // sub-albums (a container album with no direct items still reflects what's
+      // nested inside it). `rows` holds every accessible album with its parentId.
+      const childrenByParent = buildChildrenMap(
+        rows.map((r) => r.album),
+        accessScope.visibleAlbumIds,
+      );
+
+      // Every album id in each root's subtree, so a single scan covers them all.
+      const subtreeIds = new Set<string>();
+      for (const rootId of albumIds) {
+        for (const id of collectSubtree(rootId, childrenByParent)) {
+          subtreeIds.add(id);
+        }
+      }
+      const subtreeIdList = [...subtreeIds];
+
+      const hasThumbnail = exists(
+        db
+          .select()
+          .from(FileVariantTable)
+          .where(
+            and(
+              eq(FileVariantTable.originalFileId, FileTable.id),
+              eq(FileVariantTable.type, "thumbnail"),
+            ),
+          ),
+      );
+      const hasOptimised = exists(
+        db
+          .select()
+          .from(FileVariantTable)
+          .where(
+            and(
+              eq(FileVariantTable.originalFileId, FileTable.id),
+              eq(FileVariantTable.type, "optimised"),
+            ),
+          ),
+      );
+
+      // Direct (viewable) files per album, summed distinct-per-root below.
+      const itemRows = await db
         .select({
           albumId: AlbumFileTable.albumId,
-          items: sql<number>`COUNT(*)`,
+          fileId: AlbumFileTable.fileId,
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .where(
           and(
-            inArray(AlbumFileTable.albumId, albumIds),
+            inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
-            exists(
-              db
-                .select()
-                .from(FileVariantTable)
-                .where(
-                  and(
-                    eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "thumbnail"),
-                  ),
-                ),
-            ),
-            exists(
-              db
-                .select()
-                .from(FileVariantTable)
-                .where(
-                  and(
-                    eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "optimised"),
-                  ),
-                ),
-            ),
+            hasThumbnail,
+            hasOptimised,
+          ),
+        );
+      const directFilesByAlbum = new Map<string, Set<string>>();
+      for (const r of itemRows) {
+        let set = directFilesByAlbum.get(r.albumId);
+        if (!set) {
+          set = new Set();
+          directFilesByAlbum.set(r.albumId, set);
+        }
+        set.add(r.fileId);
+      }
+      const itemsByAlbum: Record<string, number> = {};
+      for (const rootId of albumIds) {
+        itemsByAlbum[rootId] = recursiveItemCount(
+          rootId,
+          directFilesByAlbum,
+          childrenByParent,
+        );
+      }
+
+      // First direct image per album, for the cover fallback that walks the
+      // subtree when an album has no explicit cover and no direct photo.
+      const coverRows = await db
+        .select({
+          albumId: AlbumFileTable.albumId,
+          fileId: sql<string>`MIN(${FileTable.id})`,
+        })
+        .from(AlbumFileTable)
+        .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .where(
+          and(
+            inArray(AlbumFileTable.albumId, subtreeIdList),
+            buildFileAccessFilter(accessScope, FileTable.id),
+            eq(FileTable.type, "image"),
+            hasThumbnail,
           ),
         )
         .groupBy(AlbumFileTable.albumId);
-      const itemsByAlbum = Object.fromEntries(
-        itemsRes.map((r) => [r.albumId, Number(r.items)]),
-      ) as Record<string, number>;
+      const firstImageByAlbum = new Map<string, string>();
+      for (const r of coverRows) if (r.fileId) firstImageByAlbum.set(r.albumId, r.fileId);
 
-      // Compute cover per album: prefer explicit cover, else first image file id with thumbnail ready
-      const albumsWithCovers = await db
-        .select({ id: AlbumTable.id, cover: AlbumTable.cover })
-        .from(AlbumTable)
-        .where(inArray(AlbumTable.id, albumIds));
-
-      // Initialize covers from explicit covers
-      const coverByAlbum: Record<string, string | null> = {};
-      const albumsNeedingCover: string[] = [];
-      for (const album of albumsWithCovers) {
-        if (album.cover) {
-          coverByAlbum[album.id] = album.cover;
-        } else {
-          albumsNeedingCover.push(album.id);
-        }
-      }
-
-      // Batch fetch first image with thumbnail for albums without explicit cover
-      if (albumsNeedingCover.length > 0) {
-        const computedCovers = await db
-          .select({
-            albumId: AlbumFileTable.albumId,
-            fileId: sql<string>`MIN(${FileTable.id})`,
-          })
-          .from(AlbumFileTable)
-          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .where(
-            and(
-              inArray(AlbumFileTable.albumId, albumsNeedingCover),
-              buildFileAccessFilter(accessScope, FileTable.id),
-              eq(FileTable.type, "image"),
-              exists(
-                db
-                  .select()
-                  .from(FileVariantTable)
-                  .where(
-                    and(
-                      eq(FileVariantTable.originalFileId, FileTable.id),
-                      eq(FileVariantTable.type, "thumbnail"),
-                    ),
-                  ),
-              ),
-            ),
-          )
-          .groupBy(AlbumFileTable.albumId);
-
-        for (const { albumId, fileId } of computedCovers) {
-          coverByAlbum[albumId] = fileId;
-        }
-        // Set null for albums that still don't have a cover
-        for (const albumId of albumsNeedingCover) {
-          if (!(albumId in coverByAlbum)) {
-            coverByAlbum[albumId] = null;
-          }
-        }
-      }
-
-      // Count pending tasks per album (files with non-succeeded encode tasks)
-      const pendingTasksRes = await db
+      // Pending encode tasks, also rolled up distinct-per-root across the subtree.
+      const pendingRows = await db
         .select({
           albumId: AlbumFileTable.albumId,
-          pendingCount: sql<number>`COUNT(DISTINCT ${FileTaskTable.fileId})`,
+          fileId: AlbumFileTable.fileId,
         })
         .from(AlbumFileTable)
         .innerJoin(
@@ -328,20 +401,35 @@ export const albumRouter = router({
         )
         .where(
           and(
-            inArray(AlbumFileTable.albumId, albumIds),
+            inArray(AlbumFileTable.albumId, subtreeIdList),
             inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
             sql`${FileTaskTable.attempts} < 3`,
           ),
-        )
-        .groupBy(AlbumFileTable.albumId);
-      const pendingByAlbum = Object.fromEntries(
-        pendingTasksRes.map((r) => [r.albumId, Number(r.pendingCount)]),
-      ) as Record<string, number>;
+        );
+      const pendingFilesByAlbum = new Map<string, Set<string>>();
+      for (const r of pendingRows) {
+        let set = pendingFilesByAlbum.get(r.albumId);
+        if (!set) {
+          set = new Set();
+          pendingFilesByAlbum.set(r.albumId, set);
+        }
+        set.add(r.fileId);
+      }
+      const pendingByAlbum: Record<string, number> = {};
+      for (const rootId of albumIds) {
+        pendingByAlbum[rootId] = recursiveItemCount(
+          rootId,
+          pendingFilesByAlbum,
+          childrenByParent,
+        );
+      }
 
       return rootRows.map((r) => ({
         ...r.album,
         items: itemsByAlbum[r.album.id] ?? 0,
-        cover: coverByAlbum[r.album.id] ?? r.album.cover ?? null,
+        cover:
+          r.album.cover ??
+          resolveRecursiveCover(r.album.id, firstImageByAlbum, childrenByParent),
         pendingTasks: pendingByAlbum[r.album.id] ?? 0,
         canManageShares:
           accessScope.isAdmin ||
@@ -502,7 +590,7 @@ export const albumRouter = router({
 
       // files - order matches the asset view's prev/next navigation
       const files = await db
-        .select({ file: FileTable })
+        .select({ file: FileTable, blurhash: ImageMetadataTable.blurhash })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .leftJoin(
@@ -540,6 +628,90 @@ export const albumRouter = router({
         )
         .orderBy(...galleryOrderBy(fileSortExpr));
 
+      // Accessible album subtree rooted at this album, so the album's own count
+      // and each child's count/cover roll up through nested sub-albums. The
+      // current album's subtree already contains every child's subtree, so one
+      // scan over it feeds all the rollups below.
+      const childrenByParent = buildChildrenMap(
+        allLibraryAlbums,
+        accessScope.visibleAlbumIds,
+      );
+      const subtreeIdList = collectSubtree(albumId, childrenByParent);
+
+      const hasThumbnail = exists(
+        db
+          .select()
+          .from(FileVariantTable)
+          .where(
+            and(
+              eq(FileVariantTable.originalFileId, FileTable.id),
+              eq(FileVariantTable.type, "thumbnail"),
+            ),
+          ),
+      );
+      const hasOptimised = exists(
+        db
+          .select()
+          .from(FileVariantTable)
+          .where(
+            and(
+              eq(FileVariantTable.originalFileId, FileTable.id),
+              eq(FileVariantTable.type, "optimised"),
+            ),
+          ),
+      );
+
+      const subtreeItemRows = await db
+        .select({
+          albumId: AlbumFileTable.albumId,
+          fileId: AlbumFileTable.fileId,
+        })
+        .from(AlbumFileTable)
+        .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .where(
+          and(
+            inArray(AlbumFileTable.albumId, subtreeIdList),
+            buildFileAccessFilter(accessScope, FileTable.id),
+            hasThumbnail,
+            hasOptimised,
+          ),
+        );
+      const directFilesByAlbum = new Map<string, Set<string>>();
+      for (const r of subtreeItemRows) {
+        let set = directFilesByAlbum.get(r.albumId);
+        if (!set) {
+          set = new Set();
+          directFilesByAlbum.set(r.albumId, set);
+        }
+        set.add(r.fileId);
+      }
+
+      const subtreeCoverRows = await db
+        .select({
+          albumId: AlbumFileTable.albumId,
+          fileId: sql<string>`MIN(${FileTable.id})`,
+        })
+        .from(AlbumFileTable)
+        .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .where(
+          and(
+            inArray(AlbumFileTable.albumId, subtreeIdList),
+            buildFileAccessFilter(accessScope, FileTable.id),
+            eq(FileTable.type, "image"),
+            hasThumbnail,
+          ),
+        )
+        .groupBy(AlbumFileTable.albumId);
+      const firstImageByAlbum = new Map<string, string>();
+      for (const r of subtreeCoverRows) if (r.fileId) firstImageByAlbum.set(r.albumId, r.fileId);
+
+      // Recursive item count for this album (distinct files across its subtree).
+      const recursiveAlbumItems = recursiveItemCount(
+        albumId,
+        directFilesByAlbum,
+        childrenByParent,
+      );
+
       // child albums
       const children = await db
         .select({
@@ -561,92 +733,17 @@ export const albumRouter = router({
         accessScope.visibleAlbumIds.has(child.id),
       );
 
-      // Augment children with items count and computed cover
-      const childIds = accessibleChildren.map((c) => c.id);
-      let childrenWithMeta = accessibleChildren as Array<
-        (typeof accessibleChildren)[number] & {
-          items?: number;
-          canManageShares?: boolean;
-        }
-      >;
-      if (childIds.length > 0) {
-        const childItemsRes = await db
-          .select({
-            albumId: AlbumFileTable.albumId,
-            items: sql<number>`COUNT(*)`,
-          })
-          .from(AlbumFileTable)
-          .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .where(
-            and(
-              inArray(AlbumFileTable.albumId, childIds),
-              buildFileAccessFilter(accessScope, FileTable.id),
-            ),
-          )
-          .groupBy(AlbumFileTable.albumId);
-        const childItemsMap = Object.fromEntries(
-          childItemsRes.map((r) => [r.albumId, Number(r.items)]),
-        ) as Record<string, number>;
-
-        // Compute covers for children - batch query to avoid N+1
-        const childCoverMap: Record<string, string | null> = {};
-        const childrenNeedingCover: string[] = [];
-        for (const child of accessibleChildren) {
-          if (child.cover) {
-            childCoverMap[child.id] = child.cover;
-          } else {
-            childrenNeedingCover.push(child.id);
-          }
-        }
-
-        // Batch fetch first image with thumbnail for children without explicit cover
-        if (childrenNeedingCover.length > 0) {
-          const computedCovers = await db
-            .select({
-              albumId: AlbumFileTable.albumId,
-              fileId: sql<string>`MIN(${FileTable.id})`,
-            })
-            .from(AlbumFileTable)
-            .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-            .where(
-              and(
-                inArray(AlbumFileTable.albumId, childrenNeedingCover),
-                buildFileAccessFilter(accessScope, FileTable.id),
-                eq(FileTable.type, "image"),
-                exists(
-                  db
-                    .select()
-                    .from(FileVariantTable)
-                    .where(
-                      and(
-                        eq(FileVariantTable.originalFileId, FileTable.id),
-                        eq(FileVariantTable.type, "thumbnail"),
-                      ),
-                    ),
-                ),
-              ),
-            )
-            .groupBy(AlbumFileTable.albumId);
-
-          for (const { albumId, fileId } of computedCovers) {
-            childCoverMap[albumId] = fileId;
-          }
-          // Set null for children that still don't have a cover
-          for (const childId of childrenNeedingCover) {
-            if (!(childId in childCoverMap)) {
-              childCoverMap[childId] = null;
-            }
-          }
-        }
-
-        childrenWithMeta = accessibleChildren.map((c) => ({
-          ...c,
-          items: childItemsMap[c.id] ?? 0,
-          cover: childCoverMap[c.id] ?? c.cover ?? null,
-          canManageShares:
-            accessScope.isAdmin || accessScope.ownedLibraryIds.has(c.libraryId),
-        }));
-      }
+      // Each child's count/cover rolls up through its own sub-albums, reusing the
+      // single subtree scan above (explicit cover still wins when one is set).
+      const childrenWithMeta = accessibleChildren.map((c) => ({
+        ...c,
+        items: recursiveItemCount(c.id, directFilesByAlbum, childrenByParent),
+        cover:
+          c.cover ??
+          resolveRecursiveCover(c.id, firstImageByAlbum, childrenByParent),
+        canManageShares:
+          accessScope.isAdmin || accessScope.ownedLibraryIds.has(c.libraryId),
+      }));
 
       // Count pending tasks for this album (files with non-succeeded encode tasks)
       const pendingTasksRes = await db
@@ -674,13 +771,13 @@ export const albumRouter = router({
           dir: albumRow.dir,
           parentId: albumRow.parentId,
           libraryId: albumRow.libraryId,
-          items: files.length,
+          items: recursiveAlbumItems,
           pendingTasks,
           canManageShares:
             accessScope.isAdmin ||
             accessScope.ownedLibraryIds.has(albumRow.libraryId),
         },
-        files: files.map((r) => r.file),
+        files: files.map((r) => ({ ...r.file, blurhash: r.blurhash })),
         children: childrenWithMeta,
         tree: {
           rootPath, // absolute media root path

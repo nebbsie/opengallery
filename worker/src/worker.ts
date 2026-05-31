@@ -40,6 +40,15 @@ export function runWorker(): void {
   let limit = pLimit(currentConcurrency);
 
   const loop = async () => {
+    // Revive encode tasks that died at the attempt cap, so a deploy that fixes a
+    // systemic encode failure (e.g. tolerant JPEG decoding) re-drives them.
+    try {
+      const { revived } = await trpc.fileTask.reviveDeadEncodeTasks.mutate();
+      if (revived > 0) logger.info(`[worker] revived ${revived} dead encode task(s)`);
+    } catch (e) {
+      logger.warn('[worker] revive dead encode tasks failed', e as Error);
+    }
+
     while (!stopFlag) {
       try {
         const files = await trpc.fileTask.leaseFilesForEncode.mutate();

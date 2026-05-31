@@ -5,18 +5,18 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCrown, lucideLogOut } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 
 @Component({
   selector: 'app-settings-profile',
   providers: [provideIcons({ lucideLogOut, lucideCrown })],
-  imports: [NgOptimizedImage, HlmButton, NgIcon, HlmIcon, HlmSpinner],
+  imports: [NgOptimizedImage, HlmButton, NgIcon, HlmIcon, Loading],
   host: {
     class: 'w-full',
   },
   template: `
     @if (auth.ready() === false) {
-      <hlm-spinner />
+      <app-loading />
     } @else {
       <div>
         <h1 class="text-foreground mb-2 block text-lg font-bold">Profile</h1>

@@ -8,14 +8,14 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideImages } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-album-all',
   imports: [
     ErrorAlert,
-    HlmSpinner,
+    Loading,
     HlmIcon,
     NgIcon,
     AlbumThumbnail,
@@ -26,7 +26,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (response.isPending() && !response.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error()" />
     } @else {

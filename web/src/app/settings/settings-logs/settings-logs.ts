@@ -13,12 +13,12 @@ import {
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-logs',
-  imports: [ErrorAlert, HlmSpinner, DatePipe, HlmButton, HlmIcon, NgIcon],
+  imports: [ErrorAlert, Loading, DatePipe, HlmButton, HlmIcon, NgIcon],
   providers: [
     provideIcons({
       lucideRefreshCw,
@@ -104,7 +104,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     </div>
 
     @if (logsResult.isPending()) {
-      <hlm-spinner />
+      <app-loading />
     }
 
     @if (logsResult.isError() && logsResult.error(); as error) {

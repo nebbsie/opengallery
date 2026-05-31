@@ -19,7 +19,7 @@ import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
@@ -35,14 +35,14 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
     HlmInput,
     HlmCheckbox,
     ErrorAlert,
-    HlmSpinner,
+    Loading,
   ],
   host: {
     class: 'w-full',
   },
   template: `
     @if (settings.isPending()) {
-      <hlm-spinner />
+      <app-loading />
     }
 
     @if (settings.isError()) {
@@ -235,8 +235,23 @@ export class SettingsSources {
       });
   }
 
+  // Optimistic toggle: flips the checkbox instantly, reverts on failure.
+  private importAlbumsMutation = injectMutation(() => ({
+    mutationFn: (checked: boolean) =>
+      this.trpc.mediaSourcesSettings.updateSettings.mutate({ autoImportAlbums: checked }),
+    onMutate: (checked) => {
+      const prev = this.importAlbums();
+      this.importAlbums.set(checked);
+      return { prev };
+    },
+    onError: (_err, _checked, ctx) => this.importAlbums.set(ctx?.prev ?? false),
+    onSettled: () => {
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
+    },
+  }));
+
   clickedImportAlbums(checked: boolean) {
-    this.trpc.mediaSourcesSettings.updateSettings.mutate({ autoImportAlbums: checked });
+    this.importAlbumsMutation.mutate(checked);
   }
 
   handleDeleteSource(id: string) {

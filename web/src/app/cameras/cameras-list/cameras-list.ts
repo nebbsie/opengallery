@@ -6,17 +6,17 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCamera } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-cameras-list',
   providers: [provideIcons({ lucideCamera })],
-  imports: [ErrorAlert, HlmSpinner, NgIcon, HlmIcon, RouterLink],
-  host: { class: 'block h-full overflow-y-auto' },
+  imports: [ErrorAlert, Loading, NgIcon, HlmIcon, RouterLink],
+  host: { class: 'block h-full overflow-y-auto pb-20 sm:pb-0' },
   template: `
     @if (cameras.isPending() && !cameras.data()) {
-      <hlm-spinner />
+      <app-loading />
     } @else if (cameras.isError() && !cameras.data()) {
       <app-error-alert [error]="cameras.error()" />
     } @else {

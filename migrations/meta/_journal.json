@@ -8,6 +8,48 @@
       "when": 1775719866284,
       "tag": "0000_milky_maginty",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1780094739347,
+      "tag": "0001_tranquil_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1780100646488,
+      "tag": "0002_flowery_norman_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1780103133867,
+      "tag": "0003_worried_lake",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1780138726142,
+      "tag": "0004_blue_pandemic",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1780147732632,
+      "tag": "0005_wakeful_terrax",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1780200000000,
+      "tag": "0006_merge_suggestions",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,7 @@ import {
   lucideSettings,
   lucideChevronLeft,
   lucideMenu,
+  lucideUsers,
 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
@@ -45,11 +46,16 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       lucideSettings,
       lucideChevronLeft,
       lucideMenu,
+      lucideUsers,
     }),
   ],
   host: {
+    // The left rail is hidden on mobile for the default context (the bottom nav
+    // takes over there) but stays visible on mobile for the settings sub-nav.
+    // `!flex` forces it back on (overriding `hidden`) when in settings.
     class:
-      'flex flex-col w-full h-full border-r items-center overflow-hidden max-w-[50px] sm:max-w-[64px]',
+      'hidden sm:flex flex-col w-full h-full border-r items-center overflow-hidden max-w-[50px] sm:max-w-[64px]',
+    '[class.!flex]': "sideBarType() === 'settings'",
   },
   template: `
     <div class="flex items-center justify-center p-3 pt-4">

@@ -3,12 +3,14 @@ import { db } from '../db/index.js';
 import {
   AlbumFileTable,
   AlbumTable,
+  FaceTable,
   FileTable,
   FileTaskTable,
   FileVariantTable,
   GeoLocationTable,
   ImageMetadataTable,
   LibraryFileTable,
+  PersonTable,
   VideoMetadataTable,
 } from '../db/schema.js';
 
@@ -41,6 +43,45 @@ export async function deleteFilesWithCascade(fileIds: string[]) {
   await db
     .delete(GeoLocationTable)
     .where(inArray(GeoLocationTable.fileId, idsToDelete));
+
+  // Remove detected faces for these files, then clean up the person clusters
+  // they belonged to: recompute counts, drop now-empty clusters, and repair any
+  // cover that pointed at a deleted face.
+  const affectedFaces = await db
+    .select({ personId: FaceTable.personId })
+    .from(FaceTable)
+    .where(inArray(FaceTable.fileId, idsToDelete));
+  const affectedPersonIds = Array.from(
+    new Set(affectedFaces.map((r) => r.personId).filter((p): p is string => !!p)),
+  );
+
+  await db.delete(FaceTable).where(inArray(FaceTable.fileId, idsToDelete));
+
+  for (const personId of affectedPersonIds) {
+    const remaining = await db
+      .select({ id: FaceTable.id })
+      .from(FaceTable)
+      .where(eq(FaceTable.personId, personId));
+    if (remaining.length === 0) {
+      await db.delete(PersonTable).where(eq(PersonTable.id, personId));
+      continue;
+    }
+    const [person] = await db
+      .select({ coverFaceId: PersonTable.coverFaceId })
+      .from(PersonTable)
+      .where(eq(PersonTable.id, personId))
+      .limit(1);
+    const coverStillValid =
+      !!person?.coverFaceId && remaining.some((r) => r.id === person.coverFaceId);
+    await db
+      .update(PersonTable)
+      .set({
+        faceCount: remaining.length,
+        ...(coverStillValid ? {} : { coverFaceId: remaining[0]!.id }),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(PersonTable.id, personId));
+  }
 
   await db
     .delete(AlbumFileTable)

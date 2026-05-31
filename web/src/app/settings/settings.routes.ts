@@ -43,6 +43,16 @@ export const routes: Routes = [
           import('./settings-encoding/settings-encoding').then((c) => c.SettingsEncoding),
       },
       {
+        path: 'faces',
+        loadComponent: () =>
+          import('./settings-faces/settings-faces').then((c) => c.SettingsFaces),
+      },
+      {
+        path: 'locations',
+        loadComponent: () =>
+          import('./settings-locations/settings-locations').then((c) => c.SettingsLocations),
+      },
+      {
         path: 'tasks',
         loadComponent: () => import('./settings-tasks/settings-tasks').then((c) => c.SettingsTasks),
       },
