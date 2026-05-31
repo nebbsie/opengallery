@@ -102,8 +102,8 @@ export class AlbumDetail {
     // Only poll while an import is in flight; a settled album is static, so
     // there's nothing to refresh. This stops the album view from re-running
     // the (expensive) full-file-list query 720×/hour when nothing is importing.
-    refetchInterval: (query: { state: { data?: { album: { pendingTasks: number } } } }) =>
-      (query.state.data?.album.pendingTasks ?? 0) > 0 ? 5000 : false,
+    refetchInterval: (query) =>
+      (query.state.data?.album?.pendingTasks ?? 0) > 0 ? 5000 : false,
     staleTime: 5000,
   }));
 

@@ -230,7 +230,7 @@ export class Map implements OnDestroy {
           // Fitting bounds triggers another moveend, which fetches points for
           // the now-accurate viewport.
           this.map.fitBounds(
-            result.locations.map((l) => [l.lat, l.lon]),
+            result.locations.map((l: LocationPoint) => [l.lat, l.lon] as [number, number]),
             { padding: [50, 50], maxZoom: 12 },
           );
         }
