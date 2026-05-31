@@ -1,12 +1,9 @@
 # Performance Investigation — OpenGallery
 
-> **Status:** investigation only — no fixes applied.
+> **Status:** open TODOs only. P1 & P3 fixed and P2's poll bounded on 2026-05-31; those are dropped from here.
 > **Date:** 2026-05-31. Audited the *current working tree* (heavily modified since `HEAD`).
-> Items marked **FIXED** were open in the May 25 doc but are now resolved.
 
-The big structural P0s from May are **genuinely fixed** (WAL/PRAGMAs, expression sort indexes,
-worker + session + scope caching, single-query asset serving). The remaining drag is concentrated
-in a handful of hot paths below.
+The remaining drag is concentrated in a handful of hot paths below.
 
 ---
 
@@ -14,28 +11,12 @@ in a handful of hot paths below.
 
 ### 🟠 High
 
-#### P1 — `getAccessScope` loads the ENTIRE `album` + `album_file` tables per non-admin
-`api/src/authz/shared-access.ts:104` — for non-admins it runs `db.select(...).from(AlbumTable)` (every album)
-**and** `db.select({albumId,fileId}).from(AlbumFileTable)` (every album-file mapping, no WHERE), then builds
-in-memory maps. On a 100K-photo library `album_file` can be hundreds of thousands of rows, pulled into Node
-on every 60s cache miss / invalidation. The `albumIdsByFileId` map is only needed when `directFileIds` is
-non-empty (typically empty).
-**Fix:** only load `album_file` when `directFileIds.size > 0`, scoped via `inArray(fileId, [...directFileIds])`;
-load albums filtered to accessible libraries instead of the whole table. *(Biggest multi-user win.)*
-
-#### P2 — `album.getAlbumInfo` polled every 5s, unbounded
-`web/src/app/album/album-detail/album-detail.ts:99` sets `refetchInterval: 5000`. The procedure
-(`api/src/routers/album.router.ts:592`) selects **ALL** files in the album (no `limit`), each with two EXISTS
-variant subqueries, ordered by the sort expr, plus subtree count rollup — 720×/hour even when nothing is importing.
-**Fix:** poll only while `pendingTasks > 0` (`refetchInterval: () => pending ? 5000 : false`); add `staleTime`;
-split import-status counts from the full file list / paginate.
-
-#### P3 — Map fetches ALL location points in one query
-`web/src/app/map/map.ts:62` calls `geoLocation.getAllLocations` with no bounds. The query
-(`api/src/routers/geo-location.router.ts:74`) groups by **exact** float `(lat, lon)` (so no real clustering)
-with two correlated EXISTS subqueries per row, and the client builds all markers up front.
-**Fix:** add a viewport-bounded `getInBounds` endpoint (the `getFilesByLocation` bounds pattern already exists);
-server-side grid-snap clustering at low zoom; fetch on Leaflet `moveend`.
+#### P2 — `album.getAlbumInfo` selects the full file list unbounded
+`api/src/routers/album.router.ts:592` selects **ALL** files in the album (no `limit`), each with two EXISTS
+variant subqueries, ordered by the sort expr, plus subtree count rollup. The 5s-poll amplification is already
+fixed, but the query itself is still unbounded.
+**Fix:** split import-status counts from the full file list / paginate the file query (a larger API +
+virtual-grid refactor).
 
 #### P4 — Image encode decodes the source up to 4×
 `worker/src/encoding/encode.ts` — `openImage(path).metadata()` (`:111`), blurhash resize (`:123`),
@@ -75,20 +56,6 @@ width/height from the thumbnail/opt `info` instead of a separate `metadata()` pa
 
 ---
 
-## Already FIXED since May 25 (do not re-report)
-- **WAL mode / PRAGMAs** — `api/src/db/index.ts:37` sets `journal_mode=WAL`, `synchronous=NORMAL`, `temp_store=MEMORY`,
-  `cache_size=-131072`, `mmap_size=256MB`, `busy_timeout=5000`, `optimize`.
-- **`coalesce(takenAt, createdAt)` sort index** — `schema.ts:100` adds three expression indexes backed by a
-  denormalized `file.takenAt`; `file-sort.ts` writes the sentinel as an inline literal so the index is usable.
-- **Worker settings refetch** — `api/src/utils/settings-cache.ts` caches system + per-user settings in-process with
-  explicit invalidation; lease path uses `getCachedSystemSettings()`.
-- **Session validation per asset** — `api/src/auth/session-cache.ts` caches `getSession` by cookie for 5 min.
-- **getAccessScope caching** — per-user 60s cache (`shared-access.ts:44`). *(But see P1 — what it loads is still heavy;
-  and PRODUCT.md D1 — it's never invalidated on share changes.)*
-- **Asset serving two-query → one-query** — `server.ts:122` with ETag/Last-Modified/304 + range support.
-
----
-
 ## Remediation order (performance)
-**Phase 2:** P1 (scope query), P2 (album poll), P4 (single decode), P5/P9a (indexes — hand-written migrations),
-P7/P8 (page size + prefetch guard), P3 (map viewport). **Phase 3 polish:** P6, P9b–d, P10a/b.
+**Phase 2:** P2 (paginate album file query — poll already fixed), P4 (single decode), P5/P9a (indexes —
+hand-written migrations), P7/P8 (page size + prefetch guard). **Phase 3 polish:** P6, P9b–d, P10a/b.

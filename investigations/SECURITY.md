@@ -88,23 +88,6 @@ basename does not become a flag in practice — so this is lower risk than the o
 
 ---
 
-## Already FIXED since May 25 (do not re-report)
-- **Asset-serving path traversal** — `/asset` and `/face` (`server.ts:91–234`) now require a session and call
-  `canUserViewFile`; row dirs/names are only writable by `internalProcedure`.
-- **Most authz gaps** — `album.getUsersAlbums/getAllUserAlbums/getAlbumById/getAlbumInfo/getShares/updateShares`,
-  all of `camera.router.ts` and `geo-location.router.ts`, and `files.viewFile/getUsersFiles/getTimeline` now use
-  `getAccessScope`/`buildFileAccessFilter`/`canUserManageSharedItem`.
-- **Self-promotion to admin** — `user.type` is `input:false` (`auth.ts:32`); first-user promotion is transactional (`auth.ts:55`).
-- **Session expiry** — `trpc.ts:52` now checks `session.expiresAt` and drops `userId` if expired.
-- **Hardcoded PAT in publish scripts** — now `${GH_PAT:?…}` env var (`scripts/publish-unified*.sh:13`).
-- **`.env` committed to git** — `*.env` is gitignored and untracked.
-- **`issues.retry` input** — now `z.string().uuid()` (ownership check still missing — see S1).
-
----
-
 ## Remediation order (security)
 1. **Phase 0 (ship-blockers):** S2, S4 (drop Docker defaults, fail-fast), S1 (close authz holes), S3 (rate limit), S5 (CSP/headers).
 2. **Phase 3 (hardening):** S6 (`--` + reject `-` names), S7 (`timingSafeEqual`), S8 (log shape only), S9 (gate paths), S10a (`bodyLimit`).
-
-> Cross-ref: **D1 (scope-cache never invalidated)** in PRODUCT.md is also a security-staleness issue
-> (un-shared users retain access for up to 60s).

@@ -82,39 +82,25 @@ export async function getAccessScope(
     return scope;
   }
 
-  const [ownedLibraries, sharedItems, allAlbums, albumFileRows] =
-    await Promise.all([
-      db
-        .select({ id: LibraryTable.id })
-        .from(LibraryTable)
-        .where(eq(LibraryTable.userId, userId)),
-      db
-        .select({
-          sourceType: SharedItemTable.sourceType,
-          sourceId: SharedItemTable.sourceId,
-        })
-        .from(SharedItemTable)
-        .where(
-          and(
-            eq(SharedItemTable.shareType, "user"),
-            eq(SharedItemTable.accessLevel, "view"),
-            eq(SharedItemTable.sharedToUserId, userId),
-          ),
+  const [ownedLibraries, sharedItems] = await Promise.all([
+    db
+      .select({ id: LibraryTable.id })
+      .from(LibraryTable)
+      .where(eq(LibraryTable.userId, userId)),
+    db
+      .select({
+        sourceType: SharedItemTable.sourceType,
+        sourceId: SharedItemTable.sourceId,
+      })
+      .from(SharedItemTable)
+      .where(
+        and(
+          eq(SharedItemTable.shareType, "user"),
+          eq(SharedItemTable.accessLevel, "view"),
+          eq(SharedItemTable.sharedToUserId, userId),
         ),
-      db
-        .select({
-          id: AlbumTable.id,
-          parentId: AlbumTable.parentId,
-          libraryId: AlbumTable.libraryId,
-        })
-        .from(AlbumTable),
-      db
-        .select({
-          albumId: AlbumFileTable.albumId,
-          fileId: AlbumFileTable.fileId,
-        })
-        .from(AlbumFileTable),
-    ]);
+      ),
+  ]);
 
   const ownedLibraryIds = new Set(ownedLibraries.map((row) => row.id));
   const accessibleLibraryIds = new Set(ownedLibraries.map((row) => row.id));
@@ -138,6 +124,57 @@ export async function getAccessScope(
       directFileIds.add(item.sourceId);
     }
   }
+
+  // Album/file-level shares can reach albums in libraries the user otherwise
+  // has no access to (the shared album's subtree, or the ancestor chain of a
+  // directly-shared file). Only then do we need the full album graph; in the
+  // common case (no album/file shares) every visible album lives in an
+  // accessible library, so we load just those. The album_file table — the
+  // largest by far — is only consulted to map directly-shared files back to
+  // their albums, so we skip it entirely unless there are direct file shares,
+  // and scope it to those file IDs when present.
+  const needFullAlbumGraph =
+    sharedAlbumRootIds.length > 0 || directFileIds.size > 0;
+
+  const [allAlbums, albumFileRows] = await Promise.all([
+    needFullAlbumGraph
+      ? db
+          .select({
+            id: AlbumTable.id,
+            parentId: AlbumTable.parentId,
+            libraryId: AlbumTable.libraryId,
+          })
+          .from(AlbumTable)
+      : accessibleLibraryIds.size > 0
+        ? db
+            .select({
+              id: AlbumTable.id,
+              parentId: AlbumTable.parentId,
+              libraryId: AlbumTable.libraryId,
+            })
+            .from(AlbumTable)
+            .where(
+              inArray(AlbumTable.libraryId, [...accessibleLibraryIds]),
+            )
+        : Promise.resolve(
+            [] as Array<{
+              id: string;
+              parentId: string | null;
+              libraryId: string;
+            }>,
+          ),
+    directFileIds.size > 0
+      ? db
+          .select({
+            albumId: AlbumFileTable.albumId,
+            fileId: AlbumFileTable.fileId,
+          })
+          .from(AlbumFileTable)
+          .where(inArray(AlbumFileTable.fileId, [...directFileIds]))
+      : Promise.resolve(
+          [] as Array<{ albumId: string; fileId: string }>,
+        ),
+  ]);
 
   const childrenByParent = new Map<string, string[]>();
   const parentByAlbumId = new Map<string, string | null>();

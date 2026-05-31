@@ -9,15 +9,15 @@ import {
   viewChild,
 } from '@angular/core';
 import { ErrorAlert } from '@core/components/error/error';
-import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideMap } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { Loading } from '@core/components/loading/loading';
-import { injectQuery } from '@tanstack/angular-query-experimental';
 import type * as L from 'leaflet';
 import { loadLeafletWithCluster } from './leaflet-cluster';
+
+type LocationPoint = { lat: number; lon: number; count: number };
 
 @Component({
   selector: 'app-map',
@@ -25,25 +25,31 @@ import { loadLeafletWithCluster } from './leaflet-cluster';
   imports: [ErrorAlert, Loading, NgIcon, HlmIcon],
   host: { class: 'block h-full' },
   template: `
-    @if (locations.isPending() && !locations.data()) {
-      <app-loading />
-    } @else if (locations.isError() && !locations.data()) {
-      <app-error-alert [error]="locations.error()" />
+    @if (error()) {
+      <app-error-alert [error]="error()" />
     } @else {
       <div class="mb-6">
         <h1 class="text-foreground mb-2 text-2xl font-bold">World Map</h1>
         <p class="text-muted-foreground text-sm">Browse photos by location around the world</p>
       </div>
 
-      @if (locations.data()!.length === 0) {
-        <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
-          <ng-icon hlm size="xl" name="lucideMap" class="mb-4" />
-          <p>No locations found</p>
-          <p class="text-sm">Photos with geolocation data will appear here</p>
-        </div>
-      } @else {
-        <div #mapContainer class="h-[calc(100vh-12rem)] w-full rounded-lg border"></div>
-      }
+      <div class="relative h-[calc(100vh-12rem)] w-full">
+        <div #mapContainer class="h-full w-full rounded-lg border"></div>
+
+        @if (loading()) {
+          <div class="bg-background/60 absolute inset-0 flex items-center justify-center rounded-lg">
+            <app-loading />
+          </div>
+        } @else if (empty()) {
+          <div
+            class="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center rounded-lg"
+          >
+            <ng-icon hlm size="xl" name="lucideMap" class="mb-4" />
+            <p>No locations found</p>
+            <p class="text-sm">Photos with geolocation data will appear here</p>
+          </div>
+        }
+      </div>
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -51,16 +57,20 @@ import { loadLeafletWithCluster } from './leaflet-cluster';
 export class Map implements OnDestroy {
   private readonly trpc = injectTrpc();
   private map: L.Map | null = null;
+  private leaflet: typeof L | null = null;
   private clusterGroup: L.MarkerClusterGroup | null = null;
   // Guards against the init effect re-entering during the async leaflet load.
   private initializing = false;
-  private readonly clientReady = signal(false);
-  protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
+  // Discards responses for viewports the user has already panned away from.
+  private fetchToken = 0;
+  // The first fetch (world view) decides the empty state and the initial fit.
+  private firstFetch = true;
 
-  locations = injectQuery(() => ({
-    queryKey: [CacheKey.LocationAll],
-    queryFn: async () => this.trpc.geoLocation.getAllLocations.query(),
-  }));
+  private readonly clientReady = signal(false);
+  protected readonly loading = signal(true);
+  protected readonly empty = signal(false);
+  protected readonly error = signal<Error | undefined>(undefined);
+  protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
   constructor() {
     // Defer map initialization until the browser has completed its first render.
@@ -71,15 +81,16 @@ export class Map implements OnDestroy {
 
     effect(() => {
       if (!this.clientReady()) return;
-      const data = this.locations.data();
       const container = this.mapContainer();
-      if (data && container) {
-        void this.initMap(data);
+      if (container) {
+        void this.initMap();
       }
     });
   }
 
   ngOnDestroy(): void {
+    // Invalidate any in-flight fetch so its late response can't touch a torn-down map.
+    this.fetchToken++;
     if (this.map) {
       this.map.remove();
       this.map = null;
@@ -87,9 +98,7 @@ export class Map implements OnDestroy {
     }
   }
 
-  private async initMap(
-    locations: { lat: number; lon: number; count: number }[],
-  ): Promise<void> {
+  private async initMap(): Promise<void> {
     const container = this.mapContainer();
     if (!container || this.map || this.initializing) return;
     this.initializing = true;
@@ -97,9 +106,10 @@ export class Map implements OnDestroy {
     // Load leaflet + the markercluster plugin against a shared global `L`. See
     // leaflet-cluster.ts for why this can't be a plain top-level import.
     const leaflet = await loadLeafletWithCluster();
+    this.leaflet = leaflet;
 
     // The component may have been destroyed while leaflet was loading.
-    if (this.map) {
+    if (!this.mapContainer()) {
       this.initializing = false;
       return;
     }
@@ -171,9 +181,79 @@ export class Map implements OnDestroy {
       },
     });
 
-    const bounds: [number, number][] = [];
+    this.map.addLayer(this.clusterGroup);
 
-    locations.forEach((location) => {
+    // Refetch the visible points whenever the user finishes panning/zooming.
+    this.map.on('moveend', () => void this.fetchAndRender());
+
+    this.initializing = false;
+
+    // Leaflet measures the container at init time. In this async/SPA flow the
+    // map div may not have settled its viewport-relative (calc) height yet, so
+    // recalc size on the next frame and again shortly after before the first
+    // fetch fits to the data.
+    const settle = () => {
+      if (!this.map) return;
+      this.map.invalidateSize();
+    };
+    requestAnimationFrame(settle);
+    setTimeout(settle, 250);
+
+    void this.fetchAndRender();
+  }
+
+  private async fetchAndRender(): Promise<void> {
+    if (!this.map) return;
+    const bounds = this.map.getBounds();
+    const zoom = Math.round(this.map.getZoom());
+    const token = ++this.fetchToken;
+
+    try {
+      const result = await this.trpc.geoLocation.getInBounds.query({
+        minLat: bounds.getSouth(),
+        maxLat: bounds.getNorth(),
+        minLon: bounds.getWest(),
+        maxLon: bounds.getEast(),
+        zoom,
+      });
+
+      // A newer fetch started (or the map was destroyed) — drop this response.
+      if (token !== this.fetchToken || !this.map) return;
+
+      this.renderLocations(result.locations, result.precise);
+      this.loading.set(false);
+
+      if (this.firstFetch) {
+        this.firstFetch = false;
+        this.empty.set(result.locations.length === 0);
+        if (result.locations.length > 0) {
+          // Fitting bounds triggers another moveend, which fetches points for
+          // the now-accurate viewport.
+          this.map.fitBounds(
+            result.locations.map((l) => [l.lat, l.lon]),
+            { padding: [50, 50], maxZoom: 12 },
+          );
+        }
+      }
+    } catch (err) {
+      if (token !== this.fetchToken) return;
+      this.loading.set(false);
+      // Only surface a hard error before the map ever rendered points; transient
+      // pan/zoom fetch failures shouldn't blow away a working map.
+      if (this.firstFetch) {
+        this.error.set(err instanceof Error ? err : new Error(String(err)));
+      }
+    }
+  }
+
+  private renderLocations(locations: LocationPoint[], precise: boolean): void {
+    const leaflet = this.leaflet;
+    const clusterGroup = this.clusterGroup;
+    if (!leaflet || !clusterGroup) return;
+
+    clusterGroup.clearLayers();
+
+    for (const location of locations) {
       const marker = leaflet.marker([location.lat, location.lon], {
         icon: leaflet.divIcon({
           html:
@@ -187,38 +267,28 @@ export class Map implements OnDestroy {
         photoCount: location.count,
       } as L.MarkerOptions);
 
-      const photoLabel = `${location.count} photo${location.count > 1 ? 's' : ''}`;
-      marker.bindPopup(`
-        <div style="text-align:center;min-width:120px">
-          <p style="font-weight:600;margin:0 0 4px">${photoLabel}</p>
-          <a href="/locations/${location.lat}/${location.lon}"
-             style="color:#2563eb;text-decoration:underline">
-            View photos
-          </a>
-        </div>
-      `);
-
-      this.clusterGroup!.addLayer(marker);
-      bounds.push([location.lat, location.lon]);
-    });
-
-    this.map.addLayer(this.clusterGroup);
-    this.initializing = false;
-
-    // Leaflet measures the container at init time. In this async/SPA flow the
-    // map div is created the moment data arrives, before its width/height has
-    // settled, so the map renders grey/blank with no tiles. Recalculate the
-    // size once layout settles, then fit to the markers. We poke it on the next
-    // frame and again shortly after, because a freshly-inserted element with a
-    // viewport-relative (calc) height can still report 0 in the first frame.
-    const settle = () => {
-      if (!this.map) return;
-      this.map.invalidateSize();
-      if (bounds.length > 0) {
-        this.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 12 });
+      if (precise) {
+        // Exact coordinate: link straight through to its photos.
+        const photoLabel = `${location.count} photo${location.count > 1 ? 's' : ''}`;
+        marker.bindPopup(`
+          <div style="text-align:center;min-width:120px">
+            <p style="font-weight:600;margin:0 0 4px">${photoLabel}</p>
+            <a href="/locations/${location.lat}/${location.lon}"
+               style="color:#2563eb;text-decoration:underline">
+              View photos
+            </a>
+          </div>
+        `);
+      } else {
+        // Aggregated cell centroid: the coordinate is approximate, so zoom in
+        // toward it rather than linking out to a point that may hold no photos.
+        marker.on('click', () => {
+          if (!this.map) return;
+          this.map.flyTo([location.lat, location.lon], Math.min(this.map.getZoom() + 3, 18));
+        });
       }
-    };
-    requestAnimationFrame(settle);
-    setTimeout(settle, 250);
+
+      clusterGroup.addLayer(marker);
+    }
   }
 }

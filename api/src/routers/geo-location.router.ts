@@ -22,6 +22,27 @@ import {
 } from "../trpc.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 
+// Below this zoom, points are snapped to a lat/lon grid and aggregated
+// server-side so the client never receives more than a handful of points per
+// viewport. At/above it, points are returned at their exact stored coordinate
+// (one group per distinct lat/lon) so the per-photo "View photos" links resolve
+// precisely. The map client keys its click behaviour off the same threshold.
+const PRECISE_ZOOM = 16;
+
+// Grid cell size in degrees for a given zoom. null => no snapping (exact
+// coordinates). Cells shrink as the user zooms in so neighbouring photos
+// progressively separate into their own markers.
+function gridSizeForZoom(zoom: number): number | null {
+  if (zoom <= 3) return 10;
+  if (zoom <= 5) return 4;
+  if (zoom <= 7) return 1.5;
+  if (zoom <= 9) return 0.5;
+  if (zoom <= 11) return 0.2;
+  if (zoom <= 13) return 0.05;
+  if (zoom < PRECISE_ZOOM) return 0.02;
+  return null;
+}
+
 export const geoLocationRouter = router({
   save: internalProcedure
     .input(
@@ -124,6 +145,113 @@ export const geoLocationRouter = router({
       }));
     },
   ),
+
+  // Viewport-bounded variant of getAllLocations: returns only the points
+  // inside the current map bounds, grid-clustered server-side by zoom so a
+  // dense world library doesn't ship hundreds of thousands of rows to the
+  // browser. The client refetches this on every Leaflet `moveend`.
+  getInBounds: privateProcedure
+    .input(
+      z.object({
+        minLat: z.number().min(-90).max(90),
+        maxLat: z.number().min(-90).max(90),
+        minLon: z.number(),
+        maxLon: z.number(),
+        zoom: z.number().int().min(0).max(24),
+      }),
+    )
+    .query(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) {
+        throw new Error("Unauthorized");
+      }
+
+      const [accessScope, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
+
+      const grid = gridSizeForZoom(input.zoom);
+
+      // Group by snapped grid cell (low zoom) or exact coordinate (high zoom).
+      // Representative point is the cell's centroid; at exact zoom avg() over a
+      // single distinct coordinate is just that coordinate.
+      const groupBy = grid
+        ? [
+            sql`cast(floor(${GeoLocationTable.lat} / ${grid}) as int)`,
+            sql`cast(floor(${GeoLocationTable.lon} / ${grid}) as int)`,
+          ]
+        : [GeoLocationTable.lat, GeoLocationTable.lon];
+
+      // A latitude band always applies. Longitude is skipped when the viewport
+      // crosses the antimeridian (min > max) — over-fetching that band is still
+      // correct and far simpler than splitting the range.
+      const boundsConditions = [
+        sql`${GeoLocationTable.lat} BETWEEN ${input.minLat} AND ${input.maxLat}`,
+        ...(input.minLon <= input.maxLon
+          ? [
+              sql`${GeoLocationTable.lon} BETWEEN ${input.minLon} AND ${input.maxLon}`,
+            ]
+          : []),
+      ];
+
+      const locations = await db
+        .select({
+          lat: sql<number>`avg(${GeoLocationTable.lat})`,
+          lon: sql<number>`avg(${GeoLocationTable.lon})`,
+          count: sql<number>`count(distinct ${FileTable.id})`,
+        })
+        .from(GeoLocationTable)
+        .innerJoin(FileTable, eq(FileTable.id, GeoLocationTable.fileId))
+        .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
+        .innerJoin(
+          LibraryTable,
+          eq(LibraryTable.id, LibraryFileTable.libraryId),
+        )
+        .where(
+          and(
+            buildFileAccessFilter(accessScope, FileTable.id),
+            isNull(LibraryFileTable.deletedAt),
+            hiddenFilter,
+            ...boundsConditions,
+            // Only include files that have BOTH thumbnail and optimised variants
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "thumbnail"),
+                  ),
+                ),
+            ),
+            exists(
+              db
+                .select()
+                .from(FileVariantTable)
+                .where(
+                  and(
+                    eq(FileVariantTable.originalFileId, FileTable.id),
+                    eq(FileVariantTable.type, "optimised"),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .groupBy(...groupBy)
+        .orderBy(desc(sql`count(distinct ${FileTable.id})`));
+
+      return {
+        // Clients use this to decide whether a marker's coordinate is exact
+        // (link straight to the location) or an aggregate (zoom in on click).
+        precise: grid === null,
+        locations: locations.map((l) => ({
+          lat: l.lat,
+          lon: l.lon,
+          count: l.count,
+        })),
+      };
+    }),
 
   getFilesByLocation: privateProcedure
     .input(
