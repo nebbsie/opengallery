@@ -8,6 +8,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 const TASK_LABELS: Record<string, string> = {
   encode_thumbnail: 'Thumbnails',
   encode_optimised: 'Optimised images',
+  encode_video: 'Video encoding',
   video_poster: 'Video posters',
   detect_faces: 'Face detection',
   extract_geolocation: 'GPS locations',

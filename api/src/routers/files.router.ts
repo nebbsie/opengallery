@@ -39,10 +39,15 @@ import {
   LibraryFileTable,
   LibraryTable,
   PersonTable,
+  VideoMetadataTable,
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
-import { deleteFilesWithCascade } from "../utils/file-operations.js";
+import {
+  deleteFilesWithCascade,
+  deleteVariantFilesFromDisk,
+  removeFacesForFiles,
+} from "../utils/file-operations.js";
 import { getCachedMediaSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
 
@@ -128,6 +133,91 @@ export const filesRouter = router({
       if (fileIds.length === 0) return [] as { id: string }[];
 
       return deleteFilesWithCascade(fileIds);
+    }),
+
+  // Re-process a file whose content changed on disk (D4). Drops all derived
+  // data (variants on disk + rows, image/video/geo metadata, faces) and resets
+  // the file's tasks to pending so the worker regenerates everything from the
+  // new content. The original FileTable row (and its id) is kept; only its
+  // size/hash are refreshed and takenAt is cleared for re-extraction.
+  refreshChangedFile: internalProcedure
+    .input(
+      z.object({
+        fileId: z.string().uuid(),
+        size: z.number(),
+        contentHash: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const [file] = await db
+        .select({ id: FileTable.id })
+        .from(FileTable)
+        .where(eq(FileTable.id, input.fileId))
+        .limit(1);
+      if (!file) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `File not found: ${input.fileId}`,
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      // Resolve the generated variant outputs (each is its own FileTable row).
+      const variantRows = await db
+        .select({ fileId: FileVariantTable.fileId })
+        .from(FileVariantTable)
+        .where(eq(FileVariantTable.originalFileId, input.fileId));
+      const variantFileIds = variantRows.map((r) => r.fileId);
+
+      // Drop stale derived data. Order matters for FKs: video_metadata.poster
+      // references file_variant, so clear metadata before the variant rows.
+      await db
+        .delete(VideoMetadataTable)
+        .where(eq(VideoMetadataTable.fileId, input.fileId));
+      await db
+        .delete(ImageMetadataTable)
+        .where(eq(ImageMetadataTable.fileId, input.fileId));
+      await db
+        .delete(GeoLocationTable)
+        .where(eq(GeoLocationTable.fileId, input.fileId));
+      await removeFacesForFiles([input.fileId]);
+
+      await deleteVariantFilesFromDisk([input.fileId]);
+      await db
+        .delete(FileVariantTable)
+        .where(eq(FileVariantTable.originalFileId, input.fileId));
+      if (variantFileIds.length > 0) {
+        await db
+          .delete(FileTable)
+          .where(inArray(FileTable.id, variantFileIds));
+      }
+
+      // Re-drive every task for this file from scratch.
+      await db
+        .update(FileTaskTable)
+        .set({
+          status: "pending",
+          attempts: 0,
+          startedAt: null,
+          finishedAt: null,
+          lastError: null,
+          progress: 0,
+          updatedAt: now,
+        })
+        .where(eq(FileTaskTable.fileId, input.fileId));
+
+      await db
+        .update(FileTable)
+        .set({
+          size: input.size,
+          contentHash: input.contentHash ?? null,
+          takenAt: null,
+          updatedAt: now,
+        })
+        .where(eq(FileTable.id, input.fileId));
+
+      return { ok: true };
     }),
 
   getAllFiles: internalProcedure.query(() => db.select().from(FileTable)),

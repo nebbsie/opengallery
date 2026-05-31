@@ -150,6 +150,8 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       id: string;
       dir: string;
       name: string;
+      size: number;
+      contentHash: string | null;
     }>;
     const alreadySavedPaths = new Set(alreadySavedFiles.map((f) => getFullPath(f.dir, f.name)));
 
@@ -191,6 +193,33 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       await trpc.libraryFile.removeLibraryFilesById.mutate(
         orphanedFiles.map((f: { id: string }) => f.id),
       );
+    }
+
+    // Heal files whose content changed while the watcher was down (D4). A size
+    // mismatch is a cheap proxy for "the file was replaced"; confirm with a hash
+    // and re-process only those that actually changed (avoids hashing the whole
+    // library on every scan).
+    const onDiskByPath = new Map(files.map((f) => [getFullPath(f.dir, f.name), f]));
+    for (const saved of alreadySavedFiles) {
+      const onDisk = onDiskByPath.get(getFullPath(saved.dir, saved.name));
+      if (!onDisk || onDisk.size === saved.size) continue;
+
+      const filePath = join(folder, saved.name);
+      let contentHash: string | undefined;
+      try {
+        contentHash = await throttleIo(() => computeFileHash(filePath));
+      } catch (err) {
+        logger.warn(`Failed to compute hash for changed file ${filePath}: ${err}`);
+        continue;
+      }
+      if (saved.contentHash && saved.contentHash === contentHash) continue;
+
+      await trpc.files.refreshChangedFile.mutate({
+        fileId: saved.id,
+        size: onDisk.size,
+        contentHash,
+      });
+      logger.info(`Re-processing changed file on scan: ${filePath}`);
     }
 
     // Filter out files that are already in the database.
@@ -241,57 +270,19 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       })),
     );
 
-    //check if file is linked to an album based on album dir == file dir
-    //if not album, generate one first for this folder dir
-    await trpc.album.getAlbumByDir.query(toHostPath(folder));
-
-    // Ensure album exists for this folder (this will also ensure parents exist)
+    // Ensure an album exists for this folder (and its parent chain), then link
+    // just the files we created in this folder. Previously this reloaded the
+    // entire library (files + albums + album-files) for every folder, making
+    // initial import O(folders × library) (D5); the new files all live in this
+    // folder's dir, so there's nothing else to link here.
     if (toHostPath(folder) !== skipAlbumForHostPath) {
-      const ensuredAlbumId = await ensureAlbumForDir(toHostPath(folder), libraryId);
-      if (ensuredAlbumId) {
-        logger.info(`Album ensured for folder: ${folder}`);
+      const albumId = await ensureAlbumForDir(toHostPath(folder), libraryId);
+      if (albumId) {
+        await trpc.albumFile.create.mutate(
+          fileCreateResult.map(({ id }) => ({ fileId: id, albumId })),
+        );
+        logger.info(`Linking ${fileCreateResult.length} album file(s) for folder: ${folder}`);
       }
-    }
-
-    //this may need to be changed to get all users library files(if in future they could have many), not just default library files.
-    //library is what links a file to a user
-    const allFiles = (await trpc.libraryFile.getAllLibraryFiles.query(libraryId)) as Array<{
-      id: string;
-      dir: string;
-    }>;
-    const albums = (await trpc.album.getAllAlbumsForLibrary.query(libraryId)) as Array<{
-      id: string;
-      dir: string;
-    }>;
-
-    const albumFiles = (await trpc.albumFile.getByAlbumIds.query(
-      albums.map((f: { id: string }) => f.id),
-    )) as Array<{ albumId: string; fileId: string }>;
-
-    // Build a lookup table: album name → albumId
-    const albumMap = new Map(albums.map((a) => [a.dir, a.id]));
-
-    // Build lookup: albumId → Set<fileId>
-    const existingLinks = new Map<string, Set<string>>();
-    for (const af of albumFiles) {
-      if (!existingLinks.has(af.albumId)) {
-        existingLinks.set(af.albumId, new Set());
-      }
-      existingLinks.get(af.albumId)!.add(af.fileId);
-    }
-
-    // Collect new links
-    const albumFilesToInsert = allFiles.flatMap((file) => {
-      const albumId = albumMap.get(file.dir);
-      if (!albumId) return [];
-
-      const alreadyLinked = existingLinks.get(albumId)?.has(file.id);
-      return alreadyLinked ? [] : [{ fileId: file.id, albumId }];
-    });
-
-    if (albumFilesToInsert.length > 0) {
-      await trpc.albumFile.create.mutate(albumFilesToInsert);
-      logger.info(`Linking album files for folder: ${folder}`);
     }
   }
 

@@ -34,32 +34,41 @@ export const fileTaskRouter = router({
   // Per-task-type rollup for the Tasks settings page: how many of each task type
   // are done vs still outstanding, instead of a per-file list.
   summary: privateProcedure.query(async () => {
+    // Video transcodes share the `encode_optimised` task type with image
+    // optimisation, so they'd otherwise be invisible (lumped under "Optimised
+    // images"). Split them out by the file's media type for display: an
+    // `encode_optimised` task on a video is surfaced as a synthetic
+    // `encode_video` row.
+    const displayType = sql<string>`CASE WHEN ${FileTaskTable.type} = 'encode_optimised' AND ${FileTable.type} = 'video' THEN 'encode_video' ELSE ${FileTaskTable.type} END`;
+
     // Counts of every (type, status) pair.
     const byStatus = await db
       .select({
-        type: FileTaskTable.type,
+        type: displayType,
         status: FileTaskTable.status,
         count: sql<number>`COUNT(*)`,
       })
       .from(FileTaskTable)
-      .groupBy(FileTaskTable.type, FileTaskTable.status);
+      .innerJoin(FileTable, eq(FileTable.id, FileTaskTable.fileId))
+      .groupBy(displayType, FileTaskTable.status);
 
     // "Remaining" = work the worker will actually still pick up: not succeeded,
     // and under the 3-attempt retry cap (failed-with-attempts>=3 is dead, not
     // outstanding).
     const remainingRows = await db
       .select({
-        type: FileTaskTable.type,
+        type: displayType,
         count: sql<number>`COUNT(*)`,
       })
       .from(FileTaskTable)
+      .innerJoin(FileTable, eq(FileTable.id, FileTaskTable.fileId))
       .where(
         and(
           inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
           sql`${FileTaskTable.attempts} < 3`,
         ),
       )
-      .groupBy(FileTaskTable.type);
+      .groupBy(displayType);
 
     const remainingByType = new Map<string, number>();
     for (const r of remainingRows) remainingByType.set(r.type, Number(r.count));

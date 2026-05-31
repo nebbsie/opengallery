@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   buildFileAccessFilter,
   canUserManageSharedItem,
+  clearScopeCache,
   getAccessScope,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
@@ -888,6 +889,19 @@ export const albumRouter = router({
         }
       }
 
+      // Capture the previously-shared recipients before mutating so we can
+      // invalidate the access-scope cache for users who lose access too.
+      const previousShares = await db
+        .select({ userId: SharedItemTable.sharedToUserId })
+        .from(SharedItemTable)
+        .where(
+          and(
+            eq(SharedItemTable.sourceType, input.sourceType),
+            eq(SharedItemTable.sourceId, input.sourceId),
+            eq(SharedItemTable.shareType, "user"),
+          ),
+        );
+
       await db
         .delete(SharedItemTable)
         .where(
@@ -908,6 +922,19 @@ export const albumRouter = router({
             sharedToUserId,
           })),
         );
+      }
+
+      // Invalidate cached access scopes for every recipient whose access
+      // changed — both added and removed — so share changes take effect
+      // immediately instead of after the 60s TTL.
+      const affectedUserIds = new Set<string>(distinctUserIds);
+      for (const row of previousShares) {
+        if (row.userId) {
+          affectedUserIds.add(row.userId);
+        }
+      }
+      for (const affectedUserId of affectedUserIds) {
+        clearScopeCache(affectedUserId);
       }
 
       return { sharedUserIds: distinctUserIds };

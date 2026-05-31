@@ -303,9 +303,50 @@ export class FileWatcherService {
     this.logger.info(`File changed: ${filePath}`);
 
     try {
-      // For now, treat changes similar to additions
-      // In the future, you might want to update file metadata or re-encode
-      await this.handleFileAdded(filePath, userId, rootPath);
+      if (!existsSync(filePath)) {
+        this.logger.warn(`Changed file no longer exists: ${filePath}`);
+        return;
+      }
+
+      const dir = dirname(filePath);
+      const name = basename(filePath);
+
+      const existingFiles = (await trpc.files.getFilesInDir.query(dir)) as Array<{
+        id: string;
+        name: string;
+        dir: string;
+        size: number;
+        contentHash: string | null;
+      }>;
+      const existing = existingFiles.find((f) => f.name === name);
+
+      // Not tracked yet (e.g. created+modified before the add settled) — treat
+      // as a new file.
+      if (!existing) {
+        await this.handleFileAdded(filePath, userId, rootPath);
+        return;
+      }
+
+      // Compare content: a pure touch / metadata-only change keeps the same
+      // hash and needs no reprocessing.
+      let contentHash: string | undefined;
+      try {
+        contentHash = await computeFileHash(filePath);
+      } catch (err) {
+        this.logger.warn(`Failed to compute hash for changed file ${filePath}: ${err}`);
+        return;
+      }
+      if (existing.contentHash && existing.contentHash === contentHash) {
+        return;
+      }
+
+      const stats = statSync(filePath);
+      await trpc.files.refreshChangedFile.mutate({
+        fileId: existing.id,
+        size: stats.size,
+        contentHash,
+      });
+      this.logger.info(`Re-processing changed file: ${filePath}`);
     } catch (error) {
       this.logger.error(`Error processing file change ${filePath}:`, error as Error);
     }

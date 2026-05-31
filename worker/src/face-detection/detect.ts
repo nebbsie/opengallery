@@ -36,6 +36,11 @@ export async function detectFaces(fileId: string): Promise<void> {
   }
 
   try {
+    // Idempotency: drop any faces from a prior (possibly partial) attempt before
+    // re-detecting, so a re-leased task can't duplicate faces or inflate person
+    // counts/centroids (D2).
+    await trpc.faces.clearFacesForFile.mutate({ fileId });
+
     const settings = await trpc.settings.get.query();
     const variantsPath = settings?.variantsPath ?? settings?.uploadPath ?? null;
 

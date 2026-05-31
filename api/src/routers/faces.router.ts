@@ -29,6 +29,7 @@ import {
   router,
 } from "../trpc.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
+import { removeFacesForFiles } from "../utils/file-operations.js";
 
 // Keyset cursor for listPeoplePage: the (flag, faceCount, id) of the last row
 // returned, base64-encoded. Bad/garbled cursors decode to null (treated as the
@@ -393,6 +394,17 @@ export const facesRouter = router({
         .where(eq(PersonTable.id, person!.id));
 
       return { faceId: face!.id, personId: person!.id, isNew: true };
+    }),
+
+  // Clear all faces for a file (and repair their person clusters) so the worker
+  // can re-detect from a clean slate. Makes detection idempotent across retries
+  // — without this, a re-leased detect_faces task re-inserts already-saved faces,
+  // inflating person counts and polluting centroids (D2).
+  clearFacesForFile: internalProcedure
+    .input(z.object({ fileId: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      await removeFacesForFiles([input.fileId]);
+      return { ok: true };
     }),
 
   // Record where the worker wrote a face's cropped avatar image on disk.
