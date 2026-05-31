@@ -219,7 +219,7 @@ const BROWSE_KEYS = [
         (loadMore)="loadMore()"
       >
         <ng-template let-asset>
-          <app-asset-thumbnail [from]="fromPath()" [asset]="asset" />
+          <app-asset-thumbnail [from]="fromPath()" [personId]="id()" [asset]="asset" />
         </ng-template>
       </app-virtual-thumbnail-grid>
     }

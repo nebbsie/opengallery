@@ -437,6 +437,7 @@ export class Asset implements OnDestroy {
   protected readonly cameraMake = this.route.snapshot.queryParamMap.get('cameraMake');
   protected readonly cameraModel = this.route.snapshot.queryParamMap.get('cameraModel');
   protected readonly kind = this.route.snapshot.queryParamMap.get('kind') as 'image' | 'video' | 'all' | null;
+  protected readonly personId = this.route.snapshot.queryParamMap.get('personId');
 
   protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
@@ -470,14 +471,15 @@ export class Asset implements OnDestroy {
       const cameraMake = this.cameraMake ?? undefined;
       const cameraModel = this.cameraModel ?? undefined;
       const kind = this.kind ?? undefined;
+      const personId = this.personId ?? undefined;
 
       const prefetch = async (id: string | null) => {
         if (!id) return;
-        const key = [CacheKey.AssetSingle, id, this.albumId, this.cameraMake, this.cameraModel, this.kind];
+        const key = [CacheKey.AssetSingle, id, this.albumId, this.cameraMake, this.cameraModel, this.kind, this.personId];
         await this.queryClient.prefetchQuery({
           queryKey: key,
           queryFn: () =>
-            this.trpc.files.viewFile.query({ fileId: id, albumId, cameraMake, cameraModel, kind }),
+            this.trpc.files.viewFile.query({ fileId: id, albumId, cameraMake, cameraModel, kind, personId }),
           staleTime: 60_000,
         });
 
@@ -515,7 +517,7 @@ export class Asset implements OnDestroy {
   id = input.required<string>();
 
   file = injectQuery(() => ({
-    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId, this.cameraMake, this.cameraModel, this.kind],
+    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId, this.cameraMake, this.cameraModel, this.kind, this.personId],
     staleTime: Infinity,
     networkMode: 'offlineFirst',
     queryFn: async () =>
@@ -525,6 +527,7 @@ export class Asset implements OnDestroy {
         cameraMake: this.cameraMake ?? undefined,
         cameraModel: this.cameraModel ?? undefined,
         kind: this.kind ?? undefined,
+        personId: this.personId ?? undefined,
       }),
   }));
 
@@ -537,6 +540,7 @@ export class Asset implements OnDestroy {
     if (this.cameraMake) qp['cameraMake'] = this.cameraMake;
     if (this.cameraModel) qp['cameraModel'] = this.cameraModel;
     if (this.kind) qp['kind'] = this.kind;
+    if (this.personId) qp['personId'] = this.personId;
     return Object.keys(qp).length ? qp : null;
   }
 

@@ -230,10 +230,11 @@ export const filesRouter = router({
         cameraMake: z.string().optional(),
         cameraModel: z.string().optional(),
         kind: z.enum(['image', 'video', 'all']).optional(),
+        personId: z.string().uuid().optional(),
       }),
     )
     .query(async ({ input, ctx: { userId, session } }) => {
-      const { fileId, albumId, cameraMake, cameraModel, kind } = input;
+      const { fileId, albumId, cameraMake, cameraModel, kind, personId } = input;
       if (!userId) {
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
@@ -477,6 +478,50 @@ export const filesRouter = router({
             ),
           )
           .orderBy(...galleryOrderBy(cameraSortExpr))
+          .limit(1);
+
+        prevId = prev?.id ?? null;
+        nextId = next?.id ?? null;
+      } else if (personId) {
+        // Person context: same order as getPersonFiles (fileSortExpr DESC).
+        const [prev] = await db
+          .select({ id: FileTable.id })
+          .from(FaceTable)
+          .innerJoin(FileTable, eq(FileTable.id, FaceTable.fileId))
+          .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
+          .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+          .where(
+            and(
+              eq(FaceTable.personId, personId),
+              buildFileAccessFilter(accessScope, FileTable.id),
+              isNull(LibraryFileTable.deletedAt),
+              hasThumbnail,
+              hasOptimised,
+              keysetAfter(fileSortExpr, currentSortValue, currentId),
+            ),
+          )
+          .groupBy(FileTable.id)
+          .orderBy(sql`${fileSortExpr} ASC`, FileTable.id)
+          .limit(1);
+
+        const [next] = await db
+          .select({ id: FileTable.id })
+          .from(FaceTable)
+          .innerJoin(FileTable, eq(FileTable.id, FaceTable.fileId))
+          .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
+          .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+          .where(
+            and(
+              eq(FaceTable.personId, personId),
+              buildFileAccessFilter(accessScope, FileTable.id),
+              isNull(LibraryFileTable.deletedAt),
+              hasThumbnail,
+              hasOptimised,
+              keysetBefore(fileSortExpr, currentSortValue, currentId),
+            ),
+          )
+          .groupBy(FileTable.id)
+          .orderBy(...galleryOrderBy(fileSortExpr))
           .limit(1);
 
         prevId = prev?.id ?? null;
