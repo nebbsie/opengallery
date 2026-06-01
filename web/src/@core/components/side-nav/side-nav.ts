@@ -69,7 +69,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   },
   template: `
     <nav
-      class="group/nav bg-background absolute inset-y-0 left-0 flex w-16 flex-col overflow-hidden border-r transition-[width,box-shadow] duration-200 ease-out hover:w-60 hover:shadow-2xl"
+      class="group/nav glass absolute inset-y-0 left-0 flex w-16 flex-col overflow-hidden border-r transition-[width,box-shadow] duration-200 ease-out hover:w-60 hover:shadow-2xl"
     >
       <!-- Brand -->
       <a routerLink="/" class="flex h-16 shrink-0 items-center">

@@ -41,7 +41,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           @for (camera of cameras.data()!; track camera.make + camera.model) {
             <a
               [routerLink]="['/cameras', camera.make, camera.model]"
-              class="bg-card hover:border-foreground/20 group rounded-xl border p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+              class="glass-card hover:border-foreground/25 group rounded-xl border p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
             >
               <div class="flex items-center gap-3">
                 <div class="bg-muted text-foreground group-hover:bg-foreground group-hover:text-background rounded-xl p-3 transition-colors">

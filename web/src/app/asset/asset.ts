@@ -185,7 +185,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
           <!-- Info panel -->
           <aside
-            class="bg-background w-full overflow-hidden transition-all duration-150 ease-in-out sm:flex-shrink-0"
+            class="glass w-full overflow-hidden transition-all duration-150 ease-in-out sm:flex-shrink-0"
             [ngClass]="
               infoOpen()
                 ? 'h-[50vh] border-t border-border sm:h-full sm:w-80 sm:border-t-0 sm:border-l'
@@ -437,7 +437,7 @@ export class Asset implements OnDestroy {
   // Shared style for media-overlay controls: a translucent dark pill with a
   // white icon so they stay legible over any photo, in light or dark theme.
   protected readonly ctrlBtn =
-    'border-0 bg-black/35 text-white backdrop-blur-sm hover:bg-black/55 hover:text-white';
+    'border-0 bg-black/35 text-white ring-1 ring-white/10 backdrop-blur-md hover:bg-black/55 hover:text-white';
 
   protected readonly trpc = injectTrpc();
   private readonly router = inject(Router);

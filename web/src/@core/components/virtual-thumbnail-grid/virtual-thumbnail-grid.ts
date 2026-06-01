@@ -263,6 +263,12 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
             [style.opacity]="timelineVisible() || timelineHovered() || isDragging() ? 1 : 0.4"
           >
             <div class="relative h-full w-full">
+              <!-- Frosted-glass pill behind the scrubber; intensifies on hover. -->
+              <div
+                class="glass pointer-events-none absolute inset-y-0 left-1/2 w-9 -translate-x-1/2 rounded-full border transition-opacity duration-300"
+                [style.opacity]="timelineHovered() || isDragging() ? 1 : 0"
+                aria-hidden="true"
+              ></div>
               <div
                 class="absolute top-0 bottom-0 left-1/2 w-px -translate-x-1/2 rounded-full bg-white/15"
                 aria-hidden="true"

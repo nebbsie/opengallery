@@ -95,6 +95,42 @@ body {
   height: 100%;
 }
 
+/* Ambient backdrop: faint monochrome glows so translucent "glass" surfaces have
+   something to refract against. Fixed so it stays put while content scrolls. */
+body {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      900px 600px at 12% -8%,
+      color-mix(in oklab, var(--foreground) 8%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      1100px 720px at 108% 6%,
+      color-mix(in oklab, var(--foreground) 6%, transparent),
+      transparent 55%
+    );
+  background-attachment: fixed;
+}
+
+/* Frosted-glass surfaces. Strictly monochrome — translucency over the ambient
+   backdrop (and any photos behind) provides the depth, not colour. */
+@layer components {
+  .glass {
+    background-color: color-mix(in oklab, var(--background) 64%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(125%);
+    backdrop-filter: blur(18px) saturate(125%);
+    border-color: color-mix(in oklab, var(--foreground) 12%, transparent);
+  }
+
+  .glass-card {
+    background-color: color-mix(in oklab, var(--card) 68%, transparent);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
+    backdrop-filter: blur(12px) saturate(120%);
+    border-color: color-mix(in oklab, var(--foreground) 10%, transparent);
+  }
+}
+
 /*Custom Video Player Styles - Required because tailwind alone can not change all the needed styles*/
 
 /* Remove default outline and shadow for Chrome, Safari, Edge */

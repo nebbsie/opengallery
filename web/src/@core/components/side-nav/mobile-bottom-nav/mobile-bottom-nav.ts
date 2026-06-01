@@ -29,8 +29,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
     }),
   ],
   host: {
-    class:
-      'bg-background z-40 flex shrink-0 items-stretch justify-around border-t sm:hidden',
+    class: 'glass z-40 flex shrink-0 items-stretch justify-around border-t sm:hidden',
   },
   template: `
     @for (item of items; track item.path) {

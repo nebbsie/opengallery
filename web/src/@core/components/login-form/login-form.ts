@@ -52,7 +52,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       <div class="mb-6 flex justify-center">
         <app-logo />
       </div>
-      <section class="w-full" hlmCard>
+      <section class="glass-card w-full border shadow-2xl" hlmCard>
         <div hlmCardHeader>
           <h3 hlmCardTitle>Login to your account</h3>
           <p hlmCardDescription>Enter your email below to login to your account</p>
