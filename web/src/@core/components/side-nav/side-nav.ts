@@ -68,19 +68,10 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     '[class.!block]': "sideBarType() === 'settings'",
   },
   template: `
-    <nav
-      class="group/nav glass absolute inset-y-0 left-0 flex w-16 flex-col overflow-hidden border-r transition-[width,box-shadow] duration-200 ease-out hover:w-60 hover:shadow-2xl"
-    >
+    <nav class="glass flex h-full w-16 flex-col overflow-hidden border-r">
       <!-- Brand -->
-      <a routerLink="/" class="flex h-16 shrink-0 items-center">
-        <span class="grid w-16 shrink-0 place-items-center">
-          <app-logo [size]="24" />
-        </span>
-        <span
-          class="text-foreground translate-x-1 text-sm font-semibold tracking-tight whitespace-nowrap opacity-0 transition-all duration-200 group-hover/nav:translate-x-0 group-hover/nav:opacity-100"
-        >
-          Open Gallery
-        </span>
+      <a routerLink="/" class="grid h-16 shrink-0 place-items-center">
+        <app-logo [size]="24" />
       </a>
 
       <!-- Primary navigation -->

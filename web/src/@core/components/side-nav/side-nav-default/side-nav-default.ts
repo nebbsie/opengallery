@@ -9,16 +9,12 @@ interface NavGroup {
 @Component({
   selector: 'app-side-nav-default',
   imports: [NavRailItem],
-  host: { class: 'flex flex-col gap-0.5' },
+  host: { class: 'flex flex-col gap-0.5 px-2' },
   template: `
-    @for (group of groups; track group.label) {
-      <div class="flex h-7 items-center px-4">
-        <span
-          class="text-muted-foreground/70 translate-x-1 text-[10px] font-semibold tracking-wider uppercase opacity-0 transition-all duration-200 group-hover/nav:translate-x-0 group-hover/nav:opacity-100"
-        >
-          {{ group.label }}
-        </span>
-      </div>
+    @for (group of groups; track group.label; let first = $first) {
+      @if (!first) {
+        <hr class="border-border/60 mx-2 my-2" />
+      }
       @for (item of group.items; track item.link) {
         <app-nav-rail-item
           [icon]="item.icon"
