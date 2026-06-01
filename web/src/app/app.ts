@@ -15,17 +15,23 @@ import { UiSettingsService } from '@core/services/ui-settings/ui-settings';
   },
   template: `
     <main class="relative flex min-h-0 flex-1 overflow-hidden">
-      @if (isAuthenticated()) {
+      <!-- The left rail and content padding fall away on immersive routes (the
+           photo viewer) so a single asset can fill the screen edge to edge. -->
+      @if (isAuthenticated() && !isImmersiveRoute()) {
         <app-side-nav />
       }
 
-      <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
+      <div
+        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        [class.p-3]="!isImmersiveRoute()"
+      >
         <router-outlet />
       </div>
     </main>
 
-    <!-- Mobile primary nav lives at the bottom; hidden on sm+ (left rail there). -->
-    @if (isAuthenticated() && !isSettingsRoute()) {
+    <!-- Mobile primary nav lives at the bottom; hidden on sm+ (left rail there)
+         and on settings/immersive routes. -->
+    @if (isAuthenticated() && !isSettingsRoute() && !isImmersiveRoute()) {
       <app-mobile-bottom-nav />
     }
   `,
@@ -47,5 +53,16 @@ export class App {
       startWith(this.router.url.startsWith('/settings')),
     ),
     { initialValue: false },
+  );
+
+  // Immersive routes hide all app chrome so the content fills the viewport. The
+  // single-asset viewer is the only one today.
+  protected readonly isImmersiveRoute = toSignal(
+    this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      map(() => this.router.url.startsWith('/asset/')),
+      startWith(this.router.url.startsWith('/asset/')),
+    ),
+    { initialValue: this.router.url.startsWith('/asset/') },
   );
 }

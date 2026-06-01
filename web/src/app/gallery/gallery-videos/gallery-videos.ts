@@ -8,7 +8,7 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay, lucideVideo } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { Loading } from '@core/components/loading/loading';
+import { ThumbnailGridSkeleton } from '@core/components/thumbnail-grid-skeleton/thumbnail-grid-skeleton';
 import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
@@ -20,11 +20,11 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
       lucideVideo,
     }),
   ],
-  imports: [ErrorAlert, Loading, AssetThumbnail, VirtualThumbnailGrid, NgIcon, HlmIcon],
+  imports: [ErrorAlert, ThumbnailGridSkeleton, AssetThumbnail, VirtualThumbnailGrid, NgIcon, HlmIcon],
   host: { class: 'block h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <app-loading />
+      <app-thumbnail-grid-skeleton />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {

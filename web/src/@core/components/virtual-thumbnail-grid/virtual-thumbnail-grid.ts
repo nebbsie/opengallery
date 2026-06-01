@@ -220,11 +220,13 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
         >
           @if (row.type === 'year-header') {
             <div class="flex h-full items-center px-1">
-              <span class="text-3xl font-bold tracking-tight text-white/70">{{ row.year }}</span>
+              <span class="text-foreground/80 text-2xl font-bold tracking-tight sm:text-3xl">{{
+                row.year
+              }}</span>
             </div>
           } @else if (row.type === 'month-header') {
             <div class="flex h-full items-center px-1">
-              <span class="text-sm font-semibold text-white/50"
+              <span class="text-muted-foreground text-sm font-semibold"
                 >{{ row.monthName }} {{ row.year }}</span
               >
             </div>

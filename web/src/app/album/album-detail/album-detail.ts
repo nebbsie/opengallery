@@ -34,7 +34,7 @@ import type { RouterOutputs } from '@core/services/trpc';
   ],
   providers: [provideIcons({ lucideShare2 })],
   hostDirectives: [BackOnEscapeDirective],
-  host: { class: 'block overflow-y-auto min-h-0 flex-1' },
+  host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (response.isPending() && !response.data()) {
       <app-loading />

@@ -11,7 +11,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
   selector: 'app-camera-detail',
   imports: [ErrorAlert, Loading, AssetThumbnail],
   hostDirectives: [BackOnEscapeDirective],
-  host: { class: 'block overflow-y-auto min-h-0 flex-1' },
+  host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (files.isPending() && !files.data()) {
       <app-loading />

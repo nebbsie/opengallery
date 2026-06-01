@@ -36,8 +36,9 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         />
       }
       <img
-        class="absolute inset-0 h-full w-full object-cover"
+        class="absolute inset-0 h-full w-full object-cover transition-opacity duration-500 ease-out"
         [class.opacity-0]="!imageLoaded()"
+        [class.opacity-100]="imageLoaded()"
         [src]="apiUrl + '/asset/' + _asset.id + '/thumbnail'"
         [alt]="_asset.id"
         width="400"

@@ -7,14 +7,14 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideImages } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { Loading } from '@core/components/loading/loading';
+import { ThumbnailGridSkeleton } from '@core/components/thumbnail-grid-skeleton/thumbnail-grid-skeleton';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-album-all',
   imports: [
     ErrorAlert,
-    Loading,
+    ThumbnailGridSkeleton,
     HlmIcon,
     NgIcon,
     AlbumThumbnail,
@@ -24,7 +24,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (response.isPending() && !response.data()) {
-      <app-loading />
+      <app-thumbnail-grid-skeleton />
     } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error()" />
     } @else {

@@ -52,7 +52,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
     }),
   ],
   host: {
-    class: 'relative block h-full w-full overflow-hidden',
+    class: 'relative block h-full w-full overflow-hidden bg-black',
     '(document:keydown)': 'onKeydown($event)',
   },
   template: `
@@ -67,16 +67,18 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
         aria-hidden="true"
       ></div>
 
-      <div
-        class="absolute z-50 flex w-full items-center p-2 {{
-          backLink ? 'justify-between' : 'justify-end'
-        }}"
-      >
-        @if (backLink) {
-          <a hlmBtn variant="ghost" size="icon" class="{{ ctrlBtn }}" [routerLink]="backLink">
-            <ng-icon hlm name="lucideX" />
-          </a>
-        }
+      <div class="absolute z-50 flex w-full items-center justify-between p-2">
+        <button
+          hlmBtn
+          variant="ghost"
+          size="icon"
+          type="button"
+          class="{{ ctrlBtn }}"
+          title="Close"
+          (click)="close()"
+        >
+          <ng-icon hlm name="lucideX" />
+        </button>
 
         <div class="flex items-center gap-1.5">
           <a
@@ -141,13 +143,13 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                   [src]="apiUrl + '/asset/' + f.id + '/optimised'"
                   alt="Image"
                   draggable="false"
-                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
+                  class="mx-auto block h-full max-h-full w-full max-w-full object-contain"
                 />
               } @else if (f.type === 'video') {
                 <video
                   [src]="apiUrl + '/asset/' + f.id + '/optimised'"
                   [poster]="apiUrl + '/asset/' + f.id + '/thumbnail'"
-                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
+                  class="mx-auto block h-full max-h-full w-full max-w-full object-contain"
                   controls
                   playsInline
                   autoplay
@@ -389,10 +391,6 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                       Import Details
                     </h4>
                     <div class="space-y-3">
-                      <div class="flex items-start justify-between gap-3">
-                        <span class="text-muted-foreground text-xs">Filename</span>
-                        <span class="text-right text-sm font-medium break-words">{{ f.name }}</span>
-                      </div>
                       <div class="flex items-center justify-between gap-3">
                         <span class="text-muted-foreground text-xs">Imported</span>
                         <span class="text-sm">{{ f.createdAt | date: 'MMM d, y · h:mma' }}</span>
@@ -710,10 +708,16 @@ export class Asset implements OnDestroy {
     }
   }
 
+  // Leave the immersive viewer. Prefer the page we came from; otherwise fall
+  // back to the gallery so a directly-opened asset is never a dead end.
+  protected close() {
+    this.router.navigateByUrl(this.backLink ?? '/gallery');
+  }
+
   onKeydown(event: KeyboardEvent) {
-    // Allow quick back navigation with ESC when coming from a page
-    if (this.backLink && event.key === 'Escape') {
-      this.router.navigateByUrl(this.backLink);
+    // ESC always exits the viewer.
+    if (event.key === 'Escape') {
+      this.close();
       return;
     }
     if (!this.file.isSuccess()) return;
