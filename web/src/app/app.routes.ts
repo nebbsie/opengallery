@@ -42,6 +42,12 @@ export const routes: Routes = [
     loadChildren: () => import('./faces/faces.routes').then((r) => r.routes),
   },
   {
+    path: 'years',
+    title: 'Years - Open Gallery',
+    canActivate: [AuthGuard],
+    loadChildren: () => import('./years/years.routes').then((r) => r.routes),
+  },
+  {
     path: 'map',
     title: 'World Map - Open Gallery',
     canActivate: [AuthGuard],

@@ -1,6 +1,8 @@
 import { albumFileRouter } from "./routers/album-file.router.js";
 import { albumRouter } from "./routers/album.router.js";
 import { cameraRouter } from "./routers/camera.router.js";
+import { duplicatesRouter } from "./routers/duplicates.router.js";
+import { yearsRouter } from "./routers/years.router.js";
 import { directoryRouter } from "./routers/directory.router.js";
 import { eventLogRouter } from "./routers/event-log.router.js";
 import { facesRouter } from "./routers/faces.router.js";
@@ -40,7 +42,9 @@ export const appRouter = router({
   uiSettings: uiSettingsRouter,
   queue: queueRouter,
   issues: issuesRouter,
+  duplicates: duplicatesRouter,
   camera: cameraRouter,
+  years: yearsRouter,
 });
 
 export type AppRouter = typeof appRouter;

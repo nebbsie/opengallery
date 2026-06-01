@@ -2,7 +2,6 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { ErrorAlert } from '@core/components/error/error';
-import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { Loading } from '@core/components/loading/loading';
@@ -10,9 +9,9 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-camera-detail',
-  imports: [ErrorAlert, Loading, AssetThumbnail, VirtualThumbnailGrid],
+  imports: [ErrorAlert, Loading, AssetThumbnail],
   hostDirectives: [BackOnEscapeDirective],
-  host: { class: 'flex flex-col h-full' },
+  host: { class: 'block overflow-y-auto min-h-0 flex-1' },
   template: `
     @if (files.isPending() && !files.data()) {
       <app-loading />
@@ -23,23 +22,28 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
         {{ make() }} <span class="text-muted-foreground text-sm">{{ model() }}</span>
       </h1>
 
-      <app-virtual-thumbnail-grid
-        class="min-h-0 flex-1"
-        [items]="allItems()"
-        [hasMore]="files.hasNextPage()"
-        [isLoadingMore]="files.isFetchingNextPage()"
-        [scrollKey]="scrollKey()"
-        (loadMore)="loadMore()"
-      >
-        <ng-template let-asset>
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
+        @for (asset of allItems(); track asset.id) {
           <app-asset-thumbnail
             [from]="fromPath()"
             [asset]="asset"
             [cameraMake]="make()"
             [cameraModel]="model()"
           />
-        </ng-template>
-      </app-virtual-thumbnail-grid>
+        }
+      </div>
+
+      @if (files.hasNextPage()) {
+        <div class="mt-6 flex justify-center">
+          <button
+            (click)="loadMore()"
+            [disabled]="files.isFetchingNextPage()"
+            class="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-6 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            @if (files.isFetchingNextPage()) { Loading... } @else { Load More }
+          </button>
+        </div>
+      }
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,

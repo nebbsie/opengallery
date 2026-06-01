@@ -104,6 +104,24 @@ export const prefetchAlbumsAll: CanActivateFn = async (
   }
 };
 
+export const prefetchYearsAll: CanActivateFn = async (
+  route: ActivatedRouteSnapshot,
+  state: RouterStateSnapshot,
+) => {
+  const queryClient = inject(QueryClient);
+  const trpc = injectTrpc();
+
+  try {
+    await queryClient.prefetchQuery({
+      queryKey: [CacheKey.YearsAll],
+      queryFn: () => trpc.years.getYears.query(),
+    });
+    return true;
+  } catch {
+    return true;
+  }
+};
+
 export const prefetchCamerasAll: CanActivateFn = async (
   route: ActivatedRouteSnapshot,
   state: RouterStateSnapshot,

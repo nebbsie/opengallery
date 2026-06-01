@@ -139,6 +139,24 @@ import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
         hlmTooltipTrigger
         position="right"
         hlmBtn
+        routerLink="/years"
+        flPrefetchRoute
+        routerLinkActive="active"
+        size="icon"
+        #rlaYears="routerLinkActive"
+        [variant]="rlaYears.isActive ? 'menu_active' : 'menu'"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideCalendar" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Years </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
         routerLink="/map"
         flPrefetchRoute
         routerLinkActive="active"

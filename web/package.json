@@ -8,7 +8,6 @@
     "build": "ng build --configuration development",
     "build:prod": "ng build --configuration production",
     "test": "ng test",
-    "serve:ssr": "node dist/opengallery/server/server.mjs",
     "lint": "ng lint"
   },
   "prettier": {
@@ -38,9 +37,7 @@
     "@angular/core": "^20.1.0",
     "@angular/forms": "^20.1.0",
     "@angular/platform-browser": "^20.1.0",
-    "@angular/platform-server": "^20.1.0",
     "@angular/router": "^20.1.0",
-    "@angular/ssr": "^20.1.6",
     "@ng-icons/core": "^29.10.0",
     "@ng-icons/lucide": ">=29.0.0",
     "@opengallery/types": "*",
@@ -56,7 +53,6 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "embla-carousel-angular": ">=19.0.0",
-    "express": "^5.1.0",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "ngx-sonner": ">=3.0.0",
@@ -71,7 +67,6 @@
     "@angular/cli": "^20.1.6",
     "@angular/compiler-cli": "^20.1.0",
     "@spartan-ng/cli": "^0.0.1-alpha.499",
-    "@types/express": "^5.0.1",
     "@types/jasmine": "~5.1.0",
     "@types/node": "^20.17.19",
     "angular-eslint": "20.1.1",

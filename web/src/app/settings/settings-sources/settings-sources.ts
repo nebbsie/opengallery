@@ -158,7 +158,7 @@ export class SettingsSources {
             ? {
                 ...old,
                 paths: old.paths.map((p: MediaSourceSettings['paths'][number]) =>
-                  p.id === ctx?.tempId ? created : p,
+                  p.id === ctx?.tempId ? (created ?? p) : p,
                 ),
               }
             : old,

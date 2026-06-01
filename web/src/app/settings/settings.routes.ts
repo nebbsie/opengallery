@@ -61,6 +61,11 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./settings-storage/settings-storage').then((c) => c.SettingsStorage),
       },
+      {
+        path: 'duplicates',
+        loadComponent: () =>
+          import('./settings-duplicates/settings-duplicates').then((c) => c.SettingsDuplicates),
+      },
     ],
   },
 ];

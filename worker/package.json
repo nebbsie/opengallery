@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "tsc",
-    "start": "tsx watch src/main.ts"
+    "build": "tsc"
   },
   "prettier": {
     "printWidth": 100,

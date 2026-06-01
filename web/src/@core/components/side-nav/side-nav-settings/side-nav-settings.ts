@@ -5,6 +5,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideActivity,
   lucideBadgeAlert,
+  lucideCopy,
   lucideHardDrive,
   lucideListChecks,
   lucideLogs,
@@ -41,6 +42,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       lucideActivity,
       lucideUser,
       lucideMapPin,
+      lucideCopy,
     }),
   ],
   host: {
@@ -254,6 +256,24 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         <ng-icon hlm size="sm" name="lucideActivity" />
       </a>
       <span *brnTooltipContent class="flex items-center"> Storage </span>
+    </hlm-tooltip>
+
+    <hlm-tooltip>
+      <a
+        hlmTooltipTrigger
+        position="right"
+        hlmBtn
+        routerLink="/settings/duplicates"
+        routerLinkActive="active"
+        size="icon"
+        #rlaDuplicates="routerLinkActive"
+        [variant]="rlaDuplicates.isActive ? 'menu_active' : 'menu'"
+        [routerLinkActiveOptions]="{ exact: true }"
+        (click)="handleClicked()"
+      >
+        <ng-icon hlm size="sm" name="lucideCopy" />
+      </a>
+      <span *brnTooltipContent class="flex items-center"> Duplicates </span>
     </hlm-tooltip>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,

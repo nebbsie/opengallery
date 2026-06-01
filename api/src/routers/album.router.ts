@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   buildFileAccessFilter,
@@ -22,6 +23,9 @@ import {
   UserTable,
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
+
+const fvThumb = alias(FileVariantTable, "fv_thumb");
+const fvOpt = alias(FileVariantTable, "fv_opt");
 
 // Albums are hierarchical via parentId (no closure table). These helpers let item
 // counts and cover photos roll up through sub-albums, so a folder-style album with
@@ -311,30 +315,9 @@ export const albumRouter = router({
       }
       const subtreeIdList = [...subtreeIds];
 
-      const hasThumbnail = exists(
-        db
-          .select()
-          .from(FileVariantTable)
-          .where(
-            and(
-              eq(FileVariantTable.originalFileId, FileTable.id),
-              eq(FileVariantTable.type, "thumbnail"),
-            ),
-          ),
-      );
-      const hasOptimised = exists(
-        db
-          .select()
-          .from(FileVariantTable)
-          .where(
-            and(
-              eq(FileVariantTable.originalFileId, FileTable.id),
-              eq(FileVariantTable.type, "optimised"),
-            ),
-          ),
-      );
-
       // Direct (viewable) files per album, summed distinct-per-root below.
+      // JOINs on the unique (original_file_id, type) index are faster than
+      // correlated EXISTS subqueries over the same rows.
       const itemRows = await db
         .select({
           albumId: AlbumFileTable.albumId,
@@ -342,12 +325,18 @@ export const albumRouter = router({
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .innerJoin(
+          fvThumb,
+          and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
+        )
+        .innerJoin(
+          fvOpt,
+          and(eq(fvOpt.originalFileId, FileTable.id), eq(fvOpt.type, "optimised")),
+        )
         .where(
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
-            hasThumbnail,
-            hasOptimised,
           ),
         );
       const directFilesByAlbum = new Map<string, Set<string>>();
@@ -377,12 +366,15 @@ export const albumRouter = router({
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .innerJoin(
+          fvThumb,
+          and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
+        )
         .where(
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
             eq(FileTable.type, "image"),
-            hasThumbnail,
           ),
         )
         .groupBy(AlbumFileTable.albumId);
@@ -594,6 +586,14 @@ export const albumRouter = router({
         .select({ file: FileTable, blurhash: ImageMetadataTable.blurhash })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .innerJoin(
+          fvThumb,
+          and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
+        )
+        .innerJoin(
+          fvOpt,
+          and(eq(fvOpt.originalFileId, FileTable.id), eq(fvOpt.type, "optimised")),
+        )
         .leftJoin(
           ImageMetadataTable,
           eq(ImageMetadataTable.fileId, FileTable.id),
@@ -602,29 +602,6 @@ export const albumRouter = router({
           and(
             eq(AlbumFileTable.albumId, albumId),
             buildFileAccessFilter(accessScope, FileTable.id),
-            // Only include files that have BOTH thumbnail and optimised variants
-            exists(
-              db
-                .select()
-                .from(FileVariantTable)
-                .where(
-                  and(
-                    eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "thumbnail"),
-                  ),
-                ),
-            ),
-            exists(
-              db
-                .select()
-                .from(FileVariantTable)
-                .where(
-                  and(
-                    eq(FileVariantTable.originalFileId, FileTable.id),
-                    eq(FileVariantTable.type, "optimised"),
-                  ),
-                ),
-            ),
           ),
         )
         .orderBy(...galleryOrderBy(fileSortExpr));
@@ -639,29 +616,6 @@ export const albumRouter = router({
       );
       const subtreeIdList = collectSubtree(albumId, childrenByParent);
 
-      const hasThumbnail = exists(
-        db
-          .select()
-          .from(FileVariantTable)
-          .where(
-            and(
-              eq(FileVariantTable.originalFileId, FileTable.id),
-              eq(FileVariantTable.type, "thumbnail"),
-            ),
-          ),
-      );
-      const hasOptimised = exists(
-        db
-          .select()
-          .from(FileVariantTable)
-          .where(
-            and(
-              eq(FileVariantTable.originalFileId, FileTable.id),
-              eq(FileVariantTable.type, "optimised"),
-            ),
-          ),
-      );
-
       const subtreeItemRows = await db
         .select({
           albumId: AlbumFileTable.albumId,
@@ -669,12 +623,18 @@ export const albumRouter = router({
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .innerJoin(
+          fvThumb,
+          and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
+        )
+        .innerJoin(
+          fvOpt,
+          and(eq(fvOpt.originalFileId, FileTable.id), eq(fvOpt.type, "optimised")),
+        )
         .where(
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
-            hasThumbnail,
-            hasOptimised,
           ),
         );
       const directFilesByAlbum = new Map<string, Set<string>>();
@@ -694,12 +654,15 @@ export const albumRouter = router({
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
+        .innerJoin(
+          fvThumb,
+          and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
+        )
         .where(
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
             eq(FileTable.type, "image"),
-            hasThumbnail,
           ),
         )
         .groupBy(AlbumFileTable.albumId);

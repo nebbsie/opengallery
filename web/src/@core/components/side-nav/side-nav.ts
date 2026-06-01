@@ -5,6 +5,7 @@ import { Sidebar } from '@core/services/sidebar/sidebar';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideCalendar,
   lucideCamera,
   lucideFilm,
   lucideImages,
@@ -38,6 +39,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   ],
   providers: [
     provideIcons({
+      lucideCalendar,
       lucideFilm,
       lucideCamera,
       lucideLayoutDashboard,

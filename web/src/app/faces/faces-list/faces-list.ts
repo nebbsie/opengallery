@@ -67,18 +67,13 @@ type PeoplePages = {
     RouterLink,
     FormsModule,
   ],
-  host: { class: 'block h-full overflow-y-auto pb-20 sm:pb-0' },
+  host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (people.isPending()) {
       <app-loading />
     } @else if (people.isError() && !people.data()) {
       <app-error-alert [error]="people.error()" />
     } @else {
-      <div class="mb-6">
-        <h1 class="text-foreground mb-2 text-2xl font-bold">People</h1>
-        <p class="text-muted-foreground text-sm">Name the people in your photos</p>
-      </div>
-
       <!-- Admin-only: clusters that look like the same person split in two.
            Merge folds the source into the named/larger target; "Not the same"
            dismisses the pair so it won't be suggested again. -->

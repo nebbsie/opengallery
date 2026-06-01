@@ -5,7 +5,6 @@ import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail
 import { ErrorAlert } from '@core/components/error/error';
 import { LoadingThumbnail } from '@core/components/loading-thumbnail/loading-thumbnail';
 import { ThumbnailGrid } from '@core/components/thumbnail-grid/thumbnail-grid';
-import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { ShareItem } from '@core/dialogs/share-item/share-item';
 import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { CacheKey } from '@core/services/cache-key.types';
@@ -17,6 +16,7 @@ import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
+import type { RouterOutputs } from '@core/services/trpc';
 
 @Component({
   selector: 'app-album-detail',
@@ -27,7 +27,6 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     AlbumThumbnail,
     ThumbnailGrid,
     AlbumToolbar,
-    VirtualThumbnailGrid,
     LoadingThumbnail,
     HlmButton,
     HlmIcon,
@@ -35,12 +34,12 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   ],
   providers: [provideIcons({ lucideShare2 })],
   hostDirectives: [BackOnEscapeDirective],
-  host: { class: 'flex flex-col h-full' },
+  host: { class: 'block overflow-y-auto min-h-0 flex-1' },
   template: `
     @if (response.isPending() && !response.data()) {
       <app-loading />
     } @else if (response.isError() && !response.data()) {
-      <app-error-alert [error]="response.error()" />
+      <app-error-alert [error]="response.error() ?? undefined" />
     } @else {
       @let data = response.data()!;
 
@@ -73,8 +72,8 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <p class="mb-4 text-sm">Items</p>
         }
 
-        <app-virtual-thumbnail-grid class="min-h-0 flex-1" [items]="allItems()">
-          <ng-template let-item>
+        <div class="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
+          @for (item of allItems(); track item.id) {
             @if (item.loading) {
               <app-loading-thumbnail />
             } @else {
@@ -84,8 +83,8 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
                 [albumId]="data.album.id"
               />
             }
-          </ng-template>
-        </app-virtual-thumbnail-grid>
+          }
+        </div>
       }
     }
   `,
@@ -102,7 +101,7 @@ export class AlbumDetail {
     // Only poll while an import is in flight; a settled album is static, so
     // there's nothing to refresh. This stops the album view from re-running
     // the (expensive) full-file-list query 720×/hour when nothing is importing.
-    refetchInterval: (query) =>
+    refetchInterval: (query: { state: { data?: RouterOutputs['album']['getAlbumInfo'] } }) =>
       (query.state.data?.album?.pendingTasks ?? 0) > 0 ? 5000 : false,
     staleTime: 5000,
   }));

@@ -28,12 +28,7 @@ type LocationPoint = { lat: number; lon: number; count: number };
     @if (error()) {
       <app-error-alert [error]="error()" />
     } @else {
-      <div class="mb-6">
-        <h1 class="text-foreground mb-2 text-2xl font-bold">World Map</h1>
-        <p class="text-muted-foreground text-sm">Browse photos by location around the world</p>
-      </div>
-
-      <div class="relative h-[calc(100vh-12rem)] w-full">
+      <div class="relative h-[calc(100vh-8rem)] w-full">
         <div #mapContainer class="h-full w-full rounded-lg border"></div>
 
         @if (loading()) {

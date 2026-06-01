@@ -13,18 +13,13 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   selector: 'app-cameras-list',
   providers: [provideIcons({ lucideCamera })],
   imports: [ErrorAlert, Loading, NgIcon, HlmIcon, RouterLink],
-  host: { class: 'block h-full overflow-y-auto pb-20 sm:pb-0' },
+  host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (cameras.isPending() && !cameras.data()) {
       <app-loading />
     } @else if (cameras.isError() && !cameras.data()) {
       <app-error-alert [error]="cameras.error()" />
     } @else {
-      <div class="mb-6">
-        <h1 class="text-foreground mb-2 text-2xl font-bold">Cameras</h1>
-        <p class="text-muted-foreground text-sm">Browse photos by camera that captured them</p>
-      </div>
-
       @if (cameras.data()!.length === 0) {
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideCamera" class="mb-4" />

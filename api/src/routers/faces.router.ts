@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { and, desc, eq, exists, inArray, isNull, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, exists, gt, inArray, isNull, notExists, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   buildFileAccessFilter,
@@ -794,7 +794,14 @@ export const facesRouter = router({
           centroid: PersonTable.centroid,
         })
         .from(PersonTable)
-        .where(inArray(PersonTable.libraryId, libIds));
+        .where(
+          and(
+            inArray(PersonTable.libraryId, libIds),
+            gt(PersonTable.faceCount, 0),
+          ),
+        )
+        .orderBy(desc(PersonTable.faceCount))
+        .limit(SUGGEST_MAX_PEOPLE_PER_LIBRARY * libIds.length);
 
       const dismissedRows = await db
         .select({
@@ -858,28 +865,43 @@ export const facesRouter = router({
       // Phase 2: confirm against the clusters' actual stored faces, not just
       // their mean centroids — the strongest cross-pair member match must clear
       // the same floor a live face needs to join a cluster.
+      // Batch all face lookups into one query instead of 2 per candidate.
+      const candidatePersonIds = [
+        ...new Set(top.flatMap((c) => [c.a.id, c.b.id])),
+      ];
+      // Window function caps MAX_CONFIRM_MEMBERS per person in SQL so we don't
+      // pull the entire face table for popular clusters.
+      const placeholders = candidatePersonIds.map(() => "?").join(", ");
+      const rawFaceRows = db.$client
+        .prepare(
+          `SELECT person_id AS personId, embedding
+           FROM (
+             SELECT person_id, embedding,
+                    ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY created_at DESC) AS rn
+             FROM face
+             WHERE person_id IN (${placeholders})
+           )
+           WHERE rn <= ?`,
+        )
+        .all(...candidatePersonIds, MAX_CONFIRM_MEMBERS) as Array<{
+        personId: string;
+        embedding: string | null;
+      }>;
+
+      const facesByPerson = new Map<string, number[][]>();
+      for (const row of rawFaceRows) {
+        const arr = facesByPerson.get(row.personId) ?? [];
+        const e = parseEmbedding(row.embedding);
+        if (e) {
+          arr.push(e);
+          facesByPerson.set(row.personId, arr);
+        }
+      }
+
       const confirmed: Cand[] = [];
       for (const c of top) {
-        const [am, bm] = await Promise.all([
-          db
-            .select({ embedding: FaceTable.embedding })
-            .from(FaceTable)
-            .where(eq(FaceTable.personId, c.a.id))
-            .orderBy(desc(FaceTable.createdAt))
-            .limit(MAX_CONFIRM_MEMBERS),
-          db
-            .select({ embedding: FaceTable.embedding })
-            .from(FaceTable)
-            .where(eq(FaceTable.personId, c.b.id))
-            .orderBy(desc(FaceTable.createdAt))
-            .limit(MAX_CONFIRM_MEMBERS),
-        ]);
-        const ae = am
-          .map((m) => parseEmbedding(m.embedding))
-          .filter((x): x is number[] => !!x);
-        const be = bm
-          .map((m) => parseEmbedding(m.embedding))
-          .filter((x): x is number[] => !!x);
+        const ae = facesByPerson.get(c.a.id) ?? [];
+        const be = facesByPerson.get(c.b.id) ?? [];
         let bestMember = -1;
         for (const x of ae) {
           for (const y of be) {

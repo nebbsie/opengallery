@@ -25,4 +25,8 @@ export const CacheKey = {
   TimelineAll: 'timeline-all',
   TimelinePhotos: 'timeline-photos',
   TimelineVideos: 'timeline-videos',
+  DuplicatesAll: 'duplicates-all',
+  YearsAll: 'years-all',
+  YearSingle: 'year-single',
+  YearTimeline: 'year-timeline',
 };

@@ -20,5 +20,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -t "$IMAGE" \
   -f Dockerfile.unified --push .
 
+echo "Pruning BuildKit cache (keeping last 10GB)..."
+docker buildx prune --keep-storage 10gb -f
+
 echo "Done. Image pushed:"
 echo "$IMAGE"

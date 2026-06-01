@@ -282,6 +282,23 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
                 ></div>
               }
 
+              <!-- Month dots: one per month, shown when the parent opts in (e.g. single-year view). -->
+              @if (showMonthDots()) {
+                @for (dot of monthDotsData(); track dot.year + '-' + dot.month) {
+                  <button
+                    type="button"
+                    class="absolute left-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-150"
+                    [style.top.%]="dot.position"
+                    [ngClass]="
+                      dot.year === activeTimelineMarker()?.year && dot.monthName === activeTimelineMarker()?.month
+                        ? 'bg-white scale-125'
+                        : 'bg-white/40 hover:bg-white/80 hover:scale-110'
+                    "
+                    (click)="jumpToTimelineMonth(dot); $event.stopPropagation()"
+                  ></button>
+                }
+              }
+
               @for (marker of displayedYearMarkers(); track marker.year) {
                 <button
                   type="button"
@@ -349,6 +366,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   pageCount = input(0);
   dateAccessor = input<(item: T) => Date | string | null | undefined>(() => null);
   timelineData = input<TimelineData | null>(null);
+  showMonthDots = input(false);
   rowHeightExtra = input(0); // Extra height for content below thumbnail (e.g., album name)
 
   @Output() loadMore = new EventEmitter<void>();
@@ -686,6 +704,12 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   protected readonly yearTicks = computed(() =>
     this.yearMarkers().map((m) => ({ position: m.position })),
   );
+
+  protected readonly monthDotsData = computed(() => {
+    const { months, monthPositions, total } = this.timelineLogScale();
+    if (!months.length || !total) return [] as { position: number; year: number; month: number; monthName: string; offset: number; count: number }[];
+    return months.map((m, i) => ({ position: monthPositions[i], year: m.year, month: m.month, monthName: m.monthName, offset: m.offset, count: m.count }));
+  });
 
   /** Year labels, thinned so they never overlap regardless of how many years
    *  the library spans. Always keeps the first and last year; drops interior

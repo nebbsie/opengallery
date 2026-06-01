@@ -121,24 +121,39 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
       @let f = data.file;
       <div class="mx-auto h-full w-full">
         <div class="flex h-full flex-col sm:flex-row sm:items-stretch">
-          <!-- Media area -->
-          <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden">
-            @if (f.type === 'image') {
-              <img
-                [src]="apiUrl + '/asset/' + f.id + '/optimised'"
-                alt="Image"
-                class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
-              />
-            } @else if (f.type === 'video') {
-              <video
-                [src]="apiUrl + '/asset/' + f.id + '/optimised'"
-                [poster]="apiUrl + '/asset/' + f.id + '/thumbnail'"
-                class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
-                controls
-                playsInline
-                autoplay
-              ></video>
-            }
+          <!-- Media area. Touch handlers drive swipe navigation on mobile:
+               drag horizontally and release past a threshold to move to the
+               prev/next asset; short drags snap back. -->
+          <div
+            class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+            (touchstart)="onTouchStart($event)"
+            (touchmove)="onTouchMove($event)"
+            (touchend)="onTouchEnd()"
+            (touchcancel)="onTouchEnd()"
+          >
+            <div
+              class="flex h-full w-full items-center justify-center"
+              [style.transform]="dragX() ? 'translateX(' + dragX() + 'px)' : null"
+              [style.transition]="dragging() ? 'none' : 'transform 150ms ease-out'"
+            >
+              @if (f.type === 'image') {
+                <img
+                  [src]="apiUrl + '/asset/' + f.id + '/optimised'"
+                  alt="Image"
+                  draggable="false"
+                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
+                />
+              } @else if (f.type === 'video') {
+                <video
+                  [src]="apiUrl + '/asset/' + f.id + '/optimised'"
+                  [poster]="apiUrl + '/asset/' + f.id + '/thumbnail'"
+                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
+                  controls
+                  playsInline
+                  autoplay
+                ></video>
+              }
+            </div>
 
             @if (data.prevId) {
               <a
@@ -441,6 +456,19 @@ export class Asset implements OnDestroy {
 
   protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
 
+  // Swipe-to-navigate (mobile). `dragX` is the live horizontal offset of the
+  // media while a finger is down; `dragging` disables the snap-back transition
+  // during the drag so the media tracks the finger 1:1.
+  protected readonly dragX = signal(0);
+  protected readonly dragging = signal(false);
+  private touchStartX = 0;
+  private touchStartY = 0;
+  private touchActive = false;
+  // Locks the gesture to one axis after the first few px so a vertical scroll
+  // intent doesn't get hijacked as a horizontal swipe.
+  private axisLock: 'h' | 'v' | null = null;
+  private static readonly SWIPE_THRESHOLD = 60;
+
   private map: L.Map | null = null;
   protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
 
@@ -692,14 +720,88 @@ export class Asset implements OnDestroy {
     const data = this.file.data();
     if (!data) return;
     if (event.key === 'ArrowLeft' && data.prevId) {
-      this.router.navigate(['/asset', data.prevId], {
-        queryParams: this.getNavQueryParams() || undefined,
-      });
+      this.navigateToAsset(data.prevId);
     } else if (event.key === 'ArrowRight' && data.nextId) {
-      this.router.navigate(['/asset', data.nextId], {
-        queryParams: this.getNavQueryParams() || undefined,
-      });
+      this.navigateToAsset(data.nextId);
     }
+  }
+
+  private navigateToAsset(id: string) {
+    this.router.navigate(['/asset', id], {
+      queryParams: this.getNavQueryParams() || undefined,
+    });
+  }
+
+  onTouchStart(event: TouchEvent) {
+    // Ignore multi-touch (pinch-zoom) — only single-finger drags swipe.
+    if (event.touches.length !== 1) {
+      this.touchActive = false;
+      return;
+    }
+    const t = event.touches[0];
+    this.touchStartX = t.clientX;
+    this.touchStartY = t.clientY;
+    this.touchActive = true;
+    this.axisLock = null;
+    this.dragging.set(true);
+  }
+
+  onTouchMove(event: TouchEvent) {
+    if (!this.touchActive || event.touches.length !== 1) return;
+    const t = event.touches[0];
+    const dx = t.clientX - this.touchStartX;
+    const dy = t.clientY - this.touchStartY;
+
+    // Wait for a clear intent, then lock to the dominant axis. A vertical lock
+    // bows out so the page can scroll normally.
+    if (this.axisLock === null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      this.axisLock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (this.axisLock === 'v') {
+        this.touchActive = false;
+        this.dragging.set(false);
+        return;
+      }
+    }
+
+    // Add rubber-band resistance at the ends where there's nowhere to go.
+    const data = this.file.data();
+    const atEnd = (dx > 0 && !data?.prevId) || (dx < 0 && !data?.nextId);
+    this.dragX.set(atEnd ? dx * 0.3 : dx);
+    // We've committed to a horizontal swipe; stop the browser treating it as a
+    // scroll or back-gesture.
+    event.preventDefault();
+  }
+
+  onTouchEnd() {
+    if (!this.touchActive) {
+      // Vertical/multi-touch gesture or no drag — make sure we're reset.
+      this.dragging.set(false);
+      this.dragX.set(0);
+      return;
+    }
+    this.touchActive = false;
+
+    const dx = this.dragX();
+    const data = this.file.data();
+    if (dx <= -Asset.SWIPE_THRESHOLD && data?.nextId) {
+      this.commitSwipe(data.nextId);
+    } else if (dx >= Asset.SWIPE_THRESHOLD && data?.prevId) {
+      this.commitSwipe(data.prevId);
+    } else {
+      // Not far enough — animate back to centre.
+      this.dragging.set(false);
+      this.dragX.set(0);
+    }
+  }
+
+  // Snap the offset away without an animation, then route to the target. The
+  // component instance is reused across asset routes, so resetting here keeps
+  // the incoming media centred rather than sliding in from the old offset.
+  private commitSwipe(id: string) {
+    this.dragging.set(true);
+    this.dragX.set(0);
+    this.navigateToAsset(id);
   }
 
   ngOnDestroy(): void {

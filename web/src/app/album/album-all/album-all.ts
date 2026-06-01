@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { AlbumThumbnail } from '@core/components/album-thumbnail/album-thumbnail';
-import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { ErrorAlert } from '@core/components/error/error';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
@@ -19,7 +18,6 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     HlmIcon,
     NgIcon,
     AlbumThumbnail,
-    AlbumToolbar,
     VirtualThumbnailGrid,
   ],
   providers: [provideIcons({ lucideImages })],
@@ -30,13 +28,6 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error()" />
     } @else {
-      <div class="mb-6">
-        <h1 class="text-foreground mb-2 text-2xl font-bold">Albums</h1>
-        <p class="text-muted-foreground text-sm">Browse photos by album</p>
-      </div>
-
-      <app-album-toolbar [items]="[]" />
-
       @if (response.data()!.length === 0) {
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideImages" class="mb-4" />

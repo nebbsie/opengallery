@@ -19,25 +19,22 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <div class="mb-6 shrink-0">
-        <h1 class="text-foreground mb-2 text-2xl font-bold">Location</h1>
-        <p class="text-muted-foreground text-sm">
-          {{ latNum().toFixed(4) }}, {{ lonNum().toFixed(4) }}
-        </p>
-        <a routerLink="/map" class="text-primary hover:text-primary/80 text-sm underline">
-          ← Back to World Map
-        </a>
-      </div>
-
-      <div class="mb-4">
-        @if (totalCount() > 0) {
+      <div class="flex flex-1 overflow-y-auto">
+        <div class="w-full">
+        <div class="mb-4">
           <p class="text-muted-foreground text-sm">
+            {{ latNum().toFixed(4) }}, {{ lonNum().toFixed(4) }}
+          </p>
+          <a routerLink="/map" class="text-primary hover:text-primary/80 text-sm underline">
+            ← Back to World Map
+          </a>
+        </div>
+
+        @if (totalCount() > 0) {
+          <p class="text-muted-foreground mb-4 text-sm">
             {{ totalCount() }} photos at this location
           </p>
         }
-      </div>
-
-      <div class="flex flex-1 overflow-y-auto pb-20 sm:pb-0">
         @if (allItems().length > 0) {
           <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             @for (asset of allItems(); track asset.id) {
@@ -67,6 +64,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
             <p>No photos found at this location</p>
           </div>
         }
+        </div>
       </div>
     }
   `,
