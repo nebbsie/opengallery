@@ -1,182 +1,58 @@
 import { ChangeDetectionStrategy, Component, output } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
-import { PrefetchRouteDirective } from '@core/directives/prefetch-route/prefetch-route.directive';
-import { NgIcon } from '@ng-icons/core';
-import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
-import { HlmButton } from '@spartan-ng/helm/button';
-import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
+import { NavRailItem } from '@core/components/side-nav/nav-rail-item/nav-rail-item';
+
+interface NavGroup {
+  label: string;
+  items: { icon: string; label: string; link: string; exact?: boolean }[];
+}
 
 @Component({
   selector: 'app-side-nav-default',
-  imports: [
-    HlmButton,
-    HlmIcon,
-    NgIcon,
-    PrefetchRouteDirective,
-    RouterLink,
-    RouterLinkActive,
-    HlmTooltipImports,
-    BrnTooltipImports,
-  ],
-  host: {
-    class: 'flex flex-col gap-1',
-  },
+  imports: [NavRailItem],
+  host: { class: 'flex flex-col gap-0.5' },
   template: `
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/gallery"
-        flPrefetchRoute
-        routerLinkActive="active"
-        #rlaAll="routerLinkActive"
-        size="icon"
-        [variant]="rlaAll.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideLayoutDashboard" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> All </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/gallery/photos"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaPhotos="routerLinkActive"
-        [variant]="rlaPhotos.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideCamera" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Photos </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/gallery/videos"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaVideos="routerLinkActive"
-        [variant]="rlaVideos.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideFilm" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Videos </span>
-    </hlm-tooltip>
-
-    <hr class="my-2" />
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/cameras"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaCameras="routerLinkActive"
-        [variant]="rlaCameras.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideCamera" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Cameras </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/faces"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaFaces="routerLinkActive"
-        [variant]="rlaFaces.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideUsers" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> People </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/albums"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaAlbums="routerLinkActive"
-        [variant]="rlaAlbums.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideImages" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Albums </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/years"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaYears="routerLinkActive"
-        [variant]="rlaYears.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideCalendar" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Years </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/map"
-        flPrefetchRoute
-        routerLinkActive="active"
-        size="icon"
-        #rlaWorldMap="routerLinkActive"
-        [variant]="rlaWorldMap.isActive ? 'menu_active' : 'menu'"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideMap" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> World Map </span>
-    </hlm-tooltip>
+    @for (group of groups; track group.label) {
+      <div class="flex h-7 items-center px-4">
+        <span
+          class="text-muted-foreground/70 translate-x-1 text-[10px] font-semibold tracking-wider uppercase opacity-0 transition-all duration-200 group-hover/nav:translate-x-0 group-hover/nav:opacity-100"
+        >
+          {{ group.label }}
+        </span>
+      </div>
+      @for (item of group.items; track item.link) {
+        <app-nav-rail-item
+          [icon]="item.icon"
+          [label]="item.label"
+          [link]="item.link"
+          [exact]="item.exact ?? false"
+          (clicked)="clicked.emit()"
+        />
+      }
+    }
   `,
-
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class SideNavDefault {
   clicked = output<void>();
 
-  handleClicked() {
-    this.clicked.emit();
-  }
+  protected readonly groups: NavGroup[] = [
+    {
+      label: 'Library',
+      items: [
+        { icon: 'lucideLayoutDashboard', label: 'All', link: '/gallery', exact: true },
+        { icon: 'lucideImage', label: 'Photos', link: '/gallery/photos' },
+        { icon: 'lucideFilm', label: 'Videos', link: '/gallery/videos' },
+      ],
+    },
+    {
+      label: 'Browse',
+      items: [
+        { icon: 'lucideUsers', label: 'People', link: '/faces' },
+        { icon: 'lucideImages', label: 'Albums', link: '/albums' },
+        { icon: 'lucideCalendar', label: 'Years', link: '/years' },
+        { icon: 'lucideCamera', label: 'Cameras', link: '/cameras' },
+        { icon: 'lucideMap', label: 'World Map', link: '/map' },
+      ],
+    },
+  ];
 }

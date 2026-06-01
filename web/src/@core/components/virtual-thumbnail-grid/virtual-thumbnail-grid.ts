@@ -25,6 +25,12 @@ import {
 } from '@angular/core';
 import { ScrollPosition } from '@core/services/scroll-position/scroll-position';
 import { Subject } from 'rxjs';
+import {
+  GRID_GAP_PX,
+  MONTH_HEADER_HEIGHT as MONTH_HEADER_HEIGHT_PX,
+  YEAR_HEADER_HEIGHT as YEAR_HEADER_HEIGHT_PX,
+  gridColumnsForWidth,
+} from './grid-columns';
 
 export interface TimelineMonth {
   year: number;
@@ -42,8 +48,8 @@ export type GridRow<T> =
   | { type: 'year-header'; year: number }
   | { type: 'month-header'; year: number; month: number; monthName: string };
 
-const YEAR_HEADER_HEIGHT = 52;
-const MONTH_HEADER_HEIGHT = 36;
+const YEAR_HEADER_HEIGHT = YEAR_HEADER_HEIGHT_PX;
+const MONTH_HEADER_HEIGHT = MONTH_HEADER_HEIGHT_PX;
 
 class GridVirtualScrollStrategy implements VirtualScrollStrategy {
   private readonly _scrolledIndexChange = new Subject<number>();
@@ -473,22 +479,16 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     });
   }
 
-  columns = computed(() => {
-    const w = this.width();
-    const min = w < 640 ? 100 : w < 1024 ? 160 : 200;
-    const cols = Math.max(1, Math.floor(w / min));
-    return cols;
-  });
+  columns = computed(() => gridColumnsForWidth(this.width()));
 
   gridTemplateColumns = computed(() => `repeat(${this.columns()}, 1fr)`);
 
-  // Assume square tiles; include gap (approx 8px) for row height
+  // Assume square tiles; include gap for row height
   rowHeight = computed(() => {
     const w = this.width();
     const cols = this.columns();
-    const gap = 8; // tailwind gap-2
-    const tile = Math.floor((w - (cols - 1) * gap) / cols);
-    return Math.max(120, tile) + gap + this.rowHeightExtra(); // include gap to avoid overlap
+    const tile = Math.floor((w - (cols - 1) * GRID_GAP_PX) / cols);
+    return Math.max(120, tile) + GRID_GAP_PX + this.rowHeightExtra(); // include gap to avoid overlap
   });
 
   readonly gridRows = computed((): GridRow<T>[] => {

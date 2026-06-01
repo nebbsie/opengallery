@@ -22,6 +22,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   template: `
     @let _asset = asset();
     <a
+      class="group block h-full w-full"
       [routerLink]="['/asset', _asset.id]"
       [queryParams]="queryParams()"
       (mouseenter)="onHover()"
@@ -36,7 +37,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         />
       }
       <img
-        class="absolute inset-0 h-full w-full object-cover transition-opacity duration-500 ease-out"
+        class="absolute inset-0 h-full w-full object-cover transition-[opacity,transform] duration-500 ease-out group-hover:scale-[1.06]"
         [class.opacity-0]="!imageLoaded()"
         [class.opacity-100]="imageLoaded()"
         [src]="apiUrl + '/asset/' + _asset.id + '/thumbnail'"

@@ -24,7 +24,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (response.isPending() && !response.data()) {
-      <app-thumbnail-grid-skeleton />
+      <app-thumbnail-grid-skeleton [headers]="false" [labelled]="true" />
     } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error()" />
     } @else {

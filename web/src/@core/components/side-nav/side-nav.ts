@@ -1,119 +1,114 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { RouterLink } from '@angular/router';
+import { Logo } from '@core/components/logo/logo';
+import { NavRailItem } from '@core/components/side-nav/nav-rail-item/nav-rail-item';
 import { SideNavDefault } from '@core/components/side-nav/side-nav-default/side-nav-default';
 import { SideNavSettings } from '@core/components/side-nav/side-nav-settings/side-nav-settings';
 import { Sidebar } from '@core/services/sidebar/sidebar';
 import { injectTrpc } from '@core/services/trpc';
-import { NgIcon, provideIcons } from '@ng-icons/core';
+import { provideIcons } from '@ng-icons/core';
 import {
+  lucideActivity,
+  lucideBadgeAlert,
   lucideCalendar,
   lucideCamera,
+  lucideChevronLeft,
+  lucideCopy,
+  lucideDatabase,
   lucideFilm,
+  lucideHardDrive,
+  lucideImage,
   lucideImages,
   lucideLayoutDashboard,
+  lucideListChecks,
+  lucideLogs,
   lucideMap,
+  lucideMapPin,
+  lucideMonitor,
+  lucideScanFace,
   lucideSettings,
-  lucideChevronLeft,
-  lucideMenu,
+  lucideUser,
   lucideUsers,
 } from '@ng-icons/lucide';
-import { HlmButton } from '@spartan-ng/helm/button';
-import { HlmIcon } from '@spartan-ng/helm/icon';
-import { RouterLink } from '@angular/router';
-import { Logo } from '@core/components/logo/logo';
-import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
-import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-side-nav',
-  imports: [
-    SideNavDefault,
-    SideNavSettings,
-    HlmButton,
-    HlmIcon,
-    NgIcon,
-    RouterLink,
-    Logo,
-    HlmTooltipImports,
-    BrnTooltipImports,
-  ],
+  imports: [SideNavDefault, SideNavSettings, NavRailItem, Logo, RouterLink],
   providers: [
     provideIcons({
-      lucideCalendar,
-      lucideFilm,
-      lucideCamera,
       lucideLayoutDashboard,
+      lucideImage,
+      lucideFilm,
+      lucideUsers,
       lucideImages,
+      lucideCalendar,
+      lucideCamera,
       lucideMap,
+      lucideUser,
+      lucideMonitor,
+      lucideHardDrive,
+      lucideActivity,
+      lucideScanFace,
+      lucideMapPin,
+      lucideDatabase,
+      lucideCopy,
+      lucideListChecks,
+      lucideBadgeAlert,
+      lucideLogs,
       lucideSettings,
       lucideChevronLeft,
-      lucideMenu,
-      lucideUsers,
     }),
   ],
+  // Fixed-width gutter in the layout flow (so content never reflows); the panel
+  // inside expands on hover as an overlay. Hidden on mobile for the default
+  // context (bottom nav takes over) but forced visible for the settings sub-nav.
   host: {
-    // The left rail is hidden on mobile for the default context (the bottom nav
-    // takes over there) but stays visible on mobile for the settings sub-nav.
-    // `!flex` forces it back on (overriding `hidden`) when in settings.
-    class:
-      'hidden sm:flex flex-col w-full h-full border-r items-center overflow-hidden max-w-[50px] sm:max-w-[64px]',
-    '[class.!flex]': "sideBarType() === 'settings'",
+    class: 'relative z-50 hidden h-full w-16 shrink-0 sm:block',
+    '[class.!block]': "sideBarType() === 'settings'",
   },
   template: `
-    <div class="flex items-center justify-center p-3 pt-4">
-      <a routerLink="/">
-        <app-logo [size]="20" />
+    <nav
+      class="group/nav bg-background absolute inset-y-0 left-0 flex w-16 flex-col overflow-hidden border-r transition-[width,box-shadow] duration-200 ease-out hover:w-60 hover:shadow-2xl"
+    >
+      <!-- Brand -->
+      <a routerLink="/" class="flex h-16 shrink-0 items-center">
+        <span class="grid w-16 shrink-0 place-items-center">
+          <app-logo [size]="24" />
+        </span>
+        <span
+          class="text-foreground translate-x-1 text-sm font-semibold tracking-tight whitespace-nowrap opacity-0 transition-all duration-200 group-hover/nav:translate-x-0 group-hover/nav:opacity-100"
+        >
+          Open Gallery
+        </span>
       </a>
-    </div>
 
-    <div class="flex min-h-0 flex-1 flex-col p-3">
-      @switch (sideBarType()) {
-        @case ('settings') {
-          <app-side-nav-settings />
-          <hlm-tooltip>
-            <a
-              class="mt-auto"
-              hlmBtn
-              hlmTooltipTrigger
-              position="right"
-              size="icon"
-              routerLink="/"
-              [variant]="'menu'"
-            >
-              <ng-icon hlm size="sm" name="lucideChevronLeft" />
-            </a>
-
-            <span *brnTooltipContent class="flex items-center"> Back </span>
-          </hlm-tooltip>
+      <!-- Primary navigation -->
+      <div class="flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto pb-2">
+        @switch (sideBarType()) {
+          @case ('settings') {
+            <app-side-nav-settings />
+          }
+          @default {
+            <app-side-nav-default />
+          }
         }
-        @default {
-          <app-side-nav-default />
+      </div>
 
-          <hlm-tooltip>
-            <a
-              class="mt-auto"
-              hlmTooltipTrigger
-              hlmBtn
-              position="right"
-              size="icon"
-              routerLink="/settings"
-              [variant]="'menu'"
-            >
-              <div class="relative">
-                <ng-icon hlm size="sm" name="lucideSettings" />
-                @if (hasPendingWork()) {
-                  <span class="absolute -right-1 -top-1 h-2 w-2 animate-pulse rounded-full bg-blue-500"></span>
-                }
-              </div>
-            </a>
-
-            <span *brnTooltipContent class="flex items-center">
-              Settings @if (hasPendingWork()) { · encoding }
-            </span>
-          </hlm-tooltip>
+      <!-- Footer action -->
+      <div class="shrink-0 border-t px-2 py-2">
+        @if (sideBarType() === 'settings') {
+          <app-nav-rail-item icon="lucideChevronLeft" label="Back to Gallery" link="/" />
+        } @else {
+          <app-nav-rail-item
+            icon="lucideSettings"
+            label="Settings"
+            link="/settings"
+            [badge]="pendingCount()"
+          />
         }
-      }
-    </div>
+      </div>
+    </nav>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -129,5 +124,5 @@ export class SideNav {
     refetchInterval: 10_000,
   }));
 
-  hasPendingWork = computed(() => (this.queueCounts.data()?.totalPending ?? 0) > 0);
+  protected readonly pendingCount = computed(() => this.queueCounts.data()?.totalPending ?? 0);
 }

@@ -28,7 +28,6 @@ import {
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
-import { Loading } from '@core/components/loading/loading';
 import {
   injectInfiniteQuery,
   injectMutation,
@@ -57,20 +56,19 @@ type PeoplePages = {
       lucideX,
     }),
   ],
-  imports: [
-    ErrorAlert,
-    Loading,
-    NgIcon,
-    HlmIcon,
-    HlmInput,
-    HlmButton,
-    RouterLink,
-    FormsModule,
-  ],
+  imports: [ErrorAlert, NgIcon, HlmIcon, HlmInput, HlmButton, RouterLink, FormsModule],
   host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (people.isPending()) {
-      <app-loading />
+      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        @for (i of skeletonTiles; track i) {
+          <div class="bg-card flex flex-col items-center rounded-lg border p-3">
+            <div class="bg-muted h-28 w-28 animate-pulse rounded-full"></div>
+            <div class="bg-muted mt-3 h-4 w-20 animate-pulse rounded"></div>
+            <div class="bg-muted mt-2 h-3 w-12 animate-pulse rounded"></div>
+          </div>
+        }
+      </div>
     } @else if (people.isError() && !people.data()) {
       <app-error-alert [error]="people.error()" />
     } @else {
@@ -259,6 +257,7 @@ type PeoplePages = {
 })
 export class FacesList {
   protected readonly apiUrl = environment.api.url;
+  protected readonly skeletonTiles = Array.from({ length: 15 }, (_, i) => i);
   private readonly trpc = injectTrpc();
   private readonly queryClient = inject(QueryClient);
   private readonly auth = inject(Auth);

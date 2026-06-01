@@ -11,22 +11,22 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   providers: [provideIcons({ lucideImages, lucideLoader })],
   template: `
     @let _album = album();
-    <a class="flex w-full cursor-pointer flex-col gap-1" [routerLink]="'/albums/' + _album.id">
-      <div class="relative">
+    <a class="group flex w-full cursor-pointer flex-col gap-2" [routerLink]="'/albums/' + _album.id">
+      <div
+        class="ring-border/60 relative aspect-square w-full overflow-hidden rounded-xl shadow-sm ring-1 transition-all duration-300 group-hover:shadow-lg group-hover:ring-foreground/20"
+      >
         @if (_album.cover) {
           <img
             [src]="apiUrl + '/asset/' + _album.cover + '/thumbnail'"
             alt="Album cover"
-            class="aspect-square w-full rounded-lg object-cover"
+            class="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.04]"
           />
         } @else {
           <div
-            class="relative aspect-square w-full rounded-lg bg-[var(--secondary)] ring-1 ring-[var(--border)]"
+            class="grid h-full w-full place-items-center bg-gradient-to-br from-secondary to-muted"
           >
-            <div class="absolute inset-0 grid place-items-center">
-              <div class="flex items-center justify-center rounded-full bg-[var(--muted)] p-4">
-                <ng-icon hlm name="lucideImages" class="size-10 text-[var(--muted-foreground)]" />
-              </div>
+            <div class="bg-background/40 flex items-center justify-center rounded-full p-4 backdrop-blur-sm">
+              <ng-icon hlm name="lucideImages" class="text-muted-foreground size-9" />
             </div>
           </div>
         }
@@ -41,11 +41,11 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         }
       </div>
 
-      <div class="flex flex-col px-2">
-        <p class="line-clamp-2 text-sm font-bold break-all">
+      <div class="flex flex-col px-1">
+        <p class="text-foreground line-clamp-2 text-sm font-semibold break-all">
           {{ _album.name }}
         </p>
-        <p class="text-xs font-light">{{ _album.items ?? 0 }} items</p>
+        <p class="text-muted-foreground text-xs">{{ _album.items ?? 0 }} items</p>
       </div>
     </a>
   `,

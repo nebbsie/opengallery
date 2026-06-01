@@ -6,17 +6,27 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCamera } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { Loading } from '@core/components/loading/loading';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-cameras-list',
   providers: [provideIcons({ lucideCamera })],
-  imports: [ErrorAlert, Loading, NgIcon, HlmIcon, RouterLink],
+  imports: [ErrorAlert, NgIcon, HlmIcon, RouterLink],
   host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (cameras.isPending() && !cameras.data()) {
-      <app-loading />
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        @for (i of skeletonTiles; track i) {
+          <div class="bg-card flex items-center gap-3 rounded-xl border p-4 shadow-sm">
+            <div class="bg-muted h-12 w-12 shrink-0 animate-pulse rounded-xl"></div>
+            <div class="min-w-0 flex-1 space-y-2">
+              <div class="bg-muted h-4 w-2/3 animate-pulse rounded"></div>
+              <div class="bg-muted h-3 w-1/2 animate-pulse rounded"></div>
+              <div class="bg-muted h-3 w-1/4 animate-pulse rounded"></div>
+            </div>
+          </div>
+        }
+      </div>
     } @else if (cameras.isError() && !cameras.data()) {
       <app-error-alert [error]="cameras.error()" />
     } @else {
@@ -31,10 +41,10 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           @for (camera of cameras.data()!; track camera.make + camera.model) {
             <a
               [routerLink]="['/cameras', camera.make, camera.model]"
-              class="bg-card hover:bg-accent group rounded-lg border p-4 transition-colors"
+              class="bg-card hover:border-foreground/20 group rounded-xl border p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
             >
               <div class="flex items-center gap-3">
-                <div class="bg-primary/10 text-primary rounded-lg p-3">
+                <div class="bg-muted text-foreground group-hover:bg-foreground group-hover:text-background rounded-xl p-3 transition-colors">
                   <ng-icon hlm size="lg" name="lucideCamera" />
                 </div>
                 <div class="min-w-0 flex-1">
@@ -52,6 +62,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CamerasList {
+  protected readonly skeletonTiles = Array.from({ length: 6 }, (_, i) => i);
   private readonly trpc = injectTrpc();
 
   cameras = injectQuery(() => ({

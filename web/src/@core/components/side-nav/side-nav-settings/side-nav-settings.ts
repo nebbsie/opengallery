@@ -1,280 +1,37 @@
 import { ChangeDetectionStrategy, Component, computed, output } from '@angular/core';
-import { RouterLink, RouterLinkActive } from '@angular/router';
+import { NavRailItem } from '@core/components/side-nav/nav-rail-item/nav-rail-item';
 import { injectTrpc } from '@core/services/trpc';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideActivity,
-  lucideBadgeAlert,
-  lucideCopy,
-  lucideHardDrive,
-  lucideListChecks,
-  lucideLogs,
-  lucideMapPin,
-  lucideMonitor,
-  lucideUser,
-  lucideUsers,
-} from '@ng-icons/lucide';
-import { HlmButton } from '@spartan-ng/helm/button';
-import { HlmIcon } from '@spartan-ng/helm/icon';
-import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
-import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { injectQuery } from '@tanstack/angular-query-experimental';
+
+interface SettingsGroup {
+  label: string;
+  items: { icon: string; label: string; link: string; badgeKey?: 'tasks' }[];
+}
 
 @Component({
   selector: 'app-side-nav-settings',
-  imports: [
-    HlmButton,
-    HlmIcon,
-    NgIcon,
-    RouterLink,
-    RouterLinkActive,
-    HlmTooltipImports,
-    BrnTooltipImports,
-  ],
-  providers: [
-    provideIcons({
-      lucideHardDrive,
-      lucideLogs,
-      lucideUsers,
-      lucideMonitor,
-      lucideBadgeAlert,
-      lucideListChecks,
-      lucideActivity,
-      lucideUser,
-      lucideMapPin,
-      lucideCopy,
-    }),
-  ],
-  host: {
-    class: 'flex flex-col gap-1',
-  },
+  imports: [NavRailItem],
+  host: { class: 'flex flex-col gap-0.5' },
   template: `
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/profile"
-        routerLinkActive="active"
-        size="icon"
-        #rlaProfile="routerLinkActive"
-        [variant]="rlaProfile.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideUser" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Profile </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/ui"
-        routerLinkActive="active"
-        size="icon"
-        #rlaUi="routerLinkActive"
-        [variant]="rlaUi.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideMonitor" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> UI </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/users"
-        routerLinkActive="active"
-        size="icon"
-        #rlaUsers="routerLinkActive"
-        [variant]="rlaUsers.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideUsers" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Users </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/sources"
-        routerLinkActive="active"
-        size="icon"
-        #rlaLibrary="routerLinkActive"
-        [variant]="rlaLibrary.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideHardDrive" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Source Folders </span>
-    </hlm-tooltip>
-
-    <hr class="my-2" />
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/encoding"
-        routerLinkActive="active"
-        size="icon"
-        #rlaEncoding="routerLinkActive"
-        [variant]="rlaEncoding.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideActivity" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Encoding </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/faces"
-        routerLinkActive="active"
-        size="icon"
-        #rlaFaces="routerLinkActive"
-        [variant]="rlaFaces.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideUsers" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Faces </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/locations"
-        routerLinkActive="active"
-        size="icon"
-        #rlaLocations="routerLinkActive"
-        [variant]="rlaLocations.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideMapPin" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Locations </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/logs"
-        routerLinkActive="active"
-        size="icon"
-        #rlaLogs="routerLinkActive"
-        [variant]="rlaLogs.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideLogs" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Logs </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/issues"
-        routerLinkActive="active"
-        size="icon"
-        #rlaIssues="routerLinkActive"
-        [variant]="rlaIssues.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideBadgeAlert" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Issues </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/tasks"
-        routerLinkActive="active"
-        size="icon"
-        #rlaTasks="routerLinkActive"
-        [variant]="rlaTasks.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <div class="relative">
-          <ng-icon hlm size="sm" name="lucideListChecks" />
-          @if (pendingCount() > 0) {
-            <span class="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
-              {{ pendingCount() > 99 ? '99+' : pendingCount() }}
-            </span>
-          }
-        </div>
-      </a>
-      <span *brnTooltipContent class="flex items-center">
-        Tasks @if (pendingCount() > 0) { ({{ pendingCount() }} pending) }
-      </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/storage"
-        routerLinkActive="active"
-        size="icon"
-        #rlaStorage="routerLinkActive"
-        [variant]="rlaStorage.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideActivity" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Storage </span>
-    </hlm-tooltip>
-
-    <hlm-tooltip>
-      <a
-        hlmTooltipTrigger
-        position="right"
-        hlmBtn
-        routerLink="/settings/duplicates"
-        routerLinkActive="active"
-        size="icon"
-        #rlaDuplicates="routerLinkActive"
-        [variant]="rlaDuplicates.isActive ? 'menu_active' : 'menu'"
-        [routerLinkActiveOptions]="{ exact: true }"
-        (click)="handleClicked()"
-      >
-        <ng-icon hlm size="sm" name="lucideCopy" />
-      </a>
-      <span *brnTooltipContent class="flex items-center"> Duplicates </span>
-    </hlm-tooltip>
+    @for (group of groups; track group.label) {
+      <div class="flex h-7 items-center px-4">
+        <span
+          class="text-muted-foreground/70 translate-x-1 text-[10px] font-semibold tracking-wider uppercase opacity-0 transition-all duration-200 group-hover/nav:translate-x-0 group-hover/nav:opacity-100"
+        >
+          {{ group.label }}
+        </span>
+      </div>
+      @for (item of group.items; track item.link) {
+        <app-nav-rail-item
+          [icon]="item.icon"
+          [label]="item.label"
+          [link]="item.link"
+          [exact]="true"
+          [badge]="item.badgeKey === 'tasks' ? pendingCount() : 0"
+          (clicked)="clicked.emit()"
+        />
+      }
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -291,7 +48,33 @@ export class SideNavSettings {
 
   pendingCount = computed(() => this.queueCounts.data()?.totalPending ?? 0);
 
-  handleClicked() {
-    this.clicked.emit();
-  }
+  protected readonly groups: SettingsGroup[] = [
+    {
+      label: 'Account',
+      items: [
+        { icon: 'lucideUser', label: 'Profile', link: '/settings/profile' },
+        { icon: 'lucideMonitor', label: 'UI', link: '/settings/ui' },
+        { icon: 'lucideUsers', label: 'Users', link: '/settings/users' },
+      ],
+    },
+    {
+      label: 'Library',
+      items: [
+        { icon: 'lucideHardDrive', label: 'Source Folders', link: '/settings/sources' },
+        { icon: 'lucideActivity', label: 'Encoding', link: '/settings/encoding' },
+        { icon: 'lucideScanFace', label: 'Faces', link: '/settings/faces' },
+        { icon: 'lucideMapPin', label: 'Locations', link: '/settings/locations' },
+        { icon: 'lucideDatabase', label: 'Storage', link: '/settings/storage' },
+        { icon: 'lucideCopy', label: 'Duplicates', link: '/settings/duplicates' },
+      ],
+    },
+    {
+      label: 'System',
+      items: [
+        { icon: 'lucideListChecks', label: 'Tasks', link: '/settings/tasks', badgeKey: 'tasks' },
+        { icon: 'lucideBadgeAlert', label: 'Issues', link: '/settings/issues' },
+        { icon: 'lucideLogs', label: 'Logs', link: '/settings/logs' },
+      ],
+    },
+  ];
 }
