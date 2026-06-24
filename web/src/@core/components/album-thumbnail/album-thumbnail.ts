@@ -17,7 +17,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
           <img
             [src]="apiUrl + '/asset/' + _album.cover + '/thumbnail'"
             alt="Album cover"
-            class="aspect-square w-full rounded-lg object-cover"
+            class="aspect-square w-full rounded-lg object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
           />
         } @else {
           <div
@@ -36,7 +36,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
             class="absolute top-2 right-2 flex items-center gap-1 rounded-full bg-black/70 px-2 py-1 text-xs text-white backdrop-blur-sm"
           >
             <ng-icon hlm name="lucideLoader" class="size-3 animate-spin" />
-            <span>{{ _album.pendingTasks }}</span>
+            <span class="tabular-nums">{{ _album.pendingTasks }}</span>
           </div>
         }
       </div>

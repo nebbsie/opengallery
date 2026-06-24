@@ -3,6 +3,11 @@
 @import 'tailwindcss';
 @import '@spartan-ng/brain/hlm-tailwind-preset.css';
 
+/* Theme is toggled via a `.dark` class on <html> (see index.html), not
+   prefers-color-scheme. Wire Tailwind's `dark:` variant to that class so
+   `dark:` utilities track the actual theme, including manual toggles. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --font-sans: 'Geist Sans', sans-serif;
 }
@@ -93,6 +98,9 @@ body {
   overscroll-behavior-y: none; /** Stop vertical bounce; keep horizontal swipe navigation */
   overflow: hidden;
   height: 100%;
+  /* Crisper, thinner text on macOS; ignored on other platforms. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /*Custom Video Player Styles - Required because tailwind alone can not change all the needed styles*/

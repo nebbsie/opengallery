@@ -577,11 +577,23 @@ export const filesRouter = router({
 
       const ownerLibraryIds = accessScope.ownedLibraryIds;
 
+      // Albums this file belongs to (and the viewer can see), so the info panel
+      // can link back to the containing album/folder regardless of how the user
+      // reached this asset.
+      const albumRows = await db
+        .select({ id: AlbumTable.id, name: AlbumTable.name })
+        .from(AlbumFileTable)
+        .innerJoin(AlbumTable, eq(AlbumTable.id, AlbumFileTable.albumId))
+        .where(eq(AlbumFileTable.fileId, file.id))
+        .orderBy(AlbumTable.name);
+      const albums = albumRows.filter((a) => accessScope.visibleAlbumIds.has(a.id));
+
       return {
         file,
         imageMetadata: imageMetadata ?? null,
         geoLocation: geoLocation ?? null,
         people,
+        albums,
         prevId,
         nextId,
         canManageShares:

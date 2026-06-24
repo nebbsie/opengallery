@@ -34,7 +34,7 @@ import type { RouterOutputs } from '@core/services/trpc';
   ],
   providers: [provideIcons({ lucideShare2 })],
   hostDirectives: [BackOnEscapeDirective],
-  host: { class: 'block overflow-y-auto min-h-0 flex-1' },
+  host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (response.isPending() && !response.data()) {
       <app-loading />
@@ -51,6 +51,7 @@ import type { RouterOutputs } from '@core/services/trpc';
             hlmBtn
             variant="outline"
             type="button"
+            class="transition-transform active:scale-[0.96]"
             (click)="openShareDialog(data.album.id, data.album.name)"
           >
             <ng-icon hlm size="sm" name="lucideShare2" />

@@ -4,6 +4,8 @@
 node_modules
 package-lock.json
 dev.db
+dev.db-shm
+dev.db-wal
 
 # Face-recognition model files (downloaded via scripts/download-face-models.sh)
 /worker/models

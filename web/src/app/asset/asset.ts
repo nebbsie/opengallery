@@ -22,6 +22,7 @@ import {
   lucideChevronRight,
   lucideCopy,
   lucideDownload,
+  lucideFolder,
   lucideInfo,
   lucideShare2,
   lucideUser,
@@ -45,6 +46,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
       lucideChevronRight,
       lucideCopy,
       lucideDownload,
+      lucideFolder,
       lucideInfo,
       lucideShare2,
       lucideUser,
@@ -183,7 +185,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
           <!-- Info panel -->
           <aside
-            class="bg-background w-full overflow-hidden transition-all duration-150 ease-in-out sm:flex-shrink-0"
+            class="bg-background w-full overflow-hidden transition-[height,width] duration-150 ease-in-out sm:flex-shrink-0"
             [ngClass]="
               infoOpen()
                 ? 'h-[50vh] border-t border-border sm:h-full sm:w-80 sm:border-t-0 sm:border-l'
@@ -271,6 +273,34 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                             >
                               {{ person.name || 'Unnamed' }}
                             </span>
+                          </a>
+                        }
+                      </div>
+                    </section>
+                  </div>
+                }
+
+                @if (data.albums && data.albums.length) {
+                  <div class="border-border border-t pt-6">
+                    <section>
+                      <h4
+                        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
+                      >
+                        Albums
+                      </h4>
+                      <div class="space-y-1.5">
+                        @for (album of data.albums; track album.id) {
+                          <a
+                            [routerLink]="['/albums', album.id]"
+                            class="text-foreground hover:bg-secondary/50 group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors"
+                            [title]="album.name"
+                          >
+                            <ng-icon
+                              hlm
+                              name="lucideFolder"
+                              class="text-muted-foreground group-hover:text-foreground shrink-0 transition-colors"
+                            />
+                            <span class="truncate">{{ album.name }}</span>
                           </a>
                         }
                       </div>
@@ -415,7 +445,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                         hlmBtn
                         variant="ghost"
                         size="icon"
-                        class="absolute top-1 right-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
+                        class="absolute top-1 right-1 h-6 w-6 opacity-0 transition-[opacity,scale] group-hover:opacity-100 active:scale-[0.96]"
                         (click)="copyToClipboard(f.dir + '/' + f.name)"
                         title="Copy path"
                       >
@@ -439,7 +469,7 @@ export class Asset implements OnDestroy {
   // Shared style for media-overlay controls: a translucent dark pill with a
   // white icon so they stay legible over any photo, in light or dark theme.
   protected readonly ctrlBtn =
-    'border-0 bg-black/35 text-white backdrop-blur-sm hover:bg-black/55 hover:text-white';
+    'border-0 bg-black/35 text-white backdrop-blur-sm transition-transform hover:bg-black/55 hover:text-white active:scale-[0.96]';
 
   protected readonly trpc = injectTrpc();
   private readonly router = inject(Router);
