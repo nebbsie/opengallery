@@ -120,7 +120,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
 
         <div class="mt-2 flex items-center justify-between">
           <label for="concurrency" class="text-sm">Encoding Concurrency</label>
-          <span class="text-muted-foreground text-sm">{{ concurrency() }}</span>
+          <span class="text-muted-foreground text-sm tabular-nums">{{ concurrency() }}</span>
         </div>
         <input
           id="concurrency"
@@ -136,7 +136,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
 
         <div class="mt-2 flex items-center justify-between">
           <label for="io-concurrency" class="text-sm">I/O Concurrency</label>
-          <span class="text-muted-foreground text-sm">{{ ioConcurrency() }}</span>
+          <span class="text-muted-foreground text-sm tabular-nums">{{ ioConcurrency() }}</span>
         </div>
         <input
           id="io-concurrency"
@@ -156,7 +156,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
 
         <div class="flex items-center justify-between">
           <label for="thumb-quality" class="text-sm">Thumbnail Quality</label>
-          <span class="text-muted-foreground text-sm">{{ thumbQuality() }}%</span>
+          <span class="text-muted-foreground text-sm tabular-nums">{{ thumbQuality() }}%</span>
         </div>
         <input
           id="thumb-quality"
@@ -172,7 +172,7 @@ import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-quer
 
         <div class="mt-2 flex items-center justify-between">
           <label for="opt-quality" class="text-sm">Optimized Quality</label>
-          <span class="text-muted-foreground text-sm">{{ optQuality() }}%</span>
+          <span class="text-muted-foreground text-sm tabular-nums">{{ optQuality() }}%</span>
         </div>
         <input
           id="opt-quality"

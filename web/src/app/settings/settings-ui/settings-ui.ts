@@ -36,7 +36,7 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
         <ng-icon
           hlm
           name="lucideMoon"
-          class="text-foreground absolute transform transition-all duration-200 ease-in-out"
+          class="text-foreground absolute transform transition-[opacity,transform,scale] duration-200 ease-in-out"
           [class.opacity-100]="theme.get() === 'light'"
           [class.opacity-0]="theme.get() === 'dark'"
           [class.scale-100]="theme.get() === 'light'"
@@ -48,7 +48,7 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
         <ng-icon
           hlm
           name="lucideSun"
-          class="text-foreground absolute transform transition-all duration-200 ease-in-out"
+          class="text-foreground absolute transform transition-[opacity,transform,scale] duration-200 ease-in-out"
           [class.opacity-100]="theme.get() === 'dark'"
           [class.opacity-0]="theme.get() === 'light'"
           [class.scale-100]="theme.get() === 'dark'"

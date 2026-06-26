@@ -85,7 +85,7 @@ const BROWSE_KEYS = [
           />
           <button hlmBtn size="sm" (click)="save()">Save</button>
         } @else {
-          <h1 class="text-foreground text-2xl font-bold">
+          <h1 class="text-foreground text-2xl font-bold text-balance">
             {{ person.data()?.name || 'Unnamed person' }}
           </h1>
           @if (person.data()?.hidden) {

@@ -5,7 +5,7 @@ import type { ClassValue } from 'clsx';
 import { injectBrnButtonConfig } from './hlm-button.token';
 
 export const buttonVariants = cva(
-  'text-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 [&_ng-icon]:pointer-events-none [&_ng-icon]:shrink-0',
+  'text-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,text-decoration-color,fill,stroke,transform,scale] duration-150 outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50 [&_ng-icon]:pointer-events-none [&_ng-icon]:shrink-0',
   {
     variants: {
       variant: {
@@ -50,9 +50,12 @@ export class HlmButton {
 
   public readonly userClass = input<ClassValue>('', { alias: 'class' });
 
+  public readonly static = input<boolean>(false);
+
   protected readonly _computedClass = computed(() =>
     hlm(
       buttonVariants({ variant: this.variant(), size: this.size() }),
+      !this.static() ? 'active:scale-[0.96]' : '',
       this.userClass(),
       this._additionalClasses(),
     ),

@@ -287,7 +287,7 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
                 @for (dot of monthDotsData(); track dot.year + '-' + dot.month) {
                   <button
                     type="button"
-                    class="absolute left-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-150"
+                    class="absolute left-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-[background-color,transform,scale] duration-150"
                     [style.top.%]="dot.position"
                     [ngClass]="
                       dot.year === activeTimelineMarker()?.year && dot.monthName === activeTimelineMarker()?.month
@@ -302,7 +302,7 @@ class GridVirtualScrollStrategy implements VirtualScrollStrategy {
               @for (marker of displayedYearMarkers(); track marker.year) {
                 <button
                   type="button"
-                  class="group absolute left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap transition-all duration-200 ease-out"
+                  class="group absolute left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full px-2 py-0.5 text-[11px] font-bold whitespace-nowrap transition-[background-color,color,box-shadow,ring,transform,scale] duration-200 ease-out active:scale-[0.96]"
                   [style.top.%]="marker.position"
                   [ngClass]="
                     marker.year === activeTimelineMarker()?.year

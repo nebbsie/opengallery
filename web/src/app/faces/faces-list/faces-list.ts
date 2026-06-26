@@ -78,7 +78,7 @@ type PeoplePages = {
            Merge folds the source into the named/larger target; "Not the same"
            dismisses the pair so it won't be suggested again. -->
       @if (isAdmin() && suggestions().length > 0) {
-        <div class="bg-card mb-6 rounded-lg border p-4">
+        <div class="bg-card mb-6 rounded-2xl border p-4">
           <div class="mb-3 flex items-center gap-2">
             <ng-icon hlm size="sm" name="lucideSparkles" class="text-primary" />
             <h2 class="text-foreground text-sm font-semibold">

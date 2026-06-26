@@ -162,10 +162,10 @@ function formatBytes(bytes: number): string {
             </div>
             <div>
               <p class="text-muted-foreground text-sm">Raw Storage</p>
-              <p class="text-foreground text-2xl font-bold">{{ originalSize() }}</p>
+              <p class="text-foreground text-2xl font-bold tabular-nums">{{ originalSize() }}</p>
             </div>
           </div>
-          <p class="text-muted-foreground text-xs">{{ originalCount() }} source files</p>
+          <p class="text-muted-foreground text-xs tabular-nums">{{ originalCount() }} source files</p>
         </div>
 
         <!-- Optimised Storage Card -->
@@ -176,10 +176,10 @@ function formatBytes(bytes: number): string {
             </div>
             <div>
               <p class="text-muted-foreground text-sm">Optimised Storage</p>
-              <p class="text-foreground text-2xl font-bold">{{ variantsSize() }}</p>
+              <p class="text-foreground text-2xl font-bold tabular-nums">{{ variantsSize() }}</p>
             </div>
           </div>
-          <p class="text-muted-foreground text-xs">{{ variantsCount() }} generated files</p>
+          <p class="text-muted-foreground text-xs tabular-nums">{{ variantsCount() }} generated files</p>
         </div>
       </div>
     }

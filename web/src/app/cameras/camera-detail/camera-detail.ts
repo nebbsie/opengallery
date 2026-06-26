@@ -18,7 +18,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <h1 class="text-foreground mb-2 flex items-center gap-2 text-2xl font-bold capitalize">
+      <h1 class="text-foreground mb-2 flex items-center gap-2 text-2xl font-bold capitalize text-balance">
         {{ make() }} <span class="text-muted-foreground text-sm">{{ model() }}</span>
       </h1>
 
@@ -38,7 +38,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
           <button
             (click)="loadMore()"
             [disabled]="files.isFetchingNextPage()"
-            class="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-6 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+            class="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-6 py-2 transition-[color,transform] duration-150 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50"
           >
             @if (files.isFetchingNextPage()) { Loading... } @else { Load More }
           </button>

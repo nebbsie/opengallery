@@ -143,7 +143,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                   [src]="apiUrl + '/asset/' + f.id + '/optimised'"
                   alt="Image"
                   draggable="false"
-                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
+                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
                 />
               } @else if (f.type === 'video') {
                 <video
@@ -445,7 +445,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                         hlmBtn
                         variant="ghost"
                         size="icon"
-                        class="absolute top-1 right-1 h-6 w-6 opacity-0 transition-[opacity,scale] group-hover:opacity-100 active:scale-[0.96]"
+                        class="absolute top-1 right-1 h-6 w-6 opacity-0 transition-[opacity,scale] group-hover:opacity-100 active:scale-[0.96] before:absolute before:inset-[-8px] before:content-['']"
                         (click)="copyToClipboard(f.dir + '/' + f.name)"
                         title="Copy path"
                       >

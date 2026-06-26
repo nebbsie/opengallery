@@ -28,7 +28,7 @@ const TASK_LABELS: Record<string, string> = {
       </div>
       @if (tasks.isSuccess()) {
         <div class="text-muted-foreground text-right text-sm">
-          <span class="bg-muted rounded px-2 py-1 font-mono">
+          <span class="bg-muted rounded px-2 py-1 font-mono tabular-nums">
             {{ tasks.data().totals.remaining }} remaining
           </span>
         </div>
@@ -52,37 +52,37 @@ const TASK_LABELS: Record<string, string> = {
             <div class="grid gap-2 rounded-lg border p-3">
               <div class="flex items-center justify-between">
                 <span class="text-foreground font-semibold">{{ label(t.type) }}</span>
-                <span class="text-muted-foreground text-sm">
+                <span class="text-muted-foreground text-sm tabular-nums">
                   {{ t.succeeded }} / {{ t.total }} done
                 </span>
               </div>
 
               <div class="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
                 <div
-                  class="h-full bg-green-500 transition-all duration-300"
+                  class="h-full bg-green-500 transition-[width] duration-300"
                   [style.width.%]="percent(t)"
                 ></div>
               </div>
 
               <div class="flex flex-wrap gap-2 text-xs">
-                <span class="text-foreground font-medium">{{ t.remaining }} remaining</span>
+                <span class="text-foreground font-medium tabular-nums">{{ t.remaining }} remaining</span>
                 @if (t.pending > 0) {
-                  <span class="rounded bg-yellow-100 px-1.5 py-0.5 text-yellow-800 dark:bg-yellow-900/30">
+                  <span class="rounded bg-yellow-100 px-1.5 py-0.5 text-yellow-800 tabular-nums dark:bg-yellow-900/30">
                     {{ t.pending }} waiting
                   </span>
                 }
                 @if (t.inProgress > 0) {
-                  <span class="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800 dark:bg-blue-900/30">
+                  <span class="rounded bg-blue-100 px-1.5 py-0.5 text-blue-800 tabular-nums dark:bg-blue-900/30">
                     {{ t.inProgress }} in progress
                   </span>
                 }
                 @if (t.failed > 0) {
-                  <span class="rounded bg-red-100 px-1.5 py-0.5 text-red-800 dark:bg-red-900/30">
+                  <span class="rounded bg-red-100 px-1.5 py-0.5 text-red-800 tabular-nums dark:bg-red-900/30">
                     {{ t.failed }} failed
                   </span>
                 }
                 @if (t.skipped > 0) {
-                  <span class="bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                  <span class="bg-muted text-muted-foreground rounded px-1.5 py-0.5 tabular-nums">
                     {{ t.skipped }} skipped
                   </span>
                 }

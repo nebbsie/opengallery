@@ -53,11 +53,11 @@ import { lucideCirclePause, lucideCirclePlay, lucideVolume1, lucideVolume2, luci
 
         <!-- Time Display -->
         <div class="flex justify-between items-center">
-          <div class="text-center text-sm font-thin text-white/80">
+          <div class="text-center text-sm font-thin text-white/80 tabular-nums">
             {{ formatTime(currentTime) }}
           </div>
 
-          <div class="text-center text-sm font-thin text-white/80">
+          <div class="text-center text-sm font-thin text-white/80 tabular-nums">
             {{ formatTime(duration) }}
           </div>
         </div>
@@ -80,7 +80,7 @@ import { lucideCirclePause, lucideCirclePlay, lucideVolume1, lucideVolume2, luci
             <div class="relative z-10 flex items-center">
               <!-- Volume Button -->
               <button
-                class="flex items-center text-white/80 hover:text-white transition"
+                class="flex h-10 w-10 items-center justify-center text-white/80 hover:text-white transition-[color,transform] duration-150 active:scale-[0.96]"
                 (click)="toggleMute(video)"
                 (mouseenter)="volumeHover = true"
                 (mouseleave)="volumeHover = false"
@@ -120,7 +120,7 @@ import { lucideCirclePause, lucideCirclePlay, lucideVolume1, lucideVolume2, luci
           <div class="justify-self-center">
             <button
               (click)="togglePlay(video)"
-              class="z-10 flex items-center text-white/80 hover:text-white transition"
+              class="z-10 flex h-10 w-10 items-center justify-center text-white/80 hover:text-white transition-[color,transform] duration-150 active:scale-[0.96]"
             >
               @if (video.paused) {
                 <ng-icon hlm name="lucideCirclePlay" class="h-8 w-8"></ng-icon>
@@ -134,7 +134,7 @@ import { lucideCirclePause, lucideCirclePlay, lucideVolume1, lucideVolume2, luci
           <!-- Full screen button -->
           <div class="justify-self-end">
             <button
-              class="flex items-center text-white/80 hover:text-white transition z-10"
+              class="flex h-10 w-10 items-center justify-center text-white/80 hover:text-white transition-[color,transform] duration-150 z-10 active:scale-[0.96]"
               (click)="toggleFullscreen(wrapper)"
             >
               @if(!isFullscreen()) {
