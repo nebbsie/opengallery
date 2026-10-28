@@ -200,6 +200,8 @@ export const geoLocationRouter = router({
           lat: sql<number>`avg(${GeoLocationTable.lat})`,
           lon: sql<number>`avg(${GeoLocationTable.lon})`,
           count: sql<number>`count(distinct ${FileTable.id})`,
+          // One image in the cell, shown as the map pin thumbnail.
+          cover: sql<string | null>`max(case when ${FileTable.type} = 'image' then ${FileTable.id} end)`,
         })
         .from(GeoLocationTable)
         .innerJoin(FileTable, eq(FileTable.id, GeoLocationTable.fileId))
@@ -250,6 +252,7 @@ export const geoLocationRouter = router({
           lat: l.lat,
           lon: l.lon,
           count: l.count,
+          cover: l.cover,
         })),
       };
     }),

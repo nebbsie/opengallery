@@ -73,7 +73,21 @@ export class WebSocketService implements OnDestroy {
 
   private handleEvent(event: string, _data: unknown): void {
     switch (event) {
+      // Someone finished an upload: new files and maybe a new album.
+      case 'upload:finished':
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.AlbumsAll] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.AlbumSingle] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.UploadConfig] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryPhotos] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryAll] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryVideos] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.TimelinePhotos] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.TimelineAll] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.TimelineVideos] });
+        break;
       case 'file:variant-saved':
+        // An album page shows the new thumbnail too (for example after an upload).
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.AlbumSingle] });
         this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryPhotos] });
         this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryAll] });
         this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryVideos] });

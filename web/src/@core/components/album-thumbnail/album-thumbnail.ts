@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { PluralPipe } from '@core/pipes/plural.pipe';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideImages, lucideLoader } from '@ng-icons/lucide';
@@ -7,7 +8,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 
 @Component({
   selector: 'app-album-thumbnail',
-  imports: [RouterLink, HlmIcon, NgIcon],
+  imports: [RouterLink, HlmIcon, NgIcon, PluralPipe],
   providers: [provideIcons({ lucideImages, lucideLoader })],
   template: `
     @let _album = album();
@@ -16,7 +17,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         @if (_album.cover) {
           <img
             [src]="apiUrl + '/asset/' + _album.cover + '/thumbnail'"
-            alt="Album cover"
+            [alt]="_album.name"
             class="aspect-square w-full rounded-lg object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
           />
         } @else {
@@ -45,7 +46,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         <p class="line-clamp-2 text-sm font-bold break-all">
           {{ _album.name }}
         </p>
-        <p class="text-xs font-light">{{ _album.items ?? 0 }} items</p>
+        <p class="text-muted-foreground text-xs tabular-nums">{{ _album.items ?? 0 | plural: 'item' }}</p>
       </div>
     </a>
   `,

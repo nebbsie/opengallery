@@ -20,6 +20,10 @@ export const CacheKey = {
   FaceSingle: 'face-single',
   FaceFiles: 'face-files',
   FaceSuggestions: 'face-suggestions',
+  FacePersonFaces: 'face-person-faces',
+  FaceReview: 'face-review',
+  FaceStatus: 'face-status',
+  ViewerFaces: 'viewer-faces',
   LocationAll: 'location-all',
   LocationSingle: 'location-single',
   TimelineAll: 'timeline-all',
@@ -32,4 +36,22 @@ export const CacheKey = {
   Users: 'users',
   Invites: 'invites',
   ViewerRules: 'viewer-rules',
+  UploadConfig: 'upload-config',
 };
+
+// Every cache that shows people, faces or a person's photos. Invalidate all of
+// them after any face edit so every open page (People, person page, review
+// queue, viewer boxes and chips, Settings > Faces) agrees.
+export const FACE_CACHE_KEYS = [
+  CacheKey.FacesPage,
+  CacheKey.FacesAll,
+  CacheKey.FaceSingle,
+  CacheKey.FaceFiles,
+  CacheKey.FaceSuggestions,
+  CacheKey.FacePersonFaces,
+  CacheKey.FaceReview,
+  CacheKey.FaceStatus,
+  CacheKey.ViewerFaces,
+  // The asset viewer's People chips link to people by id and show their names.
+  CacheKey.AssetSingle,
+];

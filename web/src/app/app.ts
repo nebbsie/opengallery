@@ -2,6 +2,8 @@ import { Component, inject } from '@angular/core';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { filter, map, startWith } from 'rxjs';
+import { Toaster } from '@core/components/toaster/toaster';
+import { UploadHost } from '@core/components/upload/upload-host';
 import { MobileBottomNav } from '@core/components/side-nav/mobile-bottom-nav/mobile-bottom-nav';
 import { SideNav } from '@core/components/side-nav/side-nav';
 import { Auth } from '@core/services/auth/auth';
@@ -14,7 +16,8 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 @Component({
   selector: 'app-root',
   host: {
-    class: 'flex flex-col h-[100dvh]',
+    // viewport-fit=cover: keep the app clear of notches; the bottom nav pads itself.
+    class: 'flex flex-col h-[100dvh] pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]',
   },
   template: `
     <!-- "View as" preview banner. Sits above everything in normal flow, so it
@@ -41,22 +44,34 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
     }
 
     <main class="relative flex min-h-0 flex-1 overflow-hidden">
-      @if (isAuthenticated()) {
+      <!-- The photo viewer is full-bleed: no rail, no bottom nav, no padding. -->
+      @if (isAuthenticated() && !isAssetRoute()) {
         <app-side-nav />
       }
 
-      <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
+      <div
+        class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        [class.p-3]="!isAssetRoute()"
+      >
         <router-outlet />
       </div>
     </main>
 
     <!-- Mobile primary nav lives at the bottom; hidden on sm+ (left rail there). -->
-    @if (isAuthenticated() && !isSettingsRoute()) {
+    @if (isAuthenticated() && !isSettingsRoute() && !isAssetRoute()) {
       <app-mobile-bottom-nav />
     }
+
+    <!-- Upload progress panel, picker and drop target (uploads keep going
+         across pages). -->
+    @if (isAuthenticated()) {
+      <app-upload-host />
+    }
+
+    <app-toaster />
   `,
   providers: [provideIcons({ lucideEye })],
-  imports: [RouterOutlet, SideNav, MobileBottomNav, NgIcon, HlmIcon],
+  imports: [RouterOutlet, SideNav, MobileBottomNav, NgIcon, HlmIcon, Toaster, UploadHost],
 })
 export class App {
   private auth = inject(Auth);
@@ -77,6 +92,15 @@ export class App {
       filter((e) => e instanceof NavigationEnd),
       map(() => this.router.url.startsWith('/settings')),
       startWith(this.router.url.startsWith('/settings')),
+    ),
+    { initialValue: false },
+  );
+
+  protected readonly isAssetRoute = toSignal(
+    this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      map(() => this.router.url.startsWith('/asset/')),
+      startWith(this.router.url.startsWith('/asset/')),
     ),
     { initialValue: false },
   );

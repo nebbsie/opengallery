@@ -9,7 +9,7 @@ import {
   getAccessScope,
 } from '../authz/shared-access.js';
 import { db } from '../db/index.js';
-import { FileTable, LibraryFileTable } from '../db/schema.js';
+import { FileTable, ImageMetadataTable, LibraryFileTable } from '../db/schema.js';
 import { adminProcedure, router } from '../trpc.js';
 import { deleteFilesWithCascade } from '../utils/file-operations.js';
 import { resolveAssetPath } from '../utils/media-path.js';
@@ -61,8 +61,12 @@ export const duplicatesRouter = router({
         contentHash: FileTable.contentHash,
         takenAt: FileTable.takenAt,
         createdAt: FileTable.createdAt,
+        // Resolution, for the side-by-side compare in Settings > Duplicates.
+        width: ImageMetadataTable.width,
+        height: ImageMetadataTable.height,
       })
       .from(FileTable)
+      .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
       .where(and(inArray(FileTable.contentHash, dupeHashSubquery), filter))
       .orderBy(FileTable.contentHash, FileTable.createdAt);
 

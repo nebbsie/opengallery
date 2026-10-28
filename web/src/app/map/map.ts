@@ -5,9 +5,12 @@ import {
   OnDestroy,
   afterNextRender,
   effect,
+  inject,
   signal,
   viewChild,
 } from '@angular/core';
+import { Router } from '@angular/router';
+import { environment } from '@env/environment';
 import { ErrorAlert } from '@core/components/error/error';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -17,19 +20,43 @@ import { Loading } from '@core/components/loading/loading';
 import type * as L from 'leaflet';
 import { loadLeafletWithCluster } from './leaflet-cluster';
 
-type LocationPoint = { lat: number; lon: number; count: number };
+type LocationPoint = { lat: number; lon: number; count: number; cover?: string | null };
+
+type PinOptions = L.MarkerOptions & { photoCount: number; cover: string | null };
+
+const formatCount = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : `${n}`);
+
+// Photo pin markup. Leaflet builds these nodes outside Angular, so the styles
+// are inline. White frame + soft shadow reads on light and dark tiles alike.
+function pinHtml(apiUrl: string, cover: string | null, count: number, size: number): string {
+  const img = cover
+    ? `<img src="${apiUrl}/asset/${cover}/thumbnail" alt="" loading="lazy" decoding="async" ` +
+      `style="width:100%;height:100%;object-fit:cover;display:block" />`
+    : `<div style="width:100%;height:100%;background:#94a3b8"></div>`;
+  const badge =
+    count > 1
+      ? `<span style="position:absolute;top:-8px;right:-8px;min-width:22px;height:22px;padding:0 6px;` +
+        `border-radius:9999px;background:#fff;color:#111;font:600 12px/22px system-ui,sans-serif;` +
+        `text-align:center;font-variant-numeric:tabular-nums;box-shadow:0 1px 4px rgba(0,0,0,0.3)">${formatCount(count)}</span>`
+      : '';
+  return (
+    `<div style="position:relative;width:${size}px;height:${size}px">` +
+    `<div style="width:100%;height:100%;border-radius:10px;overflow:hidden;border:2px solid #fff;` +
+    `box-shadow:0 2px 8px rgba(0,0,0,0.35);background:#e2e8f0">${img}</div>${badge}</div>`
+  );
+}
 
 @Component({
   selector: 'app-map',
   providers: [provideIcons({ lucideMap })],
   imports: [ErrorAlert, Loading, NgIcon, HlmIcon],
-  host: { class: 'block h-full' },
+  host: { class: 'flex min-h-0 flex-1 flex-col' },
   template: `
     @if (error()) {
       <app-error-alert [error]="error()" />
     } @else {
-      <div class="relative h-[calc(100vh-8rem)] w-full">
-        <div #mapContainer class="h-full w-full rounded-lg border"></div>
+      <div class="relative min-h-0 w-full flex-1">
+        <div #mapContainer class="absolute inset-0 rounded-lg border"></div>
 
         @if (loading()) {
           <div class="bg-background/60 absolute inset-0 flex items-center justify-center rounded-lg">
@@ -40,8 +67,8 @@ type LocationPoint = { lat: number; lon: number; count: number };
             class="text-muted-foreground absolute inset-0 flex flex-col items-center justify-center rounded-lg"
           >
             <ng-icon hlm size="xl" name="lucideMap" class="mb-4" />
-            <p>No locations found</p>
-            <p class="text-sm">Photos with geolocation data will appear here</p>
+            <p class="text-foreground font-medium">No places yet</p>
+            <p class="text-sm">Photos with a location in their data show here.</p>
           </div>
         }
       </div>
@@ -51,6 +78,11 @@ type LocationPoint = { lat: number; lon: number; count: number };
 })
 export class Map implements OnDestroy {
   private readonly trpc = injectTrpc();
+  private readonly router = inject(Router);
+  private readonly apiUrl = environment.api.url;
+  // Markers on the map now, keyed by position and kind, so a pan only adds and
+  // removes the pins that changed instead of redrawing all of them.
+  private markers = new globalThis.Map<string, L.Marker>();
   private map: L.Map | null = null;
   private leaflet: typeof L | null = null;
   private clusterGroup: L.MarkerClusterGroup | null = null;
@@ -93,6 +125,7 @@ export class Map implements OnDestroy {
       this.map = null;
       this.clusterGroup = null;
     }
+    this.markers.clear();
   }
 
   private async initMap(): Promise<void> {
@@ -152,25 +185,17 @@ export class Map implements OnDestroy {
       disableClusteringAtZoom: 19,
       chunkedLoading: true,
       iconCreateFunction: (cluster: L.MarkerCluster) => {
-        const childMarkers = cluster.getAllChildMarkers();
+        // The cluster shows the photo of its biggest child and the total count.
         let totalCount = 0;
-        childMarkers.forEach((m) => {
-          totalCount += (m.options as { photoCount?: number }).photoCount || 1;
-        });
-
-        const size = totalCount >= 100 ? 54 : totalCount >= 10 ? 44 : 36;
-        const bg = totalCount >= 100 ? '#ec4899' : totalCount >= 10 ? '#8b5cf6' : '#3b82f6';
-        const label =
-          totalCount >= 1000 ? `${Math.round(totalCount / 100) / 10}k` : `${totalCount}`;
-
-        // Inline styles (not CSS classes) so the bubble always renders — Leaflet
-        // builds these nodes in JS, outside Angular's view encapsulation.
+        let best: PinOptions | null = null;
+        for (const m of cluster.getAllChildMarkers()) {
+          const o = m.options as PinOptions;
+          totalCount += o.photoCount || 1;
+          if (o.cover && (!best || o.photoCount > best.photoCount)) best = o;
+        }
+        const size = 52;
         return leaflet.divIcon({
-          html:
-            `<div style="display:flex;align-items:center;justify-content:center;` +
-            `width:${size}px;height:${size}px;border-radius:9999px;background:${bg};` +
-            `color:#fff;font-weight:600;font-size:13px;` +
-            `box-shadow:0 2px 8px rgba(0,0,0,0.2),0 0 0 4px rgba(59,130,246,0.3)">${label}</div>`,
+          html: pinHtml(this.apiUrl, best?.cover ?? null, totalCount, size),
           className: '',
           iconSize: leaflet.point(size, size),
           iconAnchor: leaflet.point(size / 2, size / 2),
@@ -214,7 +239,7 @@ export class Map implements OnDestroy {
         zoom,
       });
 
-      // A newer fetch started (or the map was destroyed) — drop this response.
+      // A newer fetch started (or the map was destroyed). Drop this response.
       if (token !== this.fetchToken || !this.map) return;
 
       this.renderLocations(result.locations, result.precise);
@@ -248,44 +273,58 @@ export class Map implements OnDestroy {
     const clusterGroup = this.clusterGroup;
     if (!leaflet || !clusterGroup) return;
 
-    clusterGroup.clearLayers();
-
+    const next = new globalThis.Map<string, LocationPoint>();
     for (const location of locations) {
-      const marker = leaflet.marker([location.lat, location.lon], {
-        icon: leaflet.divIcon({
-          html:
-            '<div style="width:14px;height:14px;background:#3b82f6;' +
-            'border:2.5px solid #fff;border-radius:9999px;' +
-            'box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>',
-          className: '',
-          iconSize: leaflet.point(14, 14),
-          iconAnchor: leaflet.point(7, 7),
-        }),
-        photoCount: location.count,
-      } as L.MarkerOptions);
+      next.set(`${precise ? 'p' : 'a'}:${location.lat.toFixed(5)},${location.lon.toFixed(5)}:${location.count}:${location.cover ?? ''}`, location);
+    }
 
+    const stale: L.Marker[] = [];
+    for (const [key, marker] of this.markers) {
+      if (!next.has(key)) {
+        stale.push(marker);
+        this.markers.delete(key);
+      }
+    }
+    if (stale.length) clusterGroup.removeLayers(stale);
+
+    const added: L.Marker[] = [];
+    for (const [key, location] of next) {
+      if (this.markers.has(key)) continue;
+      const marker = this.createMarker(leaflet, location, precise);
+      this.markers.set(key, marker);
+      added.push(marker);
+    }
+    if (added.length) clusterGroup.addLayers(added);
+  }
+
+  private createMarker(leaflet: typeof L, location: LocationPoint, precise: boolean): L.Marker {
+    const size = 44;
+    const options: PinOptions = {
+      icon: leaflet.divIcon({
+        html: pinHtml(this.apiUrl, location.cover ?? null, location.count, size),
+        className: '',
+        iconSize: leaflet.point(size, size),
+        iconAnchor: leaflet.point(size / 2, size / 2),
+      }),
+      photoCount: location.count,
+      cover: location.cover ?? null,
+      keyboard: true,
+      title: `${location.count} ${location.count === 1 ? 'photo' : 'photos'}`,
+      alt: `${location.count} ${location.count === 1 ? 'photo' : 'photos'}`,
+    };
+    const marker = leaflet.marker([location.lat, location.lon], options);
+
+    marker.on('click', () => {
+      if (!this.map) return;
       if (precise) {
-        // Exact coordinate: link straight through to its photos.
-        const photoLabel = `${location.count} photo${location.count > 1 ? 's' : ''}`;
-        marker.bindPopup(`
-          <div style="text-align:center;min-width:120px">
-            <p style="font-weight:600;margin:0 0 4px">${photoLabel}</p>
-            <a href="/locations/${location.lat}/${location.lon}"
-               style="color:#2563eb;text-decoration:underline">
-              View photos
-            </a>
-          </div>
-        `);
+        // Exact coordinate: open its photos in the app (no page reload).
+        void this.router.navigate(['/locations', location.lat, location.lon]);
       } else {
         // Aggregated cell centroid: the coordinate is approximate, so zoom in
         // toward it rather than linking out to a point that may hold no photos.
-        marker.on('click', () => {
-          if (!this.map) return;
-          this.map.flyTo([location.lat, location.lon], Math.min(this.map.getZoom() + 3, 18));
-        });
+        this.map.flyTo([location.lat, location.lon], Math.min(this.map.getZoom() + 3, 18));
       }
-
-      clusterGroup.addLayer(marker);
-    }
+    });
+    return marker;
   }
 }

@@ -2,7 +2,9 @@ import { ChangeDetectionStrategy, Component, computed, input, signal } from '@an
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { ErrorAlert } from '@core/components/error/error';
-import { Loading } from '@core/components/loading/loading';
+import { GridSkeleton } from '@core/components/loading-thumbnail/grid-skeleton';
+import { SelectionBar } from '@core/components/selection-bar/selection-bar';
+import { GridSelection } from '@core/services/selection/grid-selection';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
@@ -10,12 +12,13 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
 
 @Component({
   selector: 'app-years-detail',
-  imports: [ErrorAlert, Loading, AssetThumbnail, VirtualThumbnailGrid],
+  imports: [ErrorAlert, GridSkeleton, SelectionBar, AssetThumbnail, VirtualThumbnailGrid],
+  providers: [GridSelection],
   hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex flex-col h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <app-loading />
+      <app-grid-skeleton class="min-h-0 flex-1" [rail]="true" />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
@@ -39,6 +42,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
             <app-asset-thumbnail [from]="fromPath()" [asset]="asset" />
           </ng-template>
         </app-virtual-thumbnail-grid>
+        <app-selection-bar />
       }
     }
   `,

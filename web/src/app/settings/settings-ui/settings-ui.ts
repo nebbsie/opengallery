@@ -1,62 +1,53 @@
 import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core';
 import { CacheKey } from '@core/services/cache-key.types';
-import { Theme } from '@core/services/theme/theme';
+import { Theme, type ThemeMode } from '@core/services/theme/theme';
+import { ToastService } from '@core/services/toast/toast';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideMoon, lucideSun } from '@ng-icons/lucide';
-import { HlmButton } from '@spartan-ng/helm/button';
+import { lucideMonitor, lucideMoon, lucideSun } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSwitch } from '@spartan-ng/helm/switch';
 import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-settings-ui',
-  providers: [provideIcons({ lucideMoon, lucideSun })],
-  imports: [HlmButton, NgIcon, HlmIcon, HlmSwitch],
+  providers: [provideIcons({ lucideMoon, lucideSun, lucideMonitor })],
+  imports: [NgIcon, HlmIcon, HlmSwitch],
   template: `
     <div>
       <h1 class="text-foreground mb-2 block text-lg font-bold">Display</h1>
       <p class="text-muted-foreground mb-6 text-sm">Control UI preferences for your account.</p>
     </div>
 
-    <div
-      class="hover:bg-accent/50 mb-4 flex max-w-lg items-center justify-between rounded-lg border p-3"
-    >
+    <div class="mb-4 flex max-w-lg flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
       <div class="grid gap-1.5 font-normal">
-        <p class="text-sm leading-none font-bold">Dark Mode</p>
-        <p class="text-muted-foreground text-sm">Toggle between light and dark theme.</p>
+        <p id="theme-label" class="text-sm leading-none font-bold">Theme</p>
+        <p class="text-muted-foreground text-sm">System follows the setting of your device.</p>
       </div>
-      <button
-        hlmBtn
-        variant="ghost"
-        size="icon"
-        class="relative flex items-center justify-center"
-        (click)="toggleTheme()"
+      <div
+        role="radiogroup"
+        aria-labelledby="theme-label"
+        class="bg-muted inline-flex shrink-0 items-center gap-1 rounded-lg p-1"
+        (keydown)="onThemeKey($event)"
       >
-        <ng-icon
-          hlm
-          name="lucideMoon"
-          class="text-foreground absolute transform transition-[opacity,transform,scale] duration-200 ease-in-out"
-          [class.opacity-100]="theme.get() === 'light'"
-          [class.opacity-0]="theme.get() === 'dark'"
-          [class.scale-100]="theme.get() === 'light'"
-          [class.scale-75]="theme.get() === 'dark'"
-          [class.rotate-0]="theme.get() === 'light'"
-          [class.rotate-180]="theme.get() === 'dark'"
-        />
-
-        <ng-icon
-          hlm
-          name="lucideSun"
-          class="text-foreground absolute transform transition-[opacity,transform,scale] duration-200 ease-in-out"
-          [class.opacity-100]="theme.get() === 'dark'"
-          [class.opacity-0]="theme.get() === 'light'"
-          [class.scale-100]="theme.get() === 'dark'"
-          [class.scale-75]="theme.get() === 'light'"
-          [class.rotate-0]="theme.get() === 'dark'"
-          [class.-rotate-180]="theme.get() === 'light'"
-        />
-      </button>
+        @for (option of themeOptions; track option.value) {
+          <button
+            type="button"
+            role="radio"
+            [attr.aria-checked]="theme.mode() === option.value"
+            [attr.tabindex]="theme.mode() === option.value ? 0 : -1"
+            class="flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-[background-color,color,box-shadow,scale] duration-150 active:scale-[0.96]"
+            [class.bg-background]="theme.mode() === option.value"
+            [class.text-foreground]="theme.mode() === option.value"
+            [class.shadow-sm]="theme.mode() === option.value"
+            [class.text-muted-foreground]="theme.mode() !== option.value"
+            (click)="theme.set(option.value)"
+          >
+            <ng-icon hlm size="sm" [name]="option.icon" />
+            {{ option.label }}
+          </button>
+        }
+      </div>
     </div>
 
     <label
@@ -106,8 +97,24 @@ export class SettingsUi {
     });
   }
 
-  toggleTheme() {
-    this.theme.toggle();
+  private readonly toast = inject(ToastService);
+
+  protected readonly themeOptions: ReadonlyArray<{ value: ThemeMode; label: string; icon: string }> = [
+    { value: 'light', label: 'Light', icon: 'lucideSun' },
+    { value: 'dark', label: 'Dark', icon: 'lucideMoon' },
+    { value: 'system', label: 'System', icon: 'lucideMonitor' },
+  ];
+
+  // Arrow keys move the choice, as in a native radio group.
+  onThemeKey(event: KeyboardEvent) {
+    const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const idx = this.themeOptions.findIndex((o) => o.value === this.theme.mode());
+    const next = this.themeOptions[(idx + step + this.themeOptions.length) % this.themeOptions.length]!;
+    this.theme.set(next.value);
+    const buttons = (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('button');
+    buttons[this.themeOptions.indexOf(next)]?.focus();
   }
 
   async toggleShowUndated(checked: boolean) {
@@ -116,6 +123,7 @@ export class SettingsUi {
       await this.trpc.mediaSourcesSettings.updateSettings.mutate({ hideUndated: !checked });
     } catch {
       this.showUndated.set(!checked);
+      this.toast.error('Could not save the setting. Try again.');
       return;
     }
     // Refresh the cached flag too, or the effect above restores the old value

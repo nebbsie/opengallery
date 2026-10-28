@@ -5,35 +5,37 @@ import { logger } from '../utils/logger.js';
 
 export type NormalizedBox = { x: number; y: number; width: number; height: number };
 
-// Detection runs on an image downscaled to fit within this box; crop coordinates
-// are normalized, so we re-apply the same transform here to keep them aligned.
-const DETECT_MAX = 1024;
+// When cropping from a file path, decode at most this size (boxes are
+// normalized, so any size lines up).
+const DECODE_MAX = 2048;
 // Avatar crop output size.
 const CROP_SIZE = 256;
 // Extra context around the detected box (fraction of box size on each side).
 const MARGIN = 0.35;
 
 /**
- * Crop a detected face out of the source image and write it as an AVIF avatar.
- * Returns where it was written, or null on failure (non-fatal for detection).
+ * Crop a detected face and write it as an AVIF avatar. `source` is a file path
+ * (oriented on decode) or an already-oriented image buffer, such as the frame
+ * the face was detected in. Returns where it was written, or null on failure
+ * (non-fatal for detection).
  */
 export async function createFaceCrop(opts: {
   faceId: string;
-  sourcePath: string;
+  source: string | Buffer;
   box: NormalizedBox;
   variantsPath: string;
 }): Promise<{ cropDir: string; cropName: string } | null> {
-  const { faceId, sourcePath, box, variantsPath } = opts;
+  const { faceId, source, box, variantsPath } = opts;
   try {
-    // Materialize the oriented + downscaled image and read its ACTUAL dimensions,
-    // then crop from that same buffer. Deriving the bounds from the buffer we
-    // extract from (rather than dimensions passed in from detection) makes the
-    // extract impossible to push out of range — the box is normalized [0..1], so
-    // it maps correctly onto whatever the real output size turns out to be.
-    const { data, info } = await sharp(sourcePath, { failOn: 'none' })
-      .rotate()
-      .resize({ width: DETECT_MAX, height: DETECT_MAX, fit: 'inside', withoutEnlargement: true })
-      .toBuffer({ resolveWithObject: true });
+    // Materialize the oriented image and read its ACTUAL dimensions, then crop
+    // from that same buffer, so the extract can never go out of range.
+    const { data, info } =
+      typeof source === 'string'
+        ? await sharp(source, { failOn: 'none' })
+            .rotate()
+            .resize({ width: DECODE_MAX, height: DECODE_MAX, fit: 'inside', withoutEnlargement: true })
+            .toBuffer({ resolveWithObject: true })
+        : await sharp(source, { failOn: 'none' }).toBuffer({ resolveWithObject: true });
     const imgW = info.width;
     const imgH = info.height;
     if (!imgW || !imgH) return null;

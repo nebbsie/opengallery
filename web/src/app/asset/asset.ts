@@ -1,4 +1,4 @@
-import { DatePipe, NgClass } from '@angular/common';
+import { DatePipe, Location } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -7,7 +7,6 @@ import {
   ElementRef,
   inject,
   input,
-  OnDestroy,
   signal,
   viewChild,
 } from '@angular/core';
@@ -17,100 +16,155 @@ import { ShareItem } from '@core/dialogs/share-item/share-item';
 import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
+import { ViewerSequence } from '@core/services/viewer-sequence/viewer-sequence';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideChevronLeft,
   lucideChevronRight,
-  lucideCopy,
   lucideDownload,
   lucideEyeOff,
-  lucideFolder,
   lucideInfo,
+  lucideMaximize,
+  lucideMinimize,
+  lucideScanFace,
   lucideShare2,
-  lucideUser,
+  lucideSquareDashedMousePointer,
   lucideX,
 } from '@ng-icons/lucide';
-import { HlmBadge } from '@spartan-ng/helm/badge';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
-import * as L from 'leaflet';
+import { injectQuery, keepPreviousData, QueryClient } from '@tanstack/angular-query-experimental';
 import { HideFromDialog, HideFromTarget } from '../shared-viewer/hide-from-dialog/hide-from-dialog';
-import {
-  FileRules,
-  joinNames,
-  Viewer,
-  viewerRulesKeys,
-} from '../shared-viewer/viewer-rules';
+import { FileRules, joinNames, Viewer, viewerRulesKeys } from '../shared-viewer/viewer-rules';
+import { assetDate, formatCoords } from './asset-format';
+import { AssetInfoPanel, ViewFileData } from './info-panel';
+import { StageSlot, ViewerStage } from './viewer-stage';
 
 const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
 @Component({
   selector: 'app-asset',
-  imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, HlmBadge, DatePipe, NgClass],
+  imports: [ErrorAlert, RouterLink, NgIcon, HlmButton, HlmIcon, DatePipe, AssetInfoPanel, ViewerStage],
   providers: [
     provideIcons({
       lucideChevronLeft,
       lucideChevronRight,
-      lucideCopy,
       lucideDownload,
       lucideEyeOff,
-      lucideFolder,
       lucideInfo,
+      lucideMaximize,
+      lucideMinimize,
+      lucideScanFace,
       lucideShare2,
-      lucideUser,
+      lucideSquareDashedMousePointer,
       lucideX,
     }),
   ],
   host: {
-    class: 'relative block h-full w-full overflow-hidden',
+    class: 'relative flex h-full w-full flex-col overflow-hidden sm:flex-row',
+    '[style.background-color]': "'rgba(0, 0, 0, ' + (1 - dismissProgress()) + ')'",
     '(document:keydown)': 'onKeydown($event)',
+    '(document:fullscreenchange)': 'isFullscreen.set(!!fullscreenElement())',
   },
   template: `
-    @if (file.isError()) {
-      <app-error-alert [error]="file.error()" />
-    }
+    <!-- Media area -->
+    <div class="relative min-h-0 min-w-0 flex-1" role="region" aria-label="Photo viewer">
+      <app-viewer-stage
+        [slots]="slots()"
+        [alt]="alt()"
+        [showFaces]="showFaces()"
+        [(tagMode)]="tagMode"
+        (navigate)="go($event)"
+        (dismiss)="close()"
+        (tapped)="chromeVisible.set(!chromeVisible())"
+        (swipeUp)="infoOpen.set(true)"
+      />
 
-    @if (file.isSuccess() && file.data(); as data) {
-      <!-- Scrim so the controls stay legible over bright photos -->
-      <div
-        class="pointer-events-none absolute inset-x-0 top-0 z-40 h-20 bg-gradient-to-b from-black/40 to-transparent"
-        aria-hidden="true"
-      ></div>
+      @if (file.isError()) {
+        <div class="absolute inset-x-4 top-20 z-30 mx-auto max-w-md">
+          <app-error-alert [error]="file.error()" />
+        </div>
+      }
 
+      <!-- Controls. They fade while the photo is dragged down and hide on a tap. -->
       <div
-        class="absolute z-50 flex w-full items-center p-2 {{
-          backLink ? 'justify-between' : 'justify-end'
-        }}"
+        class="pointer-events-none absolute inset-0 z-20 transition-opacity duration-200"
+        [style.opacity]="chromeOpacity()"
+        [class.invisible]="chromeOpacity() === 0"
       >
-        @if (backLink) {
-          <a hlmBtn variant="ghost" size="icon" class="{{ ctrlBtn }}" [routerLink]="backLink">
-            <ng-icon hlm name="lucideX" />
-          </a>
-        }
+        <!-- Scrim so the controls stay legible over bright photos -->
+        <div
+          class="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/50 to-transparent"
+          aria-hidden="true"
+        ></div>
 
-        <div class="flex items-center gap-1.5">
+        <div class="pointer-events-auto absolute inset-x-0 top-0 flex items-center gap-1 p-1.5 sm:p-2">
+          <button
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            type="button"
+            [class]="ctrlBtn"
+            aria-label="Close"
+            title="Close (Esc)"
+            (click)="close()"
+          >
+            <ng-icon hlm name="lucideX" />
+          </button>
+
+          <!-- When the item was taken (or imported), and where -->
+          <div class="min-w-0 flex-1 px-1 text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.5)]">
+            @if (date(); as d) {
+              <p class="truncate text-sm leading-tight font-medium tabular-nums">
+                {{ d | date: 'EEE, MMM d, y' }}
+              </p>
+              <p class="truncate text-xs leading-tight text-white/75 tabular-nums">
+                {{ d | date: 'h:mm a' }}@if (coords()) {
+                  · {{ coords() }}
+                }
+              </p>
+            }
+          </div>
+
+          @if (current()?.file?.type === 'image' || (!current() && slotType() !== 'video')) {
+            <button
+              hlmBtn
+              variant="ghost"
+              size="icon"
+              type="button"
+              [class]="showFaces() ? ctrlBtnOn : ctrlBtn"
+              [attr.aria-pressed]="showFaces()"
+              aria-label="Show people"
+              title="People (P)"
+              (click)="toggleFaces()"
+            >
+              <ng-icon hlm name="lucideScanFace" />
+            </button>
+          }
+
           <a
             hlmBtn
             variant="ghost"
             size="icon"
-            class="{{ ctrlBtn }}"
-            [href]="apiUrl + '/asset/' + data.file.id"
-            [download]="data.file.name"
+            [class]="ctrlBtn"
+            [href]="apiUrl + '/asset/' + id()"
+            [attr.download]="current()?.file?.name ?? ''"
+            aria-label="Download original"
             title="Download original"
           >
             <ng-icon hlm name="lucideDownload" />
           </a>
 
-          @if (data.canManageShares) {
+          @if (current()?.canManageShares) {
             <button
               hlmBtn
               variant="ghost"
               size="icon"
-              class="{{ ctrlBtn }}"
               type="button"
+              [class]="ctrlBtn"
+              aria-label="Share"
               title="Share"
               (click)="openShareDialog()"
             >
@@ -118,15 +172,15 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
             </button>
           }
 
-          @if (isAdmin()) {
+          @if (isAdmin() && current()) {
             <button
               hlmBtn
               variant="ghost"
               size="icon"
-              class="{{ ctrlBtn }}"
               type="button"
-              title="Hide from…"
-              aria-label="Hide from…"
+              [class]="ctrlBtn"
+              aria-label="Hide from..."
+              title="Hide from..."
               (click)="openHideFromDialog()"
             >
               <ng-icon hlm name="lucideEyeOff" />
@@ -137,501 +191,286 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
             hlmBtn
             variant="ghost"
             size="icon"
-            class="{{ ctrlBtn }}"
-            title="Info"
+            type="button"
+            [class]="ctrlBtn + ' hidden sm:inline-flex'"
+            [attr.aria-label]="isFullscreen() ? 'Exit full screen' : 'Full screen'"
+            [title]="isFullscreen() ? 'Exit full screen (F)' : 'Full screen (F)'"
+            (click)="toggleFullscreen()"
+          >
+            <ng-icon hlm [name]="isFullscreen() ? 'lucideMinimize' : 'lucideMaximize'" />
+          </button>
+
+          <button
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            type="button"
+            [class]="infoOpen() ? ctrlBtnOn : ctrlBtn"
+            [attr.aria-pressed]="infoOpen()"
+            aria-label="Info"
+            title="Info (I)"
             (click)="infoOpen.set(!infoOpen())"
           >
             <ng-icon hlm name="lucideInfo" />
           </button>
         </div>
-      </div>
 
-      @let f = data.file;
-      <div class="mx-auto h-full w-full">
-        <div class="flex h-full flex-col sm:flex-row sm:items-stretch">
-          <!-- Media area. Touch handlers drive swipe navigation on mobile:
-               drag horizontally and release past a threshold to move to the
-               prev/next asset; short drags snap back. -->
+        @if (prevId() && !navBlocked()) {
+          <a
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            [class]="ctrlBtn + ' pointer-events-auto absolute top-1/2 left-3 hidden -translate-y-1/2 sm:inline-flex'"
+            [routerLink]="['/asset', prevId()]"
+            [queryParams]="navQueryParams()"
+            [replaceUrl]="true"
+            aria-label="Previous"
+            title="Previous"
+          >
+            <ng-icon hlm name="lucideChevronLeft" />
+          </a>
+        }
+        @if (nextId() && !navBlocked()) {
+          <a
+            hlmBtn
+            variant="ghost"
+            size="icon"
+            [class]="ctrlBtn + ' pointer-events-auto absolute top-1/2 right-3 hidden -translate-y-1/2 sm:inline-flex'"
+            [routerLink]="['/asset', nextId()]"
+            [queryParams]="navQueryParams()"
+            [replaceUrl]="true"
+            aria-label="Next"
+            title="Next"
+          >
+            <ng-icon hlm name="lucideChevronRight" />
+          </a>
+        }
+
+        @if (showFaces() && isAdmin() && current()?.file?.type === 'image') {
           <div
-            class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
-            (touchstart)="onTouchStart($event)"
-            (touchmove)="onTouchMove($event)"
-            (touchend)="onTouchEnd()"
-            (touchcancel)="onTouchEnd()"
+            class="pointer-events-auto absolute inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] flex justify-center"
           >
-            <div
-              class="flex h-full w-full items-center justify-center"
-              [style.transform]="dragX() ? 'translateX(' + dragX() + 'px)' : null"
-              [style.transition]="dragging() ? 'none' : 'transform 150ms ease-out'"
+            <button
+              type="button"
+              class="flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-medium shadow-lg backdrop-blur-sm transition-[scale,background-color] outline-none focus-visible:ring-2 focus-visible:ring-white active:scale-[0.96]"
+              [class]="tagMode() ? 'bg-white text-black' : 'bg-black/60 text-white hover:bg-black/75'"
+              [attr.aria-pressed]="tagMode()"
+              (click)="tagMode.set(!tagMode())"
             >
-              @if (f.type === 'image') {
-                <img
-                  [src]="apiUrl + '/asset/' + f.id + '/optimised'"
-                  alt="Image"
-                  draggable="false"
-                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
-                />
-              } @else if (f.type === 'video') {
-                <video
-                  [src]="apiUrl + '/asset/' + f.id + '/optimised'"
-                  [poster]="apiUrl + '/asset/' + f.id + '/thumbnail'"
-                  class="mx-auto block h-full max-h-full w-full max-w-full rounded-lg object-contain"
-                  controls
-                  playsInline
-                  autoplay
-                ></video>
-              }
-            </div>
-
-            @if (data.prevId) {
-              <a
-                [routerLink]="'/asset/' + data.prevId"
-                [queryParams]="getNavQueryParams()"
-                class="absolute top-1/2 left-3 -translate-y-1/2 {{ ctrlBtn }}"
-                hlmBtn
-                variant="ghost"
-                size="icon"
-              >
-                <ng-icon hlm name="lucideChevronLeft" />
-              </a>
-            }
-            @if (data.nextId) {
-              <a
-                [routerLink]="'/asset/' + data.nextId"
-                [queryParams]="getNavQueryParams()"
-                class="absolute top-1/2 right-3 -translate-y-1/2 {{ ctrlBtn }}"
-                hlmBtn
-                variant="ghost"
-                size="icon"
-              >
-                <ng-icon hlm name="lucideChevronRight" />
-              </a>
-            }
+              <ng-icon hlm size="sm" name="lucideSquareDashedMousePointer" />
+              {{ tagMode() ? 'Cancel tagging' : 'Tag a face' }}
+            </button>
           </div>
-
-          <!-- Info panel -->
-          <aside
-            class="bg-background w-full overflow-hidden transition-[height,width] duration-150 ease-in-out sm:flex-shrink-0"
-            [ngClass]="
-              infoOpen()
-                ? 'h-[50vh] border-t border-border sm:h-full sm:w-80 sm:border-t-0 sm:border-l'
-                : 'h-0 sm:w-0'
-            "
-          >
-            <div
-              class="h-full overflow-y-auto p-4 transition-opacity duration-150"
-              [class.opacity-0]="!infoOpen()"
-              [class.opacity-100]="infoOpen()"
-            >
-              <div class="space-y-6">
-                <!-- File Information Section -->
-                <section>
-                  <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
-                    File Info
-                  </h4>
-                  <div class="space-y-3">
-                    <div class="flex items-start justify-between gap-3">
-                      <span class="text-muted-foreground text-xs">Name</span>
-                      <span class="text-right text-sm font-medium break-words">{{ f.name }}</span>
-                    </div>
-                    <div class="flex items-center justify-between gap-3">
-                      <span class="text-muted-foreground text-xs">Size</span>
-                      <span class="text-sm">{{ formatBytes(f.size) }}</span>
-                    </div>
-                    @if (hiddenFromLabel(); as label) {
-                      <!-- Admin-only: who cannot see this file. Opens the picker. -->
-                      <div class="flex items-start justify-between gap-3">
-                        <span class="text-muted-foreground text-xs">Hidden from</span>
-                        <button
-                          type="button"
-                          class="text-right text-sm break-words hover:underline"
-                          title="Change who this is hidden from"
-                          (click)="openHideFromDialog()"
-                        >
-                          {{ label }}
-                        </button>
-                      </div>
-                    }
-                    @if (data.imageMetadata) {
-                      <div class="flex items-center justify-between gap-3">
-                        <span class="text-muted-foreground text-xs">Dimensions</span>
-                        <div class="flex items-center gap-2">
-                          <span class="text-sm font-medium"
-                            >{{ data.imageMetadata.width }} × {{ data.imageMetadata.height }}</span
-                          >
-                          @if (f.type === 'image') {
-                            <span hlmBadge class="bg-primary text-primary-foreground font-bold">{{
-                              getMegapixels(data.imageMetadata.width, data.imageMetadata.height)
-                            }}</span>
-                          }
-                          @if (f.type === 'video') {
-                            <span hlmBadge [class]="getBadgeClass(data.imageMetadata.height)">{{
-                              getVideoBadgeLabel(data.imageMetadata.height)
-                            }}</span>
-                          }
-                        </div>
-                      </div>
-                    }
-                  </div>
-                </section>
-
-                @if (data.people && data.people.length) {
-                  <div class="border-border border-t pt-6">
-                    <section>
-                      <h4
-                        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
-                      >
-                        People
-                      </h4>
-                      <div class="flex flex-wrap gap-3">
-                        @for (person of data.people; track person.personId) {
-                          <a
-                            [routerLink]="['/faces', person.personId]"
-                            class="group flex w-16 flex-col items-center gap-1.5"
-                            [title]="person.name || 'Unnamed person'"
-                          >
-                            <div
-                              class="bg-muted ring-border group-hover:ring-primary h-14 w-14 overflow-hidden rounded-full ring-1 transition"
-                            >
-                              @if (person.hasCrop) {
-                                <img
-                                  [src]="apiUrl + '/face/' + person.faceId"
-                                  [alt]="person.name || 'Unnamed person'"
-                                  class="h-full w-full object-cover transition-transform group-hover:scale-105"
-                                  loading="lazy"
-                                />
-                              } @else {
-                                <div
-                                  class="text-muted-foreground grid h-full w-full place-items-center"
-                                >
-                                  <ng-icon hlm name="lucideUser" />
-                                </div>
-                              }
-                            </div>
-                            <span
-                              class="text-muted-foreground group-hover:text-foreground w-full truncate text-center text-xs transition-colors"
-                            >
-                              {{ person.name || 'Unnamed' }}
-                            </span>
-                          </a>
-                        }
-                      </div>
-                    </section>
-                  </div>
-                }
-
-                @if (data.albums && data.albums.length) {
-                  <div class="border-border border-t pt-6">
-                    <section>
-                      <h4
-                        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
-                      >
-                        Albums
-                      </h4>
-                      <div class="space-y-1.5">
-                        @for (album of data.albums; track album.id) {
-                          <a
-                            [routerLink]="['/albums', album.id]"
-                            class="text-foreground hover:bg-secondary/50 group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors"
-                            [title]="album.name"
-                          >
-                            <ng-icon
-                              hlm
-                              name="lucideFolder"
-                              class="text-muted-foreground group-hover:text-foreground shrink-0 transition-colors"
-                            />
-                            <span class="truncate">{{ album.name }}</span>
-                          </a>
-                        }
-                      </div>
-                    </section>
-                  </div>
-                }
-
-                @if (
-                  data.imageMetadata &&
-                  (shouldShowTaken(data.imageMetadata.takenAt, f.createdAt) ||
-                    data.imageMetadata.cameraMake ||
-                    data.imageMetadata.cameraModel ||
-                    data.imageMetadata.lensModel ||
-                    data.imageMetadata.iso !== null ||
-                    data.imageMetadata.exposureTime ||
-                    data.imageMetadata.fNumber ||
-                    data.imageMetadata.focalLength !== null)
-                ) {
-                  <div class="border-border border-t pt-6">
-                    <section>
-                      <h4
-                        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
-                      >
-                        Capture Details
-                      </h4>
-                      <div class="space-y-3">
-                        @if (shouldShowTaken(data.imageMetadata.takenAt, f.createdAt)) {
-                          <div class="flex items-center justify-between gap-3">
-                            <span class="text-muted-foreground text-xs">Taken</span>
-                            <span class="text-sm">{{
-                              data.imageMetadata.takenAt | date: 'MMM d, y · h:mma'
-                            }}</span>
-                          </div>
-                        }
-
-                        @if (data.imageMetadata.cameraMake || data.imageMetadata.cameraModel) {
-                          <div class="flex items-start justify-between gap-3">
-                            <span class="text-muted-foreground text-xs">Camera</span>
-                            <span class="text-right text-sm font-medium break-words">
-                              {{ data.imageMetadata.cameraMake || '' }}
-                              {{ data.imageMetadata.cameraModel || '' }}
-                            </span>
-                          </div>
-                        }
-
-                        @if (data.imageMetadata.lensModel) {
-                          <div class="flex items-start justify-between gap-3">
-                            <span class="text-muted-foreground text-xs">Lens</span>
-                            <span class="text-right text-sm break-words">{{
-                              data.imageMetadata.lensModel
-                            }}</span>
-                          </div>
-                        }
-
-                        @if (
-                          data.imageMetadata.exposureTime ||
-                          data.imageMetadata.fNumber ||
-                          data.imageMetadata.iso !== null ||
-                          data.imageMetadata.focalLength !== null
-                        ) {
-                          <div class="flex items-start justify-between gap-3">
-                            <span class="text-muted-foreground text-xs">Settings</span>
-                            <div class="flex flex-wrap justify-end gap-1.5">
-                              @if (data.imageMetadata.exposureTime) {
-                                <span
-                                  class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
-                                  >{{ formatShutterSpeed(data.imageMetadata.exposureTime) }}</span
-                                >
-                              }
-                              @if (data.imageMetadata.fNumber) {
-                                <span
-                                  class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
-                                  >f/{{ data.imageMetadata.fNumber }}</span
-                                >
-                              }
-                              @if (data.imageMetadata.iso !== null) {
-                                <span
-                                  class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
-                                  >ISO {{ data.imageMetadata.iso }}</span
-                                >
-                              }
-                              @if (data.imageMetadata.focalLength !== null) {
-                                <span
-                                  class="bg-secondary text-secondary-foreground rounded px-2 py-0.5 text-xs font-medium"
-                                  >{{ data.imageMetadata.focalLength }}mm</span
-                                >
-                              }
-                            </div>
-                          </div>
-                        }
-                      </div>
-                    </section>
-                  </div>
-                }
-
-                @if (data.geoLocation) {
-                  <div class="border-border border-t pt-6">
-                    <section>
-                      <h4
-                        class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase"
-                      >
-                        Location
-                      </h4>
-                      <div
-                        #mapContainer
-                        class="border-border h-48 w-full overflow-hidden rounded-lg border shadow-sm"
-                      ></div>
-                    </section>
-                  </div>
-                }
-
-                <!-- Import Details Section -->
-                <div class="border-border border-t pt-6">
-                  <section>
-                    <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
-                      Import Details
-                    </h4>
-                    <div class="space-y-3">
-                      <div class="flex items-start justify-between gap-3">
-                        <span class="text-muted-foreground text-xs">Filename</span>
-                        <span class="text-right text-sm font-medium break-words">{{ f.name }}</span>
-                      </div>
-                      <div class="flex items-center justify-between gap-3">
-                        <span class="text-muted-foreground text-xs">Imported</span>
-                        <span class="text-sm">{{ f.createdAt | date: 'MMM d, y · h:mma' }}</span>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-
-                <!-- On Disk Section -->
-                <div class="border-border border-t pt-6">
-                  <section>
-                    <h4 class="text-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
-                      On Disk
-                    </h4>
-                    <div
-                      class="bg-secondary/30 text-muted-foreground hover:bg-secondary/50 group relative rounded-md border p-3 font-mono text-[11px] break-all transition-colors"
-                    >
-                      {{ f.dir }}/{{ f.name }}
-                      <button
-                        hlmBtn
-                        variant="ghost"
-                        size="icon"
-                        class="absolute top-1 right-1 h-6 w-6 opacity-0 transition-[opacity,scale] group-hover:opacity-100 active:scale-[0.96] before:absolute before:inset-[-8px] before:content-['']"
-                        (click)="copyToClipboard(f.dir + '/' + f.name)"
-                        title="Copy path"
-                      >
-                        <ng-icon hlm name="lucideCopy" size="sm" />
-                      </button>
-                    </div>
-                  </section>
-                </div>
-              </div>
-            </div>
-          </aside>
-        </div>
+        }
       </div>
-    }
+    </div>
+
+    <!-- Info panel. Inert while closed so Tab does not go into hidden controls. -->
+    <aside
+      class="bg-background text-foreground shrink-0 overflow-hidden transition-[height,width,opacity] duration-200 ease-out"
+      aria-label="Info"
+      [inert]="!infoOpen()"
+      [class]="
+        infoOpen()
+          ? 'h-[50dvh] w-full border-t pb-[env(safe-area-inset-bottom)] opacity-100 sm:h-full sm:w-96 sm:border-t-0 sm:border-l sm:pb-0'
+          : 'h-0 w-full opacity-0 sm:h-full sm:w-0'
+      "
+    >
+      <!-- Only the item on screen: while the next one loads, a skeleton
+           shows instead of the previous item's details. -->
+      @if (current(); as data) {
+        <div class="h-full w-full sm:w-96">
+          <app-asset-info-panel
+            [data]="data"
+            [open]="infoOpen()"
+            [hiddenFromLabel]="hiddenFromLabel()"
+            (hideFrom)="openHideFromDialog()"
+            (closed)="infoOpen.set(false)"
+          />
+        </div>
+      } @else if (!file.isError()) {
+        <div class="h-full w-full space-y-3 px-4 pt-4 sm:w-96" aria-busy="true" aria-label="Loading info">
+          <div class="bg-muted h-5 w-48 animate-pulse rounded"></div>
+          <div class="bg-muted h-4 w-32 animate-pulse rounded"></div>
+          <div class="bg-muted mt-6 h-16 w-full animate-pulse rounded-lg"></div>
+          <div class="bg-muted h-24 w-full animate-pulse rounded-lg"></div>
+        </div>
+      }
+    </aside>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class Asset implements OnDestroy {
+export class Asset {
   readonly apiUrl = environment.api.url;
 
-  // Shared style for media-overlay controls: a translucent dark pill with a
-  // white icon so they stay legible over any photo, in light or dark theme.
+  // Media-overlay controls: a translucent dark circle with a white icon so
+  // they stay legible over any photo. 44px tap targets.
   protected readonly ctrlBtn =
-    'border-0 bg-black/35 text-white backdrop-blur-sm transition-transform hover:bg-black/55 hover:text-white active:scale-[0.96]';
+    'size-11 rounded-full border-0 bg-black/35 text-white backdrop-blur-sm transition-[scale,background-color] outline-none hover:bg-black/55 hover:text-white focus-visible:ring-2 focus-visible:ring-white active:scale-[0.96]';
+
+  // The same control while its mode is on (People, Info).
+  protected readonly ctrlBtnOn =
+    'size-11 rounded-full border-0 bg-white text-black transition-[scale,background-color] outline-none hover:bg-white/85 hover:text-black focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black active:scale-[0.96]';
 
   protected readonly trpc = injectTrpc();
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
+  private readonly location = inject(Location);
   private readonly queryClient = inject(QueryClient);
   private readonly dialog = inject(HlmDialogService);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   // False while the admin previews as another user.
   protected readonly isAdmin = inject(Auth).isAdmin;
 
-  protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
-  protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
-  protected readonly cameraMake = this.route.snapshot.queryParamMap.get('cameraMake');
-  protected readonly cameraModel = this.route.snapshot.queryParamMap.get('cameraModel');
-  protected readonly kind = this.route.snapshot.queryParamMap.get('kind') as 'image' | 'video' | 'all' | null;
-  protected readonly personId = this.route.snapshot.queryParamMap.get('personId');
+  private readonly qp = this.route.snapshot.queryParamMap;
+  protected readonly backLink = this.qp.get('from');
+  protected readonly albumId = this.qp.get('albumId');
+  protected readonly cameraMake = this.qp.get('cameraMake');
+  protected readonly cameraModel = this.qp.get('cameraModel');
+  protected readonly kind = this.qp.get('kind') as 'image' | 'video' | 'all' | null;
+  protected readonly personId = this.qp.get('personId');
+  // Token of an ordered id list (search results) that prev / next walks
+  // instead of the library order.
+  protected readonly seq = this.qp.get('seq');
+  private readonly sequence = inject(ViewerSequence);
+  private readonly sequenceIds = computed(() => this.sequence.get(this.seq));
 
-  protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
-
-  // Swipe-to-navigate (mobile). `dragX` is the live horizontal offset of the
-  // media while a finger is down; `dragging` disables the snap-back transition
-  // during the drag so the media tracks the finger 1:1.
-  protected readonly dragX = signal(0);
-  protected readonly dragging = signal(false);
-  private touchStartX = 0;
-  private touchStartY = 0;
-  private touchActive = false;
-  // Locks the gesture to one axis after the first few px so a vertical scroll
-  // intent doesn't get hijacked as a horizontal swipe.
-  private axisLock: 'h' | 'v' | null = null;
-  private static readonly SWIPE_THRESHOLD = 60;
-
-  private map: L.Map | null = null;
-  protected readonly mapContainer = viewChild<ElementRef<HTMLDivElement>>('mapContainer');
-
-  constructor() {
-    // Initialize map when data and container are available
-    effect(() => {
-      const data = this.file.data();
-      const container = this.mapContainer();
-
-      // Clean up existing map first
-      if (this.map) {
-        this.map.remove();
-        this.map = null;
-      }
-
-      // Create new map if we have geolocation data
-      if (data?.geoLocation && container) {
-        this.initMap(Number(data.geoLocation.lat), Number(data.geoLocation.lon));
-      }
-    });
-
-    // Prefetch next/prev asset data and preload media to reduce flicker
-    effect(() => {
-      const data = this.file.data();
-      if (!data) return;
-
-      const albumId = this.albumId ?? undefined;
-      const cameraMake = this.cameraMake ?? undefined;
-      const cameraModel = this.cameraModel ?? undefined;
-      const kind = this.kind ?? undefined;
-      const personId = this.personId ?? undefined;
-
-      const prefetch = async (id: string | null) => {
-        if (!id) return;
-        const key = [CacheKey.AssetSingle, id, this.albumId, this.cameraMake, this.cameraModel, this.kind, this.personId];
-        await this.queryClient.prefetchQuery({
-          queryKey: key,
-          queryFn: () =>
-            this.trpc.files.viewFile.query({ fileId: id, albumId, cameraMake, cameraModel, kind, personId }),
-          staleTime: 60_000,
-        });
-
-        // After metadata is cached, decide what to preload
-        const cached = this.queryClient.getQueryData(key as unknown as readonly unknown[]) as
-          | { file?: { type?: 'image' | 'video' } }
-          | undefined;
-        const fileType = cached?.file?.type;
-        if (fileType === 'image') {
-          this.preloadUrl(`${this.apiUrl}/asset/${id}/optimised`);
-        } else {
-          // Always safe to preload thumbnail (image) for both images/videos
-          this.preloadUrl(`${this.apiUrl}/asset/${id}/thumbnail`);
-        }
-      };
-
-      void prefetch(data.nextId);
-      void prefetch(data.prevId);
-    });
-  }
-
-  // Persist info panel state in localStorage (browser only)
-  private readonly persistInfoOpen = effect(() => {
-    const isBrowser = typeof window !== 'undefined' && typeof localStorage !== 'undefined';
-    if (!isBrowser) return undefined;
-    const value = this.infoOpen();
-    try {
-      localStorage.setItem(INFO_OPEN_STORAGE_KEY, value ? '1' : '0');
-    } catch {
-      // no-op
-    }
-    return undefined;
-  });
+  // The viewer was opened from another page in this tab, so Back returns to
+  // it (with its scroll position). Neighbour moves use replaceUrl, so they do
+  // not add history entries.
+  private readonly hasInAppHistory = !!this.router.getCurrentNavigation()?.previousNavigation;
 
   id = input.required<string>();
 
-  file = injectQuery(() => ({
-    queryKey: [CacheKey.AssetSingle, this.id(), this.albumId, this.cameraMake, this.cameraModel, this.kind, this.personId],
+  protected readonly infoOpen = signal(this.readInfoOpenFromStorage());
+  protected readonly showFaces = signal(false);
+  protected readonly tagMode = signal(false);
+  protected readonly chromeVisible = signal(true);
+  protected readonly isFullscreen = signal(false);
+
+  private readonly stage = viewChild(ViewerStage);
+  protected readonly dismissProgress = computed(() => this.stage()?.dismissProgress() ?? 0);
+  protected readonly chromeOpacity = computed(() =>
+    this.chromeVisible() ? Math.max(0, 1 - this.dismissProgress() * 2) : 0,
+  );
+
+  private key(id: string) {
+    return [
+      CacheKey.AssetSingle,
+      id,
+      this.albumId,
+      this.cameraMake,
+      this.cameraModel,
+      this.kind,
+      this.personId,
+    ] as const;
+  }
+
+  private fetchFile(id: string): Promise<ViewFileData> {
+    return this.trpc.files.viewFile.query({
+      fileId: id,
+      albumId: this.albumId ?? undefined,
+      cameraMake: this.cameraMake ?? undefined,
+      cameraModel: this.cameraModel ?? undefined,
+      kind: this.kind ?? undefined,
+      personId: this.personId ?? undefined,
+    });
+  }
+
+  // Keeps the previous item while the next one loads, so arrow moves never
+  // show a blank screen.
+  readonly file = injectQuery(() => ({
+    queryKey: this.key(this.id()),
     staleTime: Infinity,
-    networkMode: 'offlineFirst',
-    queryFn: async () =>
-      this.trpc.files.viewFile.query({
-        fileId: this.id(),
-        albumId: this.albumId ?? undefined,
-        cameraMake: this.cameraMake ?? undefined,
-        cameraModel: this.cameraModel ?? undefined,
-        kind: this.kind ?? undefined,
-        personId: this.personId ?? undefined,
-      }),
+    networkMode: 'offlineFirst' as const,
+    placeholderData: keepPreviousData,
+    queryFn: () => this.fetchFile(this.id()),
   }));
 
-  // Admin-only: who cannot see this file (directly or through a hidden person
+  // Bumped when a neighbour lands in the cache, so the slots can read it.
+  private readonly cacheTick = signal(0);
+
+  private cached(id: string): ViewFileData | undefined {
+    return this.queryClient.getQueryData<ViewFileData>(this.key(id));
+  }
+
+  /** Data for the item on screen (null while it loads). */
+  protected readonly current = computed(() => {
+    const data = this.file.data();
+    return data && data.file.id === this.id() ? data : null;
+  });
+
+  // Neighbours: from the item's own data, or (while it loads) from the item we
+  // came from, which is its neighbour on the other side.
+  private readonly neighbours = computed(() => {
+    const id = this.id();
+    const list = this.sequenceIds();
+    const at = list ? list.indexOf(id) : -1;
+    if (list && at >= 0) {
+      return { prevId: list[at - 1] ?? null, nextId: list[at + 1] ?? null };
+    }
+    this.cacheTick();
+    const own = this.current() ?? this.cached(id);
+    if (own) return { prevId: own.prevId, nextId: own.nextId };
+    const old = this.file.data();
+    return {
+      prevId: old && old.nextId === id ? old.file.id : null,
+      nextId: old && old.prevId === id ? old.file.id : null,
+    };
+  });
+  protected readonly prevId = computed(() => this.neighbours().prevId);
+  protected readonly nextId = computed(() => this.neighbours().nextId);
+
+  protected readonly slots = computed<StageSlot[]>(() => {
+    const id = this.id();
+    this.cacheTick();
+    const slot = (sid: string, pos: -1 | 0 | 1): StageSlot => {
+      const d = (pos === 0 ? this.current() : null) ?? this.cached(sid);
+      const t = d?.file.type;
+      return {
+        id: sid,
+        pos,
+        type: t === 'image' || t === 'video' ? t : null,
+        mime: d?.file.mime ?? null,
+        width: d?.imageMetadata?.width ?? null,
+        height: d?.imageMetadata?.height ?? null,
+      };
+    };
+    const out: StageSlot[] = [];
+    const prev = this.prevId();
+    const next = this.nextId();
+    if (prev) out.push(slot(prev, -1));
+    out.push(slot(id, 0));
+    if (next) out.push(slot(next, 1));
+    return out;
+  });
+
+  /** True while a face tag or the person picker is open in the viewer. */
+  protected readonly navBlocked = computed(() => this.stage()?.navBlocked() ?? false);
+
+  protected readonly slotType = computed(() => this.slots().find((s) => s.pos === 0)?.type ?? null);
+
+  protected readonly date = computed(() => assetDate(this.current()));
+  protected readonly coords = computed(() => formatCoords(this.current()?.geoLocation ?? null));
+
+  // Alt text: what, when, who and where.
+  protected readonly alt = computed(() => {
+    const data = this.current();
+    if (!data) return 'Photo';
+    const parts = [data.file.type === 'video' ? 'Video' : 'Photo'];
+    const d = this.date();
+    if (d) {
+      parts.push(
+        `${data.imageMetadata?.takenAt ? 'taken' : 'imported'} on ${d.toLocaleDateString(undefined, { dateStyle: 'long' })}`,
+      );
+    }
+    const names = data.people.map((p) => p.name).filter((n): n is string => !!n);
+    if (names.length) parts.push(`with ${joinNames(names)}`);
+    if (this.coords()) parts.push(`at ${this.coords()}`);
+    return parts.join(' ');
+  });
+
+  // Admin only: who cannot see this file (directly or through a hidden person
   // in it), for the info panel. Shares its cache keys with the picker.
   private readonly viewers = injectQuery(() => ({
     queryKey: viewerRulesKeys.viewers(),
@@ -648,17 +487,62 @@ export class Asset implements OnDestroy {
   protected readonly hiddenFromLabel = computed(() => {
     const rules = this.fileRules.data();
     if (!rules) return '';
-    const ids = new Set([
-      ...rules.hiddenFromUserIds,
-      ...rules.hiddenViaPerson.map((r) => r.userId),
-    ]);
+    const ids = new Set([...rules.hiddenFromUserIds, ...rules.hiddenViaPerson.map((r) => r.userId)]);
     const names = (this.viewers.data() ?? []).filter((v) => ids.has(v.id)).map((v) => v.name);
     return joinNames(names);
   });
 
-  // No direct query here; we rely on UiSettingsService
+  constructor() {
+    // Prefetch the neighbours' data and preload their large images.
+    effect(() => {
+      if (!this.current()) return;
+      for (const id of [this.nextId(), this.prevId()]) {
+        if (id) void this.prefetch(id);
+      }
+    });
 
-  protected getNavQueryParams(): Record<string, string> | null {
+    // Tagging ends with the People view.
+    effect(() => {
+      if (!this.showFaces()) this.tagMode.set(false);
+    });
+
+    effect(() => {
+      const value = this.infoOpen();
+      try {
+        localStorage.setItem(INFO_OPEN_STORAGE_KEY, value ? '1' : '0');
+      } catch {
+        // Storage can be blocked; the panel still works.
+      }
+    });
+  }
+
+  private async prefetch(id: string): Promise<void> {
+    if (!this.cached(id)) {
+      try {
+        await this.queryClient.prefetchQuery({
+          queryKey: this.key(id),
+          queryFn: () => this.fetchFile(id),
+          staleTime: 60_000,
+        });
+      } catch {
+        return;
+      }
+      this.cacheTick.update((n) => n + 1);
+    }
+    const type = this.cached(id)?.file.type;
+    this.preloadUrl(`${this.apiUrl}/asset/${id}/${type === 'image' ? 'optimised' : 'thumbnail'}`);
+  }
+
+  private readonly preloaded = new Set<string>();
+  private preloadUrl(url: string) {
+    if (typeof window === 'undefined' || this.preloaded.has(url)) return;
+    this.preloaded.add(url);
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url;
+  }
+
+  protected navQueryParams(): Record<string, string> | null {
     const qp: Record<string, string> = {};
     if (this.albumId) qp['albumId'] = this.albumId;
     if (this.backLink) qp['from'] = this.backLink;
@@ -666,298 +550,109 @@ export class Asset implements OnDestroy {
     if (this.cameraModel) qp['cameraModel'] = this.cameraModel;
     if (this.kind) qp['kind'] = this.kind;
     if (this.personId) qp['personId'] = this.personId;
+    if (this.seq) qp['seq'] = this.seq;
     return Object.keys(qp).length ? qp : null;
   }
 
-  protected getVideoResolutionLabel(height: number | null | undefined): string {
-    if (!height) return '';
-    if (height < 540) return '480p';
-    if (height < 800) return '720p';
-    if (height < 1300) return '1080p';
-    if (height < 1900) return '1440p';
-    if (height < 2600) return '2160p';
-    if (height < 4400) return '4320p';
-    if (height < 9000) return '8640p';
-    return `${height}p`;
+  protected go(dir: 'prev' | 'next'): void {
+    if (this.navBlocked()) return;
+    const id = dir === 'prev' ? this.prevId() : this.nextId();
+    if (!id) return;
+    void this.router.navigate(['/asset', id], {
+      queryParams: this.navQueryParams() ?? undefined,
+      replaceUrl: true,
+    });
   }
 
-  protected getVideoTierLabel(height: number | null | undefined): string {
-    if (!height) return '';
-    if (height < 720) return 'SD';
-    if (height < 1080) return 'HD';
-    if (height < 1440) return 'FHD';
-    if (height < 2160) return 'QHD';
-    if (height < 4320) return '4K';
-    if (height < 8640) return '8K';
-    return 'Ultra';
+  // Back to where the viewer was opened from. With no page before it in this
+  // tab (a shared link or a reload), go to the `from` page or the gallery.
+  protected close(): void {
+    if (this.fullscreenElement()) void document.exitFullscreen().catch(() => undefined);
+    if (this.hasInAppHistory) {
+      this.location.back();
+    } else {
+      void this.router.navigateByUrl(this.backLink || '/gallery');
+    }
   }
 
-  protected getVideoBadgeLabel(height: number | null | undefined): string {
-    const res = this.getVideoResolutionLabel(height);
-    const tier = this.getVideoTierLabel(height);
-    if (!res && !tier) return '';
-    if (!res) return tier;
-    if (!tier) return res;
-    return `${res} · ${tier}`;
+  protected toggleFaces(): void {
+    this.showFaces.update((v) => !v);
+    this.chromeVisible.set(true);
   }
 
-  protected getBadgeClass(height: number | null | undefined): string {
-    const tier = this.getVideoTierLabel(height);
-    switch (tier) {
-      case 'SD':
-        return 'bg-secondary text-secondary-foreground font-bold';
-      case 'HD':
-        return 'bg-blue-600 text-white font-bold';
-      case 'FHD':
-        return 'bg-indigo-600 text-white font-bold';
-      case 'QHD':
-        return 'bg-purple-600 text-white font-bold';
-      case '4K':
-        return 'bg-emerald-600 text-white font-bold';
-      case '8K':
-        return 'bg-rose-600 text-white font-bold';
+  protected fullscreenElement(): Element | null {
+    return typeof document !== 'undefined' ? document.fullscreenElement : null;
+  }
+
+  protected toggleFullscreen(): void {
+    if (typeof document === 'undefined') return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    } else {
+      void this.host.nativeElement.requestFullscreen?.().catch(() => undefined);
+    }
+  }
+
+  protected onKeydown(event: KeyboardEvent) {
+    // Leave keys to an open dialog (e.g. Share) and to text fields.
+    if (event.defaultPrevented || document.querySelector('.cdk-overlay-pane')) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const t = event.target as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+
+    const stage = this.stage();
+    let handled = true;
+    switch (event.key) {
+      case 'Escape':
+        if (!stage?.escape()) this.close();
+        break;
+      case 'ArrowLeft':
+        this.go('prev');
+        break;
+      case 'ArrowRight':
+        this.go('next');
+        break;
+      case 'i':
+      case 'I':
+        this.infoOpen.update((v) => !v);
+        break;
+      case 'f':
+      case 'F':
+        this.toggleFullscreen();
+        break;
+      case 'p':
+      case 'P':
+        if (this.current()?.file.type === 'image') this.toggleFaces();
+        break;
+      case '+':
+      case '=':
+        stage?.zoomIn();
+        break;
+      case '-':
+      case '_':
+        stage?.zoomOut();
+        break;
+      case '0':
+        stage?.resetZoom();
+        break;
       default:
-        return 'bg-primary text-primary-foreground font-bold';
+        handled = false;
     }
-  }
-
-  protected formatBytes(bytes: number | null | undefined): string {
-    const size = typeof bytes === 'number' && isFinite(bytes) && bytes >= 0 ? bytes : 0;
-    if (size === 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
-    const value = size / Math.pow(1024, i);
-    return `${value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[i]}`;
-  }
-
-  protected getMegapixels(
-    width: number | null | undefined,
-    height: number | null | undefined,
-  ): string {
-    if (!width || !height) return '';
-    const megapixels = (width * height) / 1_000_000;
-    if (megapixels < 1) {
-      return `${(megapixels * 1000).toFixed(0)}K`;
-    }
-    return `${megapixels.toFixed(1)} MP`;
-  }
-
-  protected formatShutterSpeed(value: string | number): string {
-    const n = typeof value === 'number' ? value : Number(value);
-    if (!isFinite(n) || n <= 0) return String(value);
-    if (n >= 1) {
-      // 1s or longer; show with s suffix, trim trailing zeros
-      const rounded = n >= 10 ? n.toFixed(0) : n >= 1 ? n.toFixed(1) : String(n);
-      return `${Number(rounded)}s`;
-    }
-    // Shorter than 1s: render as a fraction 1/x, rounding denominator nicely
-    const denom = Math.round(1 / n);
-    return `1/${denom}`;
-  }
-
-  protected shouldShowTaken(
-    takenAt: Date | string | null | undefined,
-    createdAt: Date | string | null | undefined,
-  ): boolean {
-    if (!takenAt) return false;
-    try {
-      const t = new Date(takenAt as unknown as string).getTime();
-      const c = createdAt ? new Date(createdAt as unknown as string).getTime() : NaN;
-      if (Number.isNaN(t) || Number.isNaN(c)) return true;
-      // Compare by day to avoid tiny differences; treat same-day as equal
-      const sameDay = new Date(t).toDateString() === new Date(c).toDateString();
-      return !sameDay;
-    } catch {
-      return true;
-    }
+    if (handled) event.preventDefault();
   }
 
   private readInfoOpenFromStorage(): boolean {
-    const isBrowser = typeof window !== 'undefined' && typeof localStorage !== 'undefined';
-    if (!isBrowser) return false;
     try {
-      const raw = localStorage.getItem(INFO_OPEN_STORAGE_KEY);
-      return raw === '1';
+      return localStorage.getItem(INFO_OPEN_STORAGE_KEY) === '1';
     } catch {
       return false;
     }
   }
 
-  protected async copyToClipboard(value: string) {
-    if (!value) return;
-    const hasNavigator = typeof navigator !== 'undefined';
-    const hasDocument = typeof document !== 'undefined';
-    try {
-      if (hasNavigator && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-        return;
-      }
-      if (!hasDocument) return;
-      const el = document.createElement('textarea');
-      el.value = value;
-      el.setAttribute('readonly', '');
-      el.style.position = 'fixed';
-      el.style.top = '-9999px';
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand('copy');
-      document.body.removeChild(el);
-    } catch {
-      // no-op
-    }
-  }
-
-  onKeydown(event: KeyboardEvent) {
-    // Leave keys to an open dialog (e.g. Share): Escape should only close it and
-    // arrows should not swap the asset underneath it.
-    if (event.defaultPrevented || document.querySelector('.cdk-overlay-pane')) return;
-    // Allow quick back navigation with ESC when coming from a page
-    if (this.backLink && event.key === 'Escape') {
-      this.router.navigateByUrl(this.backLink);
-      return;
-    }
-    if (!this.file.isSuccess()) return;
-    const data = this.file.data();
-    if (!data) return;
-    if (event.key === 'ArrowLeft' && data.prevId) {
-      this.navigateToAsset(data.prevId);
-    } else if (event.key === 'ArrowRight' && data.nextId) {
-      this.navigateToAsset(data.nextId);
-    }
-  }
-
-  private navigateToAsset(id: string) {
-    this.router.navigate(['/asset', id], {
-      queryParams: this.getNavQueryParams() || undefined,
-    });
-  }
-
-  onTouchStart(event: TouchEvent) {
-    // Ignore multi-touch (pinch-zoom) — only single-finger drags swipe.
-    if (event.touches.length !== 1) {
-      this.touchActive = false;
-      return;
-    }
-    const t = event.touches[0];
-    this.touchStartX = t.clientX;
-    this.touchStartY = t.clientY;
-    this.touchActive = true;
-    this.axisLock = null;
-    this.dragging.set(true);
-  }
-
-  onTouchMove(event: TouchEvent) {
-    if (!this.touchActive || event.touches.length !== 1) return;
-    const t = event.touches[0];
-    const dx = t.clientX - this.touchStartX;
-    const dy = t.clientY - this.touchStartY;
-
-    // Wait for a clear intent, then lock to the dominant axis. A vertical lock
-    // bows out so the page can scroll normally.
-    if (this.axisLock === null) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-      this.axisLock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
-      if (this.axisLock === 'v') {
-        this.touchActive = false;
-        this.dragging.set(false);
-        return;
-      }
-    }
-
-    // Add rubber-band resistance at the ends where there's nowhere to go.
-    const data = this.file.data();
-    const atEnd = (dx > 0 && !data?.prevId) || (dx < 0 && !data?.nextId);
-    this.dragX.set(atEnd ? dx * 0.3 : dx);
-    // We've committed to a horizontal swipe; stop the browser treating it as a
-    // scroll or back-gesture.
-    event.preventDefault();
-  }
-
-  onTouchEnd() {
-    if (!this.touchActive) {
-      // Vertical/multi-touch gesture or no drag — make sure we're reset.
-      this.dragging.set(false);
-      this.dragX.set(0);
-      return;
-    }
-    this.touchActive = false;
-
-    const dx = this.dragX();
-    const data = this.file.data();
-    if (dx <= -Asset.SWIPE_THRESHOLD && data?.nextId) {
-      this.commitSwipe(data.nextId);
-    } else if (dx >= Asset.SWIPE_THRESHOLD && data?.prevId) {
-      this.commitSwipe(data.prevId);
-    } else {
-      // Not far enough — animate back to centre.
-      this.dragging.set(false);
-      this.dragX.set(0);
-    }
-  }
-
-  // Snap the offset away without an animation, then route to the target. The
-  // component instance is reused across asset routes, so resetting here keeps
-  // the incoming media centred rather than sliding in from the old offset.
-  private commitSwipe(id: string) {
-    this.dragging.set(true);
-    this.dragX.set(0);
-    this.navigateToAsset(id);
-  }
-
-  ngOnDestroy(): void {
-    if (this.map) {
-      this.map.remove();
-      this.map = null;
-    }
-  }
-
-  private initMap(lat: number, lon: number): void {
-    const container = this.mapContainer()?.nativeElement;
-    if (!container || this.map) return;
-
-    // Fix Leaflet's default icon path issue in bundled apps
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-      iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-      shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-    });
-
-    this.map = L.map(container, {
-      center: [lat, lon],
-      zoom: 13,
-      zoomControl: false,
-      attributionControl: true,
-    });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap',
-      maxZoom: 19,
-    }).addTo(this.map);
-
-    L.marker([lat, lon]).addTo(this.map);
-  }
-
-  private readonly preloaded = new Set<string>();
-  private preloadUrl(url: string) {
-    if (typeof window === 'undefined') return;
-    if (this.preloaded.has(url)) return;
-    this.preloaded.add(url);
-    try {
-      const img = new Image();
-      img.decoding = 'async';
-      img.loading = 'eager';
-      img.src = url;
-    } catch {
-      // ignore
-    }
-  }
-
   // The dialog renders in a .cdk-overlay-pane, so onKeydown leaves the arrow
   // and Escape keys to it while it is open.
-  openHideFromDialog() {
-    const data = this.file.data();
+  protected openHideFromDialog() {
+    const data = this.current();
     if (!data || !this.isAdmin()) return;
     const target: HideFromTarget = {
       kind: 'file',
@@ -967,18 +662,11 @@ export class Asset implements OnDestroy {
     this.dialog.open(HideFromDialog, { context: { target } });
   }
 
-  openShareDialog() {
-    const data = this.file.data();
-    if (!data?.canManageShares) {
-      return;
-    }
-
+  protected openShareDialog() {
+    const data = this.current();
+    if (!data?.canManageShares) return;
     this.dialog.open(ShareItem, {
-      context: {
-        sourceType: 'file',
-        sourceId: data.file.id,
-        title: data.file.name,
-      },
+      context: { sourceType: 'file', sourceId: data.file.id, title: data.file.name },
     });
   }
 }

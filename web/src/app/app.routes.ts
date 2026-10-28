@@ -54,6 +54,12 @@ export const routes: Routes = [
     loadChildren: () => import('./years/years.routes').then((r) => r.routes),
   },
   {
+    path: 'search',
+    title: 'Search - Open Gallery',
+    canActivate: [AuthGuard],
+    loadComponent: () => import('./search/search').then((c) => c.Search),
+  },
+  {
     path: 'map',
     title: 'World Map - Open Gallery',
     canActivate: [AuthGuard],

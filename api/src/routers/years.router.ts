@@ -175,6 +175,8 @@ export const yearsRouter = router({
           libraryId: LibraryTable.id,
           libraryFileId: LibraryFileTable.id,
           blurhash: ImageMetadataTable.blurhash,
+          width: ImageMetadataTable.width,
+          height: ImageMetadataTable.height,
         })
         .from(FileTable)
         .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
@@ -208,6 +210,8 @@ export const yearsRouter = router({
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,
+        width: r.width,
+        height: r.height,
       }));
 
       const hasMore = data.length > limit;

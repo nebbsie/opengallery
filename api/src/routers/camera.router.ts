@@ -116,6 +116,8 @@ export const cameraRouter = router({
           libraryId: LibraryTable.id,
           libraryFileId: LibraryFileTable.id,
           blurhash: ImageMetadataTable.blurhash,
+          width: ImageMetadataTable.width,
+          height: ImageMetadataTable.height,
         })
         .from(ImageMetadataTable)
         .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
@@ -156,6 +158,8 @@ export const cameraRouter = router({
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,
+        width: r.width,
+        height: r.height,
       }));
 
       const hasMore = data.length > limit;

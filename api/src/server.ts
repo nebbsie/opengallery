@@ -5,7 +5,7 @@ import {
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
 import "dotenv/config";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
 import * as fs from "node:fs";
 import path from "path";
@@ -14,13 +14,28 @@ import { clearSessionCache } from "./auth/session-cache.js";
 import { getEffectiveSession } from "./auth/view-as.js";
 import { canUserViewFile } from "./authz/shared-access.js";
 import { db } from "./db/index.js";
-import { FaceTable, FileTable, FileVariantTable } from "./db/schema.js";
+import {
+  FaceTable,
+  FileTable,
+  FileVariantTable,
+  type FileVariantType,
+} from "./db/schema.js";
 import { logger } from "./logger.js";
 import metricsPlugin from "./metrics.js";
 import { beginRequestStats, type RequestStats } from "./request-context.js";
 import { appRouter, type AppRouter } from "./router.js";
 import { createContext, toHeaders } from "./trpc.js";
 import { resolveAssetPath } from "./utils/media-path.js";
+import {
+  takeDownloadTicket,
+  uniqueZipNames,
+  writeZip,
+  ZIP_MAX_BYTES,
+  ZIP_MAX_ENTRIES,
+} from "./utils/zip-download.js";
+import { backfillLargeThumbnails } from "./routers/files.router.js";
+import { uploadRoutes } from "./uploads/upload-routes.js";
+import { startUploadCleanup } from "./uploads/upload-store.js";
 import { wsManager } from "./ws-manager.js";
 
 const server: FastifyInstance = Fastify();
@@ -114,25 +129,39 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   }
 
   // Normalize the variant up front so an invalid one is rejected before any query.
+  const lower = variant?.toLowerCase();
   const v =
-    variant?.toLowerCase() === "thumbnail"
-      ? "thumbnail"
-      : variant?.toLowerCase() === "optimised"
-        ? "optimised"
-        : variant
-          ? "invalid"
-          : null;
+    lower === "thumbnail" || lower === "optimised" || lower === "thumbnail_lg"
+      ? lower
+      : variant
+        ? "invalid"
+        : null;
 
   if (v === "invalid") {
     return reply
       .code(400)
-      .send({ error: "Variant must be thumbnail | optimised" });
+      .send({ error: "Variant must be thumbnail | thumbnail_lg | optimised" });
   }
+
+  const variantFile = async (type: string) =>
+    (
+      await db
+        .select({ file: FileTable })
+        .from(FileVariantTable)
+        .innerJoin(FileTable, eq(FileVariantTable.fileId, FileTable.id))
+        .where(
+          and(
+            eq(FileVariantTable.originalFileId, id),
+            eq(FileVariantTable.type, type as FileVariantType),
+          ),
+        )
+        .limit(1)
+    )[0]?.file;
 
   // Single query on the hot thumbnail path: fetch either the original row or the
   // variant's file row directly. A variant request doesn't need the base row, so
   // we skip it (previously two queries: base + variant join).
-  const target =
+  let target =
     v == null
       ? (
           await db
@@ -141,19 +170,15 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
             .where(eq(FileTable.id, id))
             .limit(1)
         )[0]
-      : (
-          await db
-            .select({ file: FileTable })
-            .from(FileVariantTable)
-            .innerJoin(FileTable, eq(FileVariantTable.fileId, FileTable.id))
-            .where(
-              and(
-                eq(FileVariantTable.originalFileId, id),
-                eq(FileVariantTable.type, v),
-              ),
-            )
-            .limit(1)
-        )[0]?.file;
+      : await variantFile(v);
+
+  // The 640 px grid thumbnail is filled in by a backfill. Until it exists, serve
+  // the 320 px one, but only cache it briefly so the sharp one shows up later.
+  let isFallback = false;
+  if (!target && v === "thumbnail_lg") {
+    target = await variantFile("thumbnail");
+    isFallback = !!target;
+  }
 
   if (!target) {
     return reply
@@ -174,7 +199,15 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     .header("Content-Length", String(target.size))
     .header("ETag", etag)
     .header("Last-Modified", updatedAt.toUTCString())
-    .header("Cache-Control", "private, max-age=31536000, immutable");
+    .header(
+      "Cache-Control",
+      isFallback ? "private, max-age=600" : "private, max-age=31536000, immutable",
+    );
+
+  // ?download=1 on the original saves it under its own file name.
+  if (v == null && (req.query as { download?: string }).download === "1") {
+    reply.header("Content-Disposition", contentDisposition(target.name));
+  }
 
   const range = req.headers.range;
   if (range) {
@@ -213,6 +246,86 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   }
 
   return reply.send(fs.createReadStream(abs));
+});
+
+function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(name).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+// Zip download of a selection. The ticket comes from files.createDownload,
+// which already checked access; the session must still be the same user.
+server.get("/download/:token", async (req, reply) => {
+  const { token } = req.params as { token: string };
+  const session = await getEffectiveSession(toHeaders(req.headers));
+  const userId = (session?.user?.id as string | undefined) ?? null;
+  if (!userId) return reply.code(401).send({ error: "Unauthorized" });
+
+  const fileIds = takeDownloadTicket(token, userId);
+  if (!fileIds) {
+    return reply.code(404).send({ error: "Download link expired. Try again." });
+  }
+
+  const rows: (typeof FileTable.$inferSelect)[] = [];
+  for (let i = 0; i < fileIds.length; i += 500) {
+    rows.push(
+      ...(await db
+        .select()
+        .from(FileTable)
+        .where(inArray(FileTable.id, fileIds.slice(i, i + 500)))),
+    );
+  }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+
+  const found: { name: string; path: string; size: number; mtime: Date }[] = [];
+  let total = 0;
+  for (const id of fileIds) {
+    const row = byId.get(id);
+    if (!row) continue;
+    try {
+      const abs = await resolveAssetPath(path.resolve(path.join(row.dir, row.name)));
+      const st = await fs.promises.stat(abs);
+      if (!st.isFile()) continue;
+      total += st.size;
+      found.push({ name: row.name, path: abs, size: st.size, mtime: st.mtime });
+    } catch {
+      // Missing on disk (unplugged drive, moved file): leave it out.
+    }
+  }
+
+  if (found.length === 0) {
+    return reply.code(404).send({ error: "None of the files could be read" });
+  }
+  if (found.length > ZIP_MAX_ENTRIES || total > ZIP_MAX_BYTES) {
+    return reply
+      .code(413)
+      .send({ error: "Too much to zip at once. Select fewer items (under 4 GB)." });
+  }
+
+  const names = uniqueZipNames(found.map((f) => f.name));
+  const entries = found.map((f, i) => ({ ...f, name: names[i]! }));
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  reply.hijack();
+  const raw = reply.raw;
+  raw.writeHead(200, {
+    "Content-Type": "application/zip",
+    "Content-Disposition": contentDisposition(`OpenGallery ${stamp} (${entries.length}).zip`),
+    "Cache-Control": "no-store",
+    // Stream through nginx instead of spooling the whole zip to its temp dir.
+    "X-Accel-Buffering": "no",
+  });
+  try {
+    await writeZip(raw, entries);
+    raw.end();
+  } catch (err) {
+    logger.warn(`[download] zip stopped: ${(err as Error).message}`);
+    raw.destroy();
+  }
 });
 
 // Serve a cropped face thumbnail (the avatar for a person cluster). Mirrors the
@@ -257,10 +370,16 @@ server.get("/face/:faceId", async (req, reply) => {
     .header("Content-Length", String(stats.size))
     .header("ETag", etag)
     .header("Last-Modified", updatedAt.toUTCString())
-    .header("Cache-Control", "private, max-age=31536000, immutable");
+    // Not immutable: a rescan rewrites the crop under the same face id, so
+    // browsers must revalidate (cheap, by ETag).
+    .header("Cache-Control", "private, max-age=3600, must-revalidate");
 
   return reply.send(fs.createReadStream(abs));
 });
+
+// Resumable upload chunks (PUT /upload/:id). Its own scope, so its raw body
+// parser does not change any other route.
+await server.register(uploadRoutes);
 
 // Auth handler shared by both routes
 const authHandler = async function (
@@ -372,7 +491,11 @@ server.register(fastifyTRPCPlugin, {
         code === "FORBIDDEN" ||
         code === "NOT_FOUND" ||
         code === "BAD_REQUEST" ||
-        code === "CONFLICT";
+        code === "CONFLICT" ||
+        code === "PAYLOAD_TOO_LARGE" ||
+        code === "UNSUPPORTED_MEDIA_TYPE" ||
+        code === "PRECONDITION_FAILED" ||
+        code === "TOO_MANY_REQUESTS";
 
       if (isExpected) {
         // concise single line for expected errors
@@ -397,6 +520,17 @@ const start = async () => {
     );
 
     await server.listen({ port, host });
+    startUploadCleanup();
+
+    // Queue the 640 px grid thumbnail for older images (idempotent, cheap when
+    // there is nothing to do). Delayed so it never slows the first requests.
+    setTimeout(() => {
+      backfillLargeThumbnails()
+        .then((n) => {
+          if (n > 0) logger.info(`[thumbs] queued ${n} large thumbnails`);
+        })
+        .catch((e) => logger.warn("[thumbs] backfill failed", e as Error));
+    }, 15_000);
   } catch (err) {
     logger.error("Failed to start server:", err as Error);
     process.exit(1);

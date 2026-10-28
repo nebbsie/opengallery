@@ -1,6 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   type SQL,
   and,
@@ -9,6 +8,7 @@ import {
   exists,
   gt,
   inArray,
+  isNotNull,
   isNull,
   notExists,
   notInArray,
@@ -26,6 +26,7 @@ import {
 import { db } from "../db/index.js";
 import { fileSortExpr, galleryOrderBy, keysetBefore } from "../db/file-sort.js";
 import {
+  FaceRejectionTable,
   FaceTable,
   FileTable,
   FileTaskTable,
@@ -35,7 +36,6 @@ import {
   LibraryTable,
   PersonTable,
   PersonMergeDismissedTable,
-  SystemSettingsTable,
   ViewerHiddenPersonTable,
 } from "../db/schema.js";
 import {
@@ -46,11 +46,19 @@ import {
 } from "../trpc.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import {
-  deleteViewerRulesForPeople,
   moveViewerRulesToPerson,
   pinViewerHiddenFaces,
-  removeFacesForFiles,
 } from "../utils/file-operations.js";
+import {
+  invalidateFaceIndex,
+  resolveCurrentModel,
+  setPersonInIndexes,
+  withFaceLock,
+} from "../faces/face-index.js";
+import { getVoteThreshold, ingestFileFaces, resolveLibraryId } from "../faces/ingest.js";
+import { deletePeopleRows, refreshPeople } from "../faces/people.js";
+import { isReclusterRunning, reclusterAll, startAutoRecluster } from "../faces/recluster.js";
+import { dot, faceVec, meanVec } from "../faces/vector.js";
 
 // Keyset cursor for listPeoplePage: the (flag, faceCount, id) of the last row
 // returned, base64-encoded. Bad/garbled cursors decode to null (treated as the
@@ -77,54 +85,26 @@ function decodePeopleCursor(raw: string | null | undefined): PeopleCursor | null
   }
 }
 
-// Cosine similarity in [-1, 1]. Scale-invariant, so it works whether or not the
-// embeddings are unit-normalized. Higher = more similar.
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    dot += av * bv;
-    na += av * av;
-    nb += bv * bv;
-  }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
+// Matching, regrouping and person upkeep live in api/src/faces/*. This router
+// is the tRPC surface over them.
 
-// Default cosine-similarity threshold for joining a face to an existing person.
-// Overridden per-instance by SystemSettingsTable.faceMatchThreshold (Settings →
-// Faces). Higher = stricter (fewer false merges, more fragmentation, which is
-// fixable via mergePeople). Tuned for ArcFace (buffalo_l) normed embeddings,
-// where same-person cosine sits well above different-person.
-const DEFAULT_FACE_MATCH_THRESHOLD = 0.4;
-// A candidate must beat the runner-up cluster by at least this margin, otherwise
-// the match is ambiguous (two clusters look about equally similar) and we start a
-// new cluster rather than guess wrong.
-const MATCH_MARGIN = 0.05;
-// Beyond the centroid check, confirm against the cluster's *actual* stored faces:
-// its single most-similar member must score at least (threshold − this). Guards
-// against a drifted/blurred centroid quietly absorbing a different person.
-const MEMBER_CONFIRM_OFFSET = 0.05;
-// Cap how many of a cluster's faces we load for that confirmation check.
-const MAX_CONFIRM_MEMBERS = 50;
-
-// --- merge suggestions ---
-// Two clusters whose mean embeddings are at least this similar are offered as a
-// "might be the same person" suggestion. Set just below the per-face match
-// threshold: clusters this close should plausibly have ended up as one person and
-// usually stayed split only because of the margin/member gates in assignFace.
-const SUGGEST_CENTROID_THRESHOLD = 0.36;
+// Merge suggestions: two people whose mean embeddings are at least this close
+// (relative to the vote threshold) are checked face by face.
+const SUGGEST_CENTROID_OFFSET = 0.04;
 // How many centroid-passing pairs to run the (more expensive) member-level
 // confirmation on. Bounds DB work while still covering the strongest matches.
 const SUGGEST_CANDIDATE_CAP = 60;
 // Don't load more than this many clusters per library into the O(n²) centroid
 // scan. Real recurring people have the largest clusters, so rank by faceCount and
-// consider the top slice; the singleton-noise tail below the cut is skipped.
+// consider the top slice.
 const SUGGEST_MAX_PEOPLE_PER_LIBRARY = 600;
+// Cap how many of a person's faces the member-level check loads.
+const MAX_CONFIRM_MEMBERS = 50;
+// Unnamed people with fewer photos than this are left off the People page
+// unless asked for (Google-style: tiny groups are mostly noise).
+const MIN_LISTED_FACES = 3;
+// A merge can be undone for this long.
+const UNDO_MERGE_MS = 10 * 60 * 1000;
 
 // Canonical (order-independent) key for a pair of person ids, so a dismissal
 // applies regardless of which way round the pair was suggested.
@@ -132,33 +112,128 @@ function pairKey(a: string, b: string): { low: string; high: string } {
   return a < b ? { low: a, high: b } : { low: b, high: a };
 }
 
-// Resolve the configured match threshold, falling back to the default.
-async function getFaceMatchThreshold(): Promise<number> {
-  const row = await getCachedSystemSettings();
-  return row?.faceMatchThreshold ?? DEFAULT_FACE_MATCH_THRESHOLD;
+function parseCentroid(json: string | null): Float32Array | null {
+  return faceVec({ embedding: json });
 }
 
-function parseEmbedding(json: string | null): number[] | null {
-  if (!json) return null;
-  try {
-    const arr = JSON.parse(json);
-    return Array.isArray(arr) ? (arr as number[]) : null;
-  } catch {
-    return null;
-  }
+const boxInput = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  width: z.number().min(0).max(1),
+  height: z.number().min(0).max(1),
+});
+
+// Undo state for recent merges, in memory: an API restart drops it, which only
+// ends the undo window early.
+type MergeUndo = {
+  at: number;
+  target: { id: string; name: string | null; pinned: boolean; coverFaceId: string | null };
+  source: typeof PersonTable.$inferSelect;
+  movedFaceIds: string[];
+  viewerIds: string[];
+  // What the merge added to the target, so undo can take it off again.
+  addedRuleViewerIds: string[];
+  addedRejectionFaceIds: string[];
+};
+const mergeUndo = new Map<string, MergeUndo>();
+
+// Undo state for single-face edits (remove, move, new person, review answers):
+// a snapshot of the faces, their rejections, and every person they touched.
+// In memory, like mergeUndo.
+type FaceEditUndo = {
+  at: number;
+  faces: { id: string; personId: string | null; confirmed: boolean }[];
+  rejections: { faceId: string; personId: string }[];
+  people: (typeof PersonTable.$inferSelect)[];
+  createdPersonId?: string;
+};
+const faceEditUndo = new Map<string, FaceEditUndo>();
+
+// Take the snapshot before the edit. Caller holds the face lock.
+async function snapshotFaceEdit(faceIds: string[], personIds: string[]): Promise<string> {
+  const faces = await db
+    .select({ id: FaceTable.id, personId: FaceTable.personId, confirmed: FaceTable.confirmed })
+    .from(FaceTable)
+    .where(inArray(FaceTable.id, faceIds));
+  const rejections = await db
+    .select({ faceId: FaceRejectionTable.faceId, personId: FaceRejectionTable.personId })
+    .from(FaceRejectionTable)
+    .where(inArray(FaceRejectionTable.faceId, faceIds));
+  const ids = [...new Set([...personIds, ...faces.map((f) => f.personId).filter((p): p is string => !!p)])];
+  const people = ids.length
+    ? await db.select().from(PersonTable).where(inArray(PersonTable.id, ids))
+    : [];
+  const token = randomUUID();
+  const cutoff = Date.now() - UNDO_MERGE_MS;
+  for (const [k, v] of faceEditUndo) if (v.at < cutoff) faceEditUndo.delete(k);
+  faceEditUndo.set(token, { at: Date.now(), faces, rejections, people });
+  return token;
 }
 
-// Resolve the (non-deleted) library a file belongs to. Faces are clustered
-// per-library so people stay scoped to their owner.
-async function resolveLibraryId(fileId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ libraryId: LibraryFileTable.libraryId })
-    .from(LibraryFileTable)
-    .where(
-      and(eq(LibraryFileTable.fileId, fileId), isNull(LibraryFileTable.deletedAt)),
+// Load faces by id and check they are all in libraries the admin may change.
+async function loadFacesForEdit(faceIds: string[]) {
+  const ids = [...new Set(faceIds)];
+  const rows = await db
+    .select({
+      id: FaceTable.id,
+      fileId: FaceTable.fileId,
+      personId: FaceTable.personId,
+      libraryId: LibraryFileTable.libraryId,
+    })
+    .from(FaceTable)
+    .innerJoin(
+      LibraryFileTable,
+      and(eq(LibraryFileTable.fileId, FaceTable.fileId), isNull(LibraryFileTable.deletedAt)),
     )
-    .limit(1);
-  return row?.libraryId ?? null;
+    .where(inArray(FaceTable.id, ids));
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  if (byId.size !== ids.length) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Face not found" });
+  }
+  return [...byId.values()];
+}
+
+// Put faces on a person as user answers: confirmed, rejections for that
+// person cleared, and at most one face per photo (an older face of the same
+// person in the same photo is taken off). Caller holds the face lock.
+async function putFacesOnPerson(
+  faces: { id: string; fileId: string; personId: string | null }[],
+  personId: string,
+) {
+  const now = new Date().toISOString();
+  const ids = faces.map((f) => f.id);
+  const fileIds = [...new Set(faces.map((f) => f.fileId))];
+  const clashes = await db
+    .select({ id: FaceTable.id })
+    .from(FaceTable)
+    .where(
+      and(
+        eq(FaceTable.personId, personId),
+        inArray(FaceTable.fileId, fileIds),
+        notInArray(FaceTable.id, ids),
+      ),
+    );
+  if (clashes.length > 0) {
+    await db
+      .update(FaceTable)
+      .set({ personId: null, confirmed: false, updatedAt: now })
+      .where(inArray(FaceTable.id, clashes.map((c) => c.id)));
+    setPersonInIndexes(clashes.map((c) => c.id), null);
+  }
+  if (await pinViewerHiddenFaces(fileIds)) clearScopeCache();
+  await db
+    .update(FaceTable)
+    .set({ personId, confirmed: true, updatedAt: now })
+    .where(inArray(FaceTable.id, ids));
+  await db
+    .delete(FaceRejectionTable)
+    .where(and(inArray(FaceRejectionTable.faceId, ids), eq(FaceRejectionTable.personId, personId)));
+  await db
+    .update(PersonTable)
+    .set({ pinned: true, updatedAt: now })
+    .where(eq(PersonTable.id, personId));
+  setPersonInIndexes(ids, personId);
+  await refreshPeople([personId, ...faces.map((f) => f.personId).filter((p): p is string => !!p)]);
 }
 
 // A non-admin sees a person only through the photos they can see: a person
@@ -257,6 +332,9 @@ function viewerPeopleQuery(scope: AccessScope, extra: SQL[] = []) {
 
 const peopleNameFlag = sql<number>`CASE WHEN ${PersonTable.name} IS NULL THEN 1 ELSE 0 END`;
 
+// Regroup on its own after enough new faces, or when detection goes idle.
+startAutoRecluster();
+
 export const facesRouter = router({
   // --- worker / internal ---------------------------------------------------
 
@@ -265,7 +343,7 @@ export const facesRouter = router({
   //   1. Delete tasks that target variant outputs (thumbnail/optimised files are
   //      stored as their own type="image" rows by files.saveVariants and must
   //      never be face-scanned — these can never lease and stall the backlog).
-  //   2. Seed a task for every original image that doesn't have one.
+  //   2. Seed a task for every original photo and video that doesn't have one.
   //   3. Revive dead tasks (failed at the attempt cap) so a fix to a systemic
   //      failure re-drives them instead of leaving them permanently stuck.
   backfillDetectTasks: internalProcedure.mutation(async () => {
@@ -291,7 +369,7 @@ export const facesRouter = router({
       .from(FileTable)
       .where(
         and(
-          eq(FileTable.type, "image"),
+          inArray(FileTable.type, ["image", "video"]),
           notExists(
             db
               .select()
@@ -344,167 +422,34 @@ export const facesRouter = router({
     return { seeded, purged: purged.length, revived: revived.length };
   }),
 
-  // Clustering core: attach a detected face to the best-matching person in the
-  // same library, or create a new cluster. Centroid is the running mean of the
-  // cluster's embeddings for cheap matching as the library grows.
-  assignFace: internalProcedure
+  // Replace the detected faces of one file with a fresh detection and match
+  // them to people (faces/ingest.ts). One call per file, so a retry can never
+  // duplicate faces, and answers survive a rescan.
+  ingestFileFaces: internalProcedure
     .input(
       z.object({
         fileId: z.string().uuid(),
-        embedding: z.array(z.number()),
-        box: z.object({
-          x: z.number(),
-          y: z.number(),
-          width: z.number(),
-          height: z.number(),
-        }),
-        detScore: z.number().optional(),
+        model: z.string().min(1).max(64),
+        faces: z
+          .array(
+            z.object({
+              box: boxInput,
+              embedding: z.string().min(1),
+              detScore: z.number(),
+              facePx: z.number(),
+              blur: z.number(),
+              yaw: z.number(),
+            }),
+          )
+          .max(200),
       }),
     )
     .mutation(async ({ input }) => {
-      const libraryId = await resolveLibraryId(input.fileId);
-      if (!libraryId) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: `No library for file ${input.fileId}`,
-        });
+      try {
+        return await ingestFileFaces(input);
+      } catch (e) {
+        throw new TRPCError({ code: "NOT_FOUND", message: (e as Error).message });
       }
-
-      const threshold = await getFaceMatchThreshold();
-
-      const people = await db
-        .select({
-          id: PersonTable.id,
-          centroid: PersonTable.centroid,
-          faceCount: PersonTable.faceCount,
-        })
-        .from(PersonTable)
-        .where(eq(PersonTable.libraryId, libraryId));
-
-      // Rank clusters by centroid similarity: track the best and runner-up so we
-      // can require a confident margin between them.
-      let best: { id: string; sim: number; faceCount: number } | null = null;
-      let secondBestSim = -1;
-      for (const p of people) {
-        const centroid = parseEmbedding(p.centroid);
-        if (!centroid) continue;
-        const sim = cosineSimilarity(input.embedding, centroid);
-        if (!best || sim > best.sim) {
-          secondBestSim = best?.sim ?? secondBestSim;
-          best = { id: p.id, sim, faceCount: p.faceCount };
-        } else if (sim > secondBestSim) {
-          secondBestSim = sim;
-        }
-      }
-
-      // Decide whether to JOIN the best cluster. All gates must hold, else we
-      // create a new cluster — biased toward never merging different people.
-      let matched: { id: string; faceCount: number } | null = null;
-      if (best && best.sim >= threshold) {
-        const marginOk = secondBestSim < 0 || best.sim - secondBestSim >= MATCH_MARGIN;
-        if (marginOk) {
-          // Confirm against the cluster's actual faces, not just its mean centroid.
-          const members = await db
-            .select({ embedding: FaceTable.embedding })
-            .from(FaceTable)
-            .where(eq(FaceTable.personId, best.id))
-            .orderBy(desc(FaceTable.createdAt))
-            .limit(MAX_CONFIRM_MEMBERS);
-          let bestMemberSim = -1;
-          for (const m of members) {
-            const emb = parseEmbedding(m.embedding);
-            if (!emb) continue;
-            const s = cosineSimilarity(input.embedding, emb);
-            if (s > bestMemberSim) bestMemberSim = s;
-          }
-          if (bestMemberSim >= threshold - MEMBER_CONFIRM_OFFSET) {
-            matched = { id: best.id, faceCount: best.faceCount };
-          }
-        }
-      }
-
-      const now = new Date().toISOString();
-
-      if (matched) {
-        const [face] = await db
-          .insert(FaceTable)
-          .values({
-            fileId: input.fileId,
-            personId: matched.id,
-            embedding: JSON.stringify(input.embedding),
-            boxX: input.box.x,
-            boxY: input.box.y,
-            boxW: input.box.width,
-            boxH: input.box.height,
-            detScore: input.detScore ?? null,
-          })
-          .returning();
-
-        // Incremental mean: (centroid * n + embedding) / (n + 1)
-        const [person] = await db
-          .select({ centroid: PersonTable.centroid, faceCount: PersonTable.faceCount })
-          .from(PersonTable)
-          .where(eq(PersonTable.id, matched.id))
-          .limit(1);
-        const old = parseEmbedding(person?.centroid ?? null) ?? input.embedding;
-        const n = person?.faceCount ?? 0;
-        const merged = input.embedding.map(
-          (v, i) => ((old[i] ?? 0) * n + v) / (n + 1),
-        );
-
-        await db
-          .update(PersonTable)
-          .set({
-            centroid: JSON.stringify(merged),
-            faceCount: n + 1,
-            updatedAt: now,
-          })
-          .where(eq(PersonTable.id, matched.id));
-
-        return { faceId: face!.id, personId: matched.id, isNew: false };
-      }
-
-      // New cluster.
-      const [person] = await db
-        .insert(PersonTable)
-        .values({
-          libraryId,
-          centroid: JSON.stringify(input.embedding),
-          faceCount: 1,
-        })
-        .returning();
-
-      const [face] = await db
-        .insert(FaceTable)
-        .values({
-          fileId: input.fileId,
-          personId: person!.id,
-          embedding: JSON.stringify(input.embedding),
-          boxX: input.box.x,
-          boxY: input.box.y,
-          boxW: input.box.width,
-          boxH: input.box.height,
-          detScore: input.detScore ?? null,
-        })
-        .returning();
-
-      await db
-        .update(PersonTable)
-        .set({ coverFaceId: face!.id, updatedAt: now })
-        .where(eq(PersonTable.id, person!.id));
-
-      return { faceId: face!.id, personId: person!.id, isNew: true };
-    }),
-
-  // Clear all faces for a file (and repair their person clusters) so the worker
-  // can re-detect from a clean slate. Makes detection idempotent across retries
-  // — without this, a re-leased detect_faces task re-inserts already-saved faces,
-  // inflating person counts and polluting centroids (D2).
-  clearFacesForFile: internalProcedure
-    .input(z.object({ fileId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      await removeFacesForFiles([input.fileId]);
-      return { ok: true };
     }),
 
   // Record where the worker wrote a face's cropped avatar image on disk.
@@ -559,59 +504,74 @@ export const facesRouter = router({
 
   // --- web / private -------------------------------------------------------
 
-  // Wipe all detected people + faces (and their avatar crops) and re-queue
-  // detection for every image, so clustering can be re-run from scratch (e.g.
-  // after tuning the match threshold). Destructive + global, hence admin-only.
+  // Re-run detection for every photo and video (e.g. after a model upgrade).
+  // Faces, people, names and user answers stay: each new face that overlaps an
+  // old one in the same photo keeps its row and answers (faces/ingest.ts), and
+  // a regroup runs when detection finishes. Admin-only.
   rescanAll: adminProcedure.mutation(async () => {
-    // Best-effort delete the crop avatars on disk (matches createFaceCrop's
-    // `${variantsPath}/faces` layout). Non-fatal if it fails.
-    const [settings] = await db
-      .select({ variantsPath: SystemSettingsTable.variantsPath })
-      .from(SystemSettingsTable)
-      .limit(1);
-    if (settings?.variantsPath) {
-      await rm(join(settings.variantsPath, "faces"), {
-        recursive: true,
-        force: true,
-      }).catch(() => {});
-    }
-
-    // Every person is about to go, and with them the "hidden from viewer"
-    // rules. Pin those rules onto the photos first, so a rescan never shows a
-    // viewer a photo of a person the admin hid from them.
-    await pinViewerHiddenFaces();
-
     const now = new Date().toISOString();
-    // better-sqlite3 transactions must be synchronous (an async callback throws
-    // "Transaction function cannot return a promise"), so use the sync .run() API
-    // and read affected-row counts off the result.
-    const result = db.transaction((tx) => {
-      // Faces reference people, so delete faces first.
-      const faces = tx.delete(FaceTable).run();
-      const people = tx.delete(PersonTable).run();
-      tx.delete(ViewerHiddenPersonTable).run();
-      const tasks = tx
-        .update(FileTaskTable)
-        .set({
-          status: "pending",
-          attempts: 0,
-          startedAt: null,
-          finishedAt: null,
-          lastError: null,
-          progress: null,
-          updatedAt: now,
-        })
-        .where(eq(FileTaskTable.type, "detect_faces"))
-        .run();
-      return {
-        facesDeleted: faces.changes,
-        peopleDeleted: people.changes,
-        tasksReset: tasks.changes,
-      };
-    });
-    clearScopeCache();
+    const tasks = db
+      .update(FileTaskTable)
+      .set({
+        status: "pending",
+        attempts: 0,
+        startedAt: null,
+        finishedAt: null,
+        lastError: null,
+        progress: null,
+        updatedAt: now,
+      })
+      .where(eq(FileTaskTable.type, "detect_faces"))
+      .run();
+    return { tasksReset: tasks.changes };
+  }),
 
-    return result;
+  // Regroup all faces now (faces/recluster.ts). Runs in the background; poll
+  // faces.status for progress.
+  recluster: adminProcedure.mutation(async () => {
+    if (isReclusterRunning()) return { started: false };
+    void reclusterAll().catch(() => undefined);
+    return { started: true };
+  }),
+
+  status: adminProcedure.query(async () => {
+    const count = (where?: SQL) =>
+      db
+        .select({ n: sql<number>`count(*)` })
+        .from(FaceTable)
+        .where(where)
+        .then((r) => r[0]?.n ?? 0);
+    const [faces, unclustered] = await Promise.all([
+      count(),
+      count(and(isNull(FaceTable.personId), eq(FaceTable.manual, false))),
+    ]);
+    const [people] = await db
+      .select({
+        n: sql<number>`count(*)`,
+        named: sql<number>`sum(case when ${PersonTable.name} is not null then 1 else 0 end)`,
+      })
+      .from(PersonTable)
+      .where(gt(PersonTable.faceCount, 0));
+    const [pending] = await db
+      .select({ n: sql<number>`count(*)` })
+      .from(FileTaskTable)
+      .where(
+        and(
+          eq(FileTaskTable.type, "detect_faces"),
+          inArray(FileTaskTable.status, ["pending", "in_progress"]),
+        ),
+      );
+    const settings = await getCachedSystemSettings();
+    return {
+      faces,
+      people: people?.n ?? 0,
+      named: people?.named ?? 0,
+      unclustered,
+      pendingDetect: pending?.n ?? 0,
+      reclusterRunning: isReclusterRunning(),
+      lastReclusterAt: settings?.faceLastReclusterAt ?? null,
+      model: await resolveCurrentModel(),
+    };
   }),
 
   listPeople: privateProcedure
@@ -631,7 +591,7 @@ export const facesRouter = router({
       const libIds = [...scope.accessibleLibraryIds];
       if (libIds.length === 0) return [];
 
-      const where = [inArray(PersonTable.libraryId, libIds)];
+      const where = [inArray(PersonTable.libraryId, libIds), gt(PersonTable.faceCount, 0)];
       if (!input?.includeHidden) where.push(eq(PersonTable.hidden, false));
 
       const people = await db
@@ -664,6 +624,11 @@ export const facesRouter = router({
         includeHidden: z.boolean().default(false),
         limit: z.number().int().min(1).max(200).default(100),
         cursor: z.string().nullish(),
+        // Name contains this text (case-insensitive).
+        search: z.string().trim().max(120).optional(),
+        filter: z.enum(["all", "named", "unnamed"]).default("all"),
+        // Include unnamed people with fewer than MIN_LISTED_FACES photos.
+        includeSmall: z.boolean().default(false),
       }),
     )
     .query(async ({ ctx: { userId, session }, input }) => {
@@ -689,12 +654,25 @@ export const facesRouter = router({
         faceCount: number;
         hidden: boolean;
       }>;
+      const filters: SQL[] = [];
+      if (input.search) {
+        const like = `%${input.search.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+        filters.push(sql`lower(${PersonTable.name}) LIKE ${like} ESCAPE '\\'`);
+      }
+      if (input.filter === "named") filters.push(sql`${PersonTable.name} IS NOT NULL`);
+      if (input.filter === "unnamed") filters.push(isNull(PersonTable.name));
+      // Small unnamed groups are hidden by default, but never from a search.
+      const hideSmall = !input.includeSmall && !input.search;
+
       if (!scope.isAdmin) {
         // Counts are per viewer (see viewerPeopleQuery), so the keyset runs on
         // the aggregate in HAVING.
         const visibleCount = sql`count(distinct ${FaceTable.fileId})`;
-        const having = afterCursor(visibleCount);
-        const query = viewerPeopleQuery(scope);
+        const havings = [afterCursor(visibleCount)];
+        if (hideSmall)
+          havings.push(sql`(${PersonTable.name} IS NOT NULL OR ${visibleCount} >= ${MIN_LISTED_FACES})`);
+        const having = and(...havings.filter((h): h is SQL => !!h));
+        const query = viewerPeopleQuery(scope, filters);
         rows = await (having ? query.having(having) : query)
           .orderBy(flag, desc(visibleCount), PersonTable.id)
           .limit(input.limit + 1);
@@ -702,8 +680,10 @@ export const facesRouter = router({
         const libIds = [...scope.accessibleLibraryIds];
         if (libIds.length === 0) return { items: [], nextCursor: null };
 
-        const conds = [inArray(PersonTable.libraryId, libIds)];
+        const conds = [inArray(PersonTable.libraryId, libIds), gt(PersonTable.faceCount, 0), ...filters];
         if (!input.includeHidden) conds.push(eq(PersonTable.hidden, false));
+        if (hideSmall)
+          conds.push(sql`(${PersonTable.name} IS NOT NULL OR ${PersonTable.faceCount} >= ${MIN_LISTED_FACES})`);
         const after = afterCursor(PersonTable.faceCount);
         if (after) conds.push(after);
 
@@ -771,10 +751,14 @@ export const facesRouter = router({
       const scope = await getAccessScope(userId, session);
       await loadAuthorizedPerson(input.id, scope, true);
       const name = input.name && input.name.length > 0 ? input.name : null;
-      await db
-        .update(PersonTable)
-        .set({ name, updatedAt: new Date().toISOString() })
-        .where(eq(PersonTable.id, input.id));
+      // Under the face lock: a regroup reads `pinned` once at its start.
+      await withFaceLock(() =>
+        db
+          .update(PersonTable)
+          // A named person is user-curated: regrouping keeps its faces fixed.
+          .set({ name, ...(name ? { pinned: true } : {}), updatedAt: new Date().toISOString() })
+          .where(eq(PersonTable.id, input.id)),
+      );
       return { id: input.id, name };
     }),
 
@@ -811,43 +795,54 @@ export const facesRouter = router({
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
       await loadAuthorizedPerson(input.id, scope);
-      await db
-        .update(PersonTable)
-        .set({ hidden: input.hidden, updatedAt: new Date().toISOString() })
-        .where(eq(PersonTable.id, input.id));
+      await withFaceLock(() =>
+        db
+          .update(PersonTable)
+          .set({ hidden: input.hidden, updatedAt: new Date().toISOString() })
+          .where(eq(PersonTable.id, input.id)),
+      );
       return { ok: true };
     }),
 
-  // Delete a cluster: orphan its faces (keep them for any future re-cluster)
-  // and remove the person row.
+  unhidePerson: adminProcedure
+    .input(z.string().uuid())
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      await loadAuthorizedPerson(input, scope);
+      await db
+        .update(PersonTable)
+        .set({ hidden: false, updatedAt: new Date().toISOString() })
+        .where(eq(PersonTable.id, input));
+      return { ok: true as const };
+    }),
+
+  // Delete a person: its faces become unclustered (the next regroup may group
+  // them again) and the person row goes.
   deletePerson: privateProcedure
     .input(z.string().uuid())
     .mutation(async ({ ctx: { userId, session }, input }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
       await loadAuthorizedPerson(input, scope, true);
-      await db
-        .update(FaceTable)
-        .set({ personId: null, updatedAt: new Date().toISOString() })
-        .where(eq(FaceTable.personId, input));
-      await db.delete(PersonTable).where(eq(PersonTable.id, input));
-      await deleteViewerRulesForPeople([input]);
+      await withFaceLock(async () => {
+        const faces = await db
+          .select({ fileId: FaceTable.fileId })
+          .from(FaceTable)
+          .where(eq(FaceTable.personId, input));
+        const fileIds = [...new Set(faces.map((f) => f.fileId))];
+        for (let i = 0; i < fileIds.length; i += 400)
+          await pinViewerHiddenFaces(fileIds.slice(i, i + 400));
+        await deletePeopleRows([input]);
+        invalidateFaceIndex();
+      });
       clearScopeCache();
-      // Drop any merge dismissals that referenced this now-gone cluster.
-      await db
-        .delete(PersonMergeDismissedTable)
-        .where(
-          or(
-            eq(PersonMergeDismissedTable.personIdLow, input),
-            eq(PersonMergeDismissedTable.personIdHigh, input),
-          ),
-        );
       return { ok: true };
     }),
 
-  // Merge source cluster into target: reassign faces, recompute the target
-  // centroid/faceCount from scratch, delete the source. The escape hatch for
-  // when one person ends up split across two clusters. Admin-only.
+  // Merge source person into target. The user says these are one person, so
+  // the target becomes curated (pinned) and regrouping keeps it whole. Undo is
+  // possible for UNDO_MERGE_MS with the returned token. Admin-only.
   mergePeople: adminProcedure
     .input(z.object({ targetId: z.string().uuid(), sourceId: z.string().uuid() }))
     .mutation(async ({ ctx: { userId, session }, input }) => {
@@ -862,63 +857,614 @@ export const facesRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "People are in different libraries" });
       }
 
-      const now = new Date().toISOString();
-      await db
-        .update(FaceTable)
-        .set({ personId: input.targetId, updatedAt: now })
-        .where(eq(FaceTable.personId, input.sourceId));
+      return withFaceLock(async () => {
+        const now = new Date().toISOString();
+        const moved = await db
+          .select({ id: FaceTable.id, fileId: FaceTable.fileId })
+          .from(FaceTable)
+          .where(eq(FaceTable.personId, input.sourceId));
+        const viewers = await db
+          .select({ viewerUserId: ViewerHiddenPersonTable.viewerUserId })
+          .from(ViewerHiddenPersonTable)
+          .where(eq(ViewerHiddenPersonTable.personId, input.sourceId));
+        const targetViewers = new Set(
+          (
+            await db
+              .select({ viewerUserId: ViewerHiddenPersonTable.viewerUserId })
+              .from(ViewerHiddenPersonTable)
+              .where(eq(ViewerHiddenPersonTable.personId, input.targetId))
+          ).map((v) => v.viewerUserId),
+        );
+        const rejectedFrom = async (personId: string) =>
+          new Set(
+            (
+              await db
+                .select({ faceId: FaceRejectionTable.faceId })
+                .from(FaceRejectionTable)
+                .where(eq(FaceRejectionTable.personId, personId))
+            ).map((r) => r.faceId),
+          );
+        const targetRejected = await rejectedFrom(input.targetId);
+        const sourceRejected = await rejectedFrom(input.sourceId);
 
-      // Recompute centroid + count from the target's faces.
-      const faces = await db
-        .select({ embedding: FaceTable.embedding })
-        .from(FaceTable)
-        .where(eq(FaceTable.personId, input.targetId));
+        await db
+          .update(FaceTable)
+          .set({ personId: input.targetId, updatedAt: now })
+          .where(eq(FaceTable.personId, input.sourceId));
+        await db
+          .update(PersonTable)
+          .set({
+            // Keep the target's name; adopt source name only if target is unnamed.
+            name: target.name ?? source.name,
+            pinned: true,
+            updatedAt: now,
+          })
+          .where(eq(PersonTable.id, input.targetId));
+        // Rejections of the source carry to the merged person.
+        db.$client
+          .prepare(
+            `INSERT OR IGNORE INTO face_rejection (id, face_id, person_id, created_at)
+             SELECT lower(hex(randomblob(16))), face_id, ?, ? FROM face_rejection WHERE person_id = ?`,
+          )
+          .run(input.targetId, now, input.sourceId);
+        // Whoever the source was hidden from keeps the merged person hidden.
+        await moveViewerRulesToPerson(input.sourceId, input.targetId);
+        await db.delete(PersonTable).where(eq(PersonTable.id, input.sourceId));
+        await db
+          .delete(PersonMergeDismissedTable)
+          .where(
+            or(
+              eq(PersonMergeDismissedTable.personIdLow, input.sourceId),
+              eq(PersonMergeDismissedTable.personIdHigh, input.sourceId),
+            ),
+          );
+        await refreshPeople([input.targetId]);
+        setPersonInIndexes(moved.map((m) => m.id), input.targetId);
+        clearScopeCache();
 
-      let centroid: number[] | null = null;
-      let count = 0;
-      for (const f of faces) {
-        const emb = parseEmbedding(f.embedding);
-        if (!emb) continue;
-        count++;
-        if (!centroid) centroid = emb.slice();
-        else for (let i = 0; i < centroid.length; i++) centroid[i] = (centroid[i] ?? 0) + (emb[i] ?? 0);
+        const undoToken = randomUUID();
+        const cutoff = Date.now() - UNDO_MERGE_MS;
+        for (const [k, v] of mergeUndo) if (v.at < cutoff) mergeUndo.delete(k);
+        mergeUndo.set(undoToken, {
+          at: Date.now(),
+          target: {
+            id: target.id,
+            name: target.name,
+            pinned: target.pinned,
+            coverFaceId: target.coverFaceId,
+          },
+          source,
+          movedFaceIds: moved.map((m) => m.id),
+          viewerIds: viewers.map((v) => v.viewerUserId),
+          addedRuleViewerIds: viewers.map((v) => v.viewerUserId).filter((v) => !targetViewers.has(v)),
+          addedRejectionFaceIds: [...sourceRejected].filter((f) => !targetRejected.has(f)),
+        });
+        return { ok: true as const, undoToken };
+      });
+    }),
+
+  // Undo a recent merge: the source person comes back with its id, name and
+  // faces, and the target gets its old name back.
+  undoMerge: adminProcedure
+    .input(z.object({ undoToken: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const u = mergeUndo.get(input.undoToken);
+      if (!u || Date.now() - u.at > UNDO_MERGE_MS) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "This merge can no longer be undone" });
       }
-      if (centroid && count > 0) {
-        for (let i = 0; i < centroid.length; i++) centroid[i] = (centroid[i] ?? 0) / count;
-      }
-
-      await db
-        .update(PersonTable)
-        .set({
-          faceCount: count,
-          centroid: centroid ? JSON.stringify(centroid) : null,
-          // Keep the target's name; adopt source name only if target is unnamed.
-          name: target.name ?? source.name,
-          updatedAt: now,
-        })
-        .where(eq(PersonTable.id, input.targetId));
-
-      await db.delete(PersonTable).where(eq(PersonTable.id, input.sourceId));
-      // Whoever the source was hidden from keeps the merged person hidden.
-      await moveViewerRulesToPerson(input.sourceId, input.targetId);
+      mergeUndo.delete(input.undoToken);
+      await withFaceLock(async () => {
+        const now = new Date().toISOString();
+        await db.insert(PersonTable).values({ ...u.source, updatedAt: now }).onConflictDoNothing();
+        for (let i = 0; i < u.movedFaceIds.length; i += 400) {
+          await db
+            .update(FaceTable)
+            .set({ personId: u.source.id, updatedAt: now })
+            .where(
+              and(
+                inArray(FaceTable.id, u.movedFaceIds.slice(i, i + 400)),
+                eq(FaceTable.personId, u.target.id),
+              ),
+            );
+        }
+        await db
+          .update(PersonTable)
+          .set({ name: u.target.name, pinned: u.target.pinned, coverFaceId: u.target.coverFaceId, updatedAt: now })
+          .where(eq(PersonTable.id, u.target.id));
+        if (u.viewerIds.length > 0) {
+          await db
+            .insert(ViewerHiddenPersonTable)
+            .values(u.viewerIds.map((viewerUserId) => ({ viewerUserId, personId: u.source.id })))
+            .onConflictDoNothing();
+        }
+        if (u.addedRuleViewerIds.length > 0) {
+          await db
+            .delete(ViewerHiddenPersonTable)
+            .where(
+              and(
+                eq(ViewerHiddenPersonTable.personId, u.target.id),
+                inArray(ViewerHiddenPersonTable.viewerUserId, u.addedRuleViewerIds),
+              ),
+            );
+        }
+        if (u.addedRejectionFaceIds.length > 0) {
+          // The source's own rejection rows were never deleted (no FK), so
+          // only the copies on the target go.
+          await db
+            .delete(FaceRejectionTable)
+            .where(
+              and(
+                eq(FaceRejectionTable.personId, u.target.id),
+                inArray(FaceRejectionTable.faceId, u.addedRejectionFaceIds),
+              ),
+            );
+        }
+        await refreshPeople([u.source.id, u.target.id]);
+        invalidateFaceIndex();
+      });
       clearScopeCache();
-      // The source cluster no longer exists, so any dismissal mentioning it is
-      // dead weight — clear it (incl. a prior "not the same" between the two).
-      await db
-        .delete(PersonMergeDismissedTable)
+      return { ok: true as const };
+    }),
+
+  // --- single faces ---------------------------------------------------------
+
+  // Faces in one photo, for the viewer's face boxes.
+  getFacesForFile: privateProcedure
+    .input(z.object({ fileId: z.string().uuid() }))
+    .query(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      const [visible] = await db
+        .select({ id: FileTable.id })
+        .from(FileTable)
+        .where(and(eq(FileTable.id, input.fileId), buildFileAccessFilter(scope, FileTable.id)))
+        .limit(1);
+      if (!visible) throw new TRPCError({ code: "NOT_FOUND", message: "File not found" });
+      const rows = await db
+        .select({
+          faceId: FaceTable.id,
+          personId: FaceTable.personId,
+          personName: PersonTable.name,
+          personHidden: PersonTable.hidden,
+          boxX: FaceTable.boxX,
+          boxY: FaceTable.boxY,
+          boxW: FaceTable.boxW,
+          boxH: FaceTable.boxH,
+          cropName: FaceTable.cropName,
+          manual: FaceTable.manual,
+        })
+        .from(FaceTable)
+        .leftJoin(PersonTable, eq(PersonTable.id, FaceTable.personId))
+        .where(eq(FaceTable.fileId, input.fileId));
+      return rows
+        .filter(
+          (r) =>
+            scope.isAdmin ||
+            !r.personId ||
+            (!r.personHidden && !isPersonHiddenFor(scope, r.personId)),
+        )
+        .map((r) => ({
+          faceId: r.faceId,
+          personId: r.personId,
+          personName: r.personName,
+          box: { x: r.boxX, y: r.boxY, width: r.boxW, height: r.boxH },
+          hasCrop: !!r.cropName,
+          manual: r.manual,
+        }));
+    }),
+
+  // Faces of one person, newest first, for multi-select on the person page.
+  listPersonFaces: privateProcedure
+    .input(
+      z.object({
+        personId: z.string().uuid(),
+        limit: z.number().int().min(1).max(200).default(100),
+        cursor: z.string().nullish(),
+      }),
+    )
+    .query(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      await loadAuthorizedPerson(input.personId, scope);
+      // Cursor: "<createdAt>|<id>" of the last row.
+      const [cAt, cId] = (input.cursor ?? "").split("|");
+      const rows = await db
+        .select({
+          faceId: FaceTable.id,
+          fileId: FaceTable.fileId,
+          cropName: FaceTable.cropName,
+          confirmed: FaceTable.confirmed,
+          createdAt: FaceTable.createdAt,
+        })
+        .from(FaceTable)
         .where(
-          or(
-            eq(PersonMergeDismissedTable.personIdLow, input.sourceId),
-            eq(PersonMergeDismissedTable.personIdHigh, input.sourceId),
+          and(
+            eq(FaceTable.personId, input.personId),
+            buildFileAccessFilter(scope, FaceTable.fileId),
+            cAt && cId
+              ? sql`(${FaceTable.createdAt} < ${cAt} OR (${FaceTable.createdAt} = ${cAt} AND ${FaceTable.id} < ${cId}))`
+              : undefined,
+          ),
+        )
+        .orderBy(desc(FaceTable.createdAt), desc(FaceTable.id))
+        .limit(input.limit + 1);
+      const hasMore = rows.length > input.limit;
+      const items = rows.slice(0, input.limit);
+      const last = items[items.length - 1];
+      return {
+        items: items.map((r) => ({
+          faceId: r.faceId,
+          fileId: r.fileId,
+          hasCrop: !!r.cropName,
+          confirmed: r.confirmed,
+        })),
+        nextCursor: hasMore && last ? `${last.createdAt}|${last.faceId}` : null,
+      };
+    }),
+
+  // "This is not X": take faces off their person and remember the answer.
+  removeFaces: adminProcedure
+    .input(z.object({ faceIds: z.array(z.string().uuid()).min(1).max(5000) }))
+    .mutation(async ({ input }) => {
+      const faces = await loadFacesForEdit(input.faceIds);
+      const undoToken = await withFaceLock(async () => {
+        const now = new Date().toISOString();
+        const onPerson = faces.filter((f) => f.personId);
+        const token = await snapshotFaceEdit(faces.map((f) => f.id), []);
+        if (onPerson.length === 0) return token;
+        if (await pinViewerHiddenFaces([...new Set(onPerson.map((f) => f.fileId))]))
+          clearScopeCache();
+        await db
+          .insert(FaceRejectionTable)
+          .values(onPerson.map((f) => ({ faceId: f.id, personId: f.personId! })))
+          .onConflictDoNothing();
+        await db
+          .update(FaceTable)
+          .set({ personId: null, confirmed: false, updatedAt: now })
+          .where(inArray(FaceTable.id, onPerson.map((f) => f.id)));
+        setPersonInIndexes(onPerson.map((f) => f.id), null);
+        await refreshPeople(onPerson.map((f) => f.personId!));
+        return token;
+      });
+      return { ok: true as const, count: faces.length, undoToken };
+    }),
+
+  // "This is X": put faces on a person.
+  assignFaces: adminProcedure
+    .input(
+      z.object({
+        faceIds: z.array(z.string().uuid()).min(1).max(5000),
+        personId: z.string().uuid(),
+      }),
+    )
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      const person = await loadAuthorizedPerson(input.personId, scope);
+      const faces = await loadFacesForEdit(input.faceIds);
+      if (faces.some((f) => f.libraryId !== person.libraryId)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Faces and person are in different libraries" });
+      }
+      const undoToken = await withFaceLock(async () => {
+        const token = await snapshotFaceEdit(faces.map((f) => f.id), [input.personId]);
+        await putFacesOnPerson(faces, input.personId);
+        return token;
+      });
+      return { ok: true as const, undoToken };
+    }),
+
+  // Make a new person from faces (optionally named).
+  createPersonFromFaces: adminProcedure
+    .input(
+      z.object({
+        faceIds: z.array(z.string().uuid()).min(1).max(5000),
+        name: z.string().trim().max(120).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const faces = await loadFacesForEdit(input.faceIds);
+      const libraryIds = new Set(faces.map((f) => f.libraryId));
+      if (libraryIds.size !== 1) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Faces are in different libraries" });
+      }
+      const { personId, undoToken } = await withFaceLock(async () => {
+        const token = await snapshotFaceEdit(faces.map((f) => f.id), []);
+        const [person] = await db
+          .insert(PersonTable)
+          .values({
+            libraryId: [...libraryIds][0]!,
+            name: input.name || null,
+            pinned: true,
+          })
+          .returning({ id: PersonTable.id });
+        await putFacesOnPerson(faces, person!.id);
+        faceEditUndo.get(token)!.createdPersonId = person!.id;
+        return { personId: person!.id, undoToken: token };
+      });
+      return { personId, undoToken };
+    }),
+
+  // "Is this X?" review queue, least certain first: faces the matcher put on
+  // a named person but nobody confirmed, and unclustered faces that come close
+  // to one. Scored by similarity to the person's confirmed (or all) faces.
+  listConfirmCandidates: adminProcedure
+    .input(
+      z
+        .object({
+          personId: z.string().uuid().optional(),
+          limit: z.number().int().min(1).max(100).default(30),
+        })
+        .optional(),
+    )
+    .query(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      const limit = input?.limit ?? 30;
+      const threshold = await getVoteThreshold();
+      const libIds = [...scope.accessibleLibraryIds];
+      if (libIds.length === 0) return [];
+
+      const people = await db
+        .select({
+          id: PersonTable.id,
+          name: PersonTable.name,
+          libraryId: PersonTable.libraryId,
+          centroid: PersonTable.centroid,
+        })
+        .from(PersonTable)
+        .where(
+          and(
+            inArray(PersonTable.libraryId, libIds),
+            input?.personId ? eq(PersonTable.id, input.personId) : sql`${PersonTable.name} IS NOT NULL`,
+            gt(PersonTable.faceCount, 0),
           ),
         );
-      return { ok: true };
+      if (people.length === 0) return [];
+      // Only compare embeddings of one model (mid-rescan two are in use).
+      const model = await resolveCurrentModel();
+      const sameModel = (m: string | null) => (m ?? "buffalo_l") === model;
+      const all = await db
+        .select({
+          id: FaceTable.id,
+          fileId: FaceTable.fileId,
+          personId: FaceTable.personId,
+          vec: FaceTable.vec,
+          embedding: FaceTable.embedding,
+          model: FaceTable.model,
+          confirmed: FaceTable.confirmed,
+          cropName: FaceTable.cropName,
+        })
+        .from(FaceTable)
+        .where(inArray(FaceTable.personId, people.map((p) => p.id)));
+      const centroids = new Map<string, Float32Array>();
+      {
+        const byPerson = new Map<string, Float32Array[]>();
+        for (const f of all) {
+          if (!sameModel(f.model)) continue;
+          const v = faceVec(f);
+          if (!v) continue;
+          const list = byPerson.get(f.personId!) ?? [];
+          list.push(v);
+          byPerson.set(f.personId!, list);
+        }
+        for (const [id, vs] of byPerson) {
+          const c = meanVec(vs);
+          if (c) centroids.set(id, c);
+        }
+      }
+      const personById = new Map(people.map((p) => [p.id, p]));
+      const rejected = await db
+        .select({ faceId: FaceRejectionTable.faceId, personId: FaceRejectionTable.personId })
+        .from(FaceRejectionTable)
+        .where(inArray(FaceRejectionTable.personId, people.map((p) => p.id)));
+      const rejectedKey = new Set(rejected.map((r) => `${r.faceId}|${r.personId}`));
+
+      // onPerson: the face is on that person now (else it is unclustered).
+      type Cand = { faceId: string; fileId: string; personId: string; personName: string | null; score: number; onPerson: boolean };
+      const out: Cand[] = [];
+
+      // a) Unconfirmed members, weakest first.
+      const members = all.filter((f) => !f.confirmed && f.cropName && sameModel(f.model));
+      for (const m of members) {
+        const c = centroids.get(m.personId!);
+        const v = faceVec(m);
+        if (!c || !v || v.length !== c.length) continue;
+        const s = dot(v, c);
+        // Clearly-matching faces are not worth a question.
+        if (s >= threshold + 0.25) continue;
+        out.push({ faceId: m.id, fileId: m.fileId, personId: m.personId!, personName: personById.get(m.personId!)!.name, score: s, onPerson: true });
+      }
+
+      // b) Unclustered faces close to one of these people.
+      const loose = await db
+        .select({
+          id: FaceTable.id,
+          fileId: FaceTable.fileId,
+          vec: FaceTable.vec,
+          embedding: FaceTable.embedding,
+          model: FaceTable.model,
+          libraryId: LibraryFileTable.libraryId,
+        })
+        .from(FaceTable)
+        .innerJoin(
+          LibraryFileTable,
+          and(eq(LibraryFileTable.fileId, FaceTable.fileId), isNull(LibraryFileTable.deletedAt)),
+        )
+        .where(
+          and(
+            isNull(FaceTable.personId),
+            eq(FaceTable.manual, false),
+            isNotNull(FaceTable.cropName),
+            inArray(LibraryFileTable.libraryId, libIds),
+            or(isNull(FaceTable.quality), gt(FaceTable.quality, 0.2)),
+          ),
+        );
+      for (const f of loose) {
+        if (!sameModel(f.model)) continue;
+        const v = faceVec(f);
+        if (!v) continue;
+        let best: { id: string; s: number } | null = null;
+        for (const p of people) {
+          if (p.libraryId !== f.libraryId) continue;
+          const c = centroids.get(p.id);
+          if (!c || c.length !== v.length || rejectedKey.has(`${f.id}|${p.id}`)) continue;
+          const s = dot(v, c);
+          if (!best || s > best.s) best = { id: p.id, s };
+        }
+        if (best && best.s >= threshold - 0.05) {
+          out.push({ faceId: f.id, fileId: f.fileId, personId: best.id, personName: personById.get(best.id)!.name, score: best.s, onPerson: false });
+        }
+      }
+
+      // Members sit above the threshold and loose faces near it; asking about
+      // the ones closest to the line first gets the most out of each answer.
+      out.sort((a, b) => Math.abs(a.score - threshold) - Math.abs(b.score - threshold));
+      return out.slice(0, limit);
+    }),
+
+  confirmFace: adminProcedure
+    .input(
+      z.object({
+        faceId: z.string().uuid(),
+        personId: z.string().uuid(),
+        verdict: z.enum(["yes", "no"]),
+      }),
+    )
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      const person = await loadAuthorizedPerson(input.personId, scope);
+      const [face] = await loadFacesForEdit([input.faceId]);
+      if (face!.libraryId !== person.libraryId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Face and person are in different libraries" });
+      }
+      const undoToken = await withFaceLock(async () => {
+        const token = await snapshotFaceEdit([input.faceId], [input.personId]);
+        if (input.verdict === "yes") {
+          await putFacesOnPerson([face!], input.personId);
+          return token;
+        }
+        await db
+          .insert(FaceRejectionTable)
+          .values({ faceId: input.faceId, personId: input.personId })
+          .onConflictDoNothing();
+        if (face!.personId === input.personId) {
+          if (await pinViewerHiddenFaces([face!.fileId])) clearScopeCache();
+          await db
+            .update(FaceTable)
+            .set({ personId: null, confirmed: false, updatedAt: new Date().toISOString() })
+            .where(eq(FaceTable.id, input.faceId));
+          setPersonInIndexes([input.faceId], null);
+          await refreshPeople([input.personId]);
+        }
+        return token;
+      });
+      return { ok: true as const, undoToken };
+    }),
+
+  // Undo removeFaces / assignFaces / createPersonFromFaces / confirmFace within
+  // UNDO_MERGE_MS: faces, answers and the people they touched go back to how
+  // they were (a person deleted because it went empty comes back).
+  undoFaceEdit: adminProcedure
+    .input(z.object({ undoToken: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const u = faceEditUndo.get(input.undoToken);
+      if (!u || Date.now() - u.at > UNDO_MERGE_MS) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "This change can no longer be undone" });
+      }
+      faceEditUndo.delete(input.undoToken);
+      await withFaceLock(async () => {
+        const now = new Date().toISOString();
+        for (const p of u.people) {
+          await db.insert(PersonTable).values(p).onConflictDoUpdate({
+            target: PersonTable.id,
+            set: { name: p.name, pinned: p.pinned, hidden: p.hidden, coverFaceId: p.coverFaceId, updatedAt: now },
+          });
+        }
+        const ids = u.faces.map((f) => f.id);
+        const fileIds = (
+          await db.select({ fileId: FaceTable.fileId }).from(FaceTable).where(inArray(FaceTable.id, ids))
+        ).map((r) => r.fileId);
+        if (await pinViewerHiddenFaces([...new Set(fileIds)])) clearScopeCache();
+        for (const f of u.faces) {
+          await db
+            .update(FaceTable)
+            .set({ personId: f.personId, confirmed: f.confirmed, updatedAt: now })
+            .where(eq(FaceTable.id, f.id));
+          setPersonInIndexes([f.id], f.personId);
+        }
+        await db.delete(FaceRejectionTable).where(inArray(FaceRejectionTable.faceId, ids));
+        if (u.rejections.length > 0) {
+          await db.insert(FaceRejectionTable).values(u.rejections).onConflictDoNothing();
+        }
+        const touched = new Set(u.people.map((p) => p.id));
+        if (u.createdPersonId) {
+          const left = await db
+            .select({ id: FaceTable.id })
+            .from(FaceTable)
+            .where(eq(FaceTable.personId, u.createdPersonId))
+            .limit(1);
+          if (left.length === 0) await deletePeopleRows([u.createdPersonId]);
+        }
+        await refreshPeople(touched);
+      });
+      clearScopeCache();
+      return { ok: true as const };
+    }),
+
+  // Tag a face the detector missed. It has no embedding, so it never votes in
+  // matching, but it shows in the person's photos and in the viewer.
+  addManualFace: adminProcedure
+    .input(
+      z
+        .object({
+          fileId: z.string().uuid(),
+          box: boxInput,
+          personId: z.string().uuid().optional(),
+          name: z.string().trim().min(1).max(120).optional(),
+        })
+        .refine((v) => !!v.personId !== !!v.name, "Give either personId or name"),
+    )
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const scope = await getAccessScope(userId, session);
+      const libraryId = await resolveLibraryId(input.fileId);
+      if (!libraryId) throw new TRPCError({ code: "NOT_FOUND", message: "File not found" });
+      if (input.personId) {
+        const person = await loadAuthorizedPerson(input.personId, scope);
+        if (person.libraryId !== libraryId) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Photo and person are in different libraries" });
+        }
+      }
+      return withFaceLock(async () => {
+        let personId = input.personId;
+        if (!personId) {
+          const [p] = await db
+            .insert(PersonTable)
+            .values({ libraryId, name: input.name!, pinned: true })
+            .returning({ id: PersonTable.id });
+          personId = p!.id;
+        }
+        const [face] = await db
+          .insert(FaceTable)
+          .values({
+            fileId: input.fileId,
+            boxX: input.box.x,
+            boxY: input.box.y,
+            boxW: input.box.width,
+            boxH: input.box.height,
+            manual: true,
+          })
+          .returning({ id: FaceTable.id });
+        await putFacesOnPerson([{ id: face!.id, fileId: input.fileId, personId: null }], personId);
+        return { faceId: face!.id, personId };
+      });
     }),
 
   // Admin-only: find pairs of clusters that look like the same person split in
   // two, so they can be merged from one place (Google-Photos style). Two-phase:
-  // a cheap O(n²) centroid pre-filter per library, then the same member-level
-  // confirmation assignFace uses, so a coincidental centroid match doesn't
+  // a cheap O(n²) centroid pre-filter per library, then a member-level check
+  // (one face pair must clear the vote threshold), so a coincidental centroid match doesn't
   // surface a false suggestion. Computed on demand — clusters change rarely and
   // the bounded candidate set keeps this well within a single request.
   listMergeSuggestions: adminProcedure
@@ -929,8 +1475,9 @@ export const facesRouter = router({
       const libIds = [...scope.accessibleLibraryIds];
       if (libIds.length === 0) return [];
 
-      const threshold = await getFaceMatchThreshold();
-      const memberFloor = threshold - MEMBER_CONFIRM_OFFSET;
+      const threshold = await getVoteThreshold();
+      const memberFloor = threshold;
+      const centroidFloor = threshold - SUGGEST_CENTROID_OFFSET;
 
       const people = await db
         .select({
@@ -965,12 +1512,12 @@ export const facesRouter = router({
         name: string | null;
         coverFaceId: string | null;
         faceCount: number;
-        centroid: number[];
+        centroid: Float32Array;
       };
       // People only merge within their own library, so scan per-library.
       const byLibrary = new Map<string, P[]>();
       for (const p of people) {
-        const centroid = parseEmbedding(p.centroid);
+        const centroid = parseCentroid(p.centroid);
         if (!centroid) continue;
         const list = byLibrary.get(p.libraryId) ?? [];
         list.push({
@@ -1002,8 +1549,9 @@ export const facesRouter = router({
             if (!!a.name === !!b.name) continue;
             const { low, high } = pairKey(a.id, b.id);
             if (dismissed.has(`${low}|${high}`)) continue;
-            const sim = cosineSimilarity(a.centroid, b.centroid);
-            if (sim >= SUGGEST_CENTROID_THRESHOLD) candidates.push({ a, b, sim });
+            if (a.centroid.length !== b.centroid.length) continue;
+            const sim = dot(a.centroid, b.centroid);
+            if (sim >= centroidFloor) candidates.push({ a, b, sim });
           }
         }
       }
@@ -1022,9 +1570,9 @@ export const facesRouter = router({
       const placeholders = candidatePersonIds.map(() => "?").join(", ");
       const rawFaceRows = db.$client
         .prepare(
-          `SELECT person_id AS personId, embedding
+          `SELECT person_id AS personId, embedding, vec, model
            FROM (
-             SELECT person_id, embedding,
+             SELECT person_id, embedding, vec, model,
                     ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY created_at DESC) AS rn
              FROM face
              WHERE person_id IN (${placeholders})
@@ -1034,12 +1582,17 @@ export const facesRouter = router({
         .all(...candidatePersonIds, MAX_CONFIRM_MEMBERS) as Array<{
         personId: string;
         embedding: string | null;
+        vec: Buffer | null;
+        model: string | null;
       }>;
+      // Mid-rescan two models are in use: compare only current-model faces.
+      const currentModel = await resolveCurrentModel();
 
-      const facesByPerson = new Map<string, number[][]>();
+      const facesByPerson = new Map<string, Float32Array[]>();
       for (const row of rawFaceRows) {
         const arr = facesByPerson.get(row.personId) ?? [];
-        const e = parseEmbedding(row.embedding);
+        if ((row.model ?? "buffalo_l") !== currentModel) continue;
+        const e = faceVec(row);
         if (e) {
           arr.push(e);
           facesByPerson.set(row.personId, arr);
@@ -1053,7 +1606,8 @@ export const facesRouter = router({
         let bestMember = -1;
         for (const x of ae) {
           for (const y of be) {
-            const s = cosineSimilarity(x, y);
+            if (x.length !== y.length) continue;
+            const s = dot(x, y);
             if (s > bestMember) bestMember = s;
           }
         }
@@ -1153,6 +1707,8 @@ export const facesRouter = router({
           libraryId: LibraryFileTable.libraryId,
           libraryFileId: LibraryFileTable.id,
           blurhash: ImageMetadataTable.blurhash,
+          width: ImageMetadataTable.width,
+          height: ImageMetadataTable.height,
           sortTs: fileSortExpr,
         })
         .from(FaceTable)
@@ -1183,6 +1739,8 @@ export const facesRouter = router({
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,
+        width: r.width,
+        height: r.height,
       }));
 
       const hasMore = data.length > input.limit;

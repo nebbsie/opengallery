@@ -95,6 +95,74 @@ function getFileStableHash(file: File): string {
   return createHash('sha256').update(fullPath).digest('hex').slice(0, 16);
 }
 
+// The 640 px grid thumbnail ("thumbnail_lg"). Aspect is kept (no crop) so a
+// justified grid can show the whole photo, and 640 on the short side keeps a
+// ~320 CSS px tile sharp on a 2x screen. Very wide or tall images are capped
+// at 1920 on the long side instead so a panorama does not become a huge file.
+const LG_SHORT_SIDE = 640;
+const LG_LONG_CAP = 1920;
+function lgResizeOptions(width: number | null, height: number | null): sharp.ResizeOptions {
+  if (width && height && Math.max(width, height) / Math.min(width, height) > LG_LONG_CAP / LG_SHORT_SIDE) {
+    return { width: LG_LONG_CAP, height: LG_LONG_CAP, fit: 'inside', withoutEnlargement: true };
+  }
+  return { width: LG_SHORT_SIDE, height: LG_SHORT_SIDE, fit: 'outside', withoutEnlargement: true };
+}
+
+// Render the large thumbnail from the optimised variant (already rotated and
+// at most 4096 px), so it never needs another read of the original file.
+async function renderLargeThumb(optData: Buffer, quality: number): Promise<Buffer> {
+  const meta = await openImage(optData).metadata();
+  return openImage(optData)
+    .resize(lgResizeOptions(meta.width ?? null, meta.height ?? null))
+    .avif({ quality, effort: 4 })
+    .toBuffer();
+}
+
+function largeThumbName(file: File): string {
+  return `${basename(file.name, extname(file.name))}__thumb640.avif`;
+}
+
+/**
+ * Backfill path: the file already has its 320 px thumbnail and optimised
+ * variant but no large thumbnail. Make only that one. Returns false when the
+ * optimised file is not on disk, so the caller can fall back to a full encode.
+ */
+async function encodeLargeThumbOnly(
+  file: File,
+  variantsPath: string,
+  quality: number,
+): Promise<boolean> {
+  const destDir = join(variantsPath, 'images', getFileStableHash(file));
+  const base = basename(file.name, extname(file.name));
+  const optPath = join(destDir, `${base}__opt.avif`);
+  if (!existsSync(optPath)) return false;
+  const lgName = largeThumbName(file);
+  const lgPath = join(destDir, lgName);
+  let data: Buffer;
+  if (existsSync(lgPath)) {
+    data = await throttleIo(() => readFile(lgPath));
+  } else {
+    const optData = await throttleIo(() => readFile(optPath));
+    data = await renderLargeThumb(optData, quality);
+    await throttleIo(() => writeFile(lgPath, data));
+  }
+  await trpc.files.saveVariants.mutate({
+    originalFileId: file.id,
+    variants: [
+      {
+        type: 'thumbnail_lg',
+        fileType: 'image',
+        dir: destDir,
+        name: lgName,
+        mime: 'image/avif',
+        size: data.length,
+        quality,
+      },
+    ],
+  });
+  return true;
+}
+
 async function encodeImage(
   file: File,
   existingVariants?: {
@@ -245,12 +313,46 @@ async function encodeImage(
     stepStart = Date.now();
   }
 
+  // Large grid thumbnail, from the optimised render in memory. Reused from
+  // disk when it is there and the qualities did not change. A failure here
+  // must not fail the encode: the grid falls back to the 320 px thumbnail.
+  const lgName = largeThumbName(file);
+  const lgPath = join(destDir, lgName);
+  let lg: Buffer | null = null;
+  try {
+    if (existingVariants && !needsReencode && existsSync(lgPath)) {
+      lg = await throttleIo(() => readFile(lgPath));
+    } else {
+      lg = await renderLargeThumb(opt.data, thumbQuality);
+      const lgData = lg;
+      await throttleIo(() => writeFile(lgPath, lgData));
+    }
+  } catch (e) {
+    lg = null;
+    logger.warn(`[encode:image] large thumbnail failed for id=${fileId}`, e as Error);
+  }
+  timings['thumbnail_lg'] = Date.now() - stepStart;
+  stepStart = Date.now();
+
   logger.debug(
     `[encode:image] saving variants for id=${fileId} thumbBytes=${thumb.data.length} optBytes=${opt.data.length}`,
   );
   await trpc.files.saveVariants.mutate({
     originalFileId: fileId, // aligns with procedure definition
     variants: [
+      ...(lg
+        ? [
+            {
+              type: 'thumbnail_lg' as const,
+              fileType: 'image' as const,
+              dir: destDir,
+              name: lgName,
+              mime: 'image/avif',
+              size: lg.length,
+              quality: thumbQuality,
+            },
+          ]
+        : []),
       {
         type: 'thumbnail',
         fileType: 'image',
@@ -352,12 +454,34 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
   const optQualityMatches = fileResult.optimized?.quality === optQuality;
 
   if (file.type === 'image' && hasThumb && hasOpt && thumbQualityMatches && optQualityMatches) {
-    await trpc.fileTask.setManyStatusByFileAndType.mutate([
-      { fileId, type: 'encode_thumbnail', status: 'succeeded' },
-      { fileId, type: 'encode_optimised', status: 'succeeded' },
-    ]);
-    logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
-    return { type: 'image', status: 'success' };
+    // Older files have no large grid thumbnail; the API backfill re-queues
+    // them. Make only that variant, from the optimised file on disk.
+    if (!fileResult.thumbnailLg && variantsPath && file.mime !== 'image/svg+xml') {
+      let done = false;
+      try {
+        done = await encodeLargeThumbOnly(file, variantsPath, thumbQuality);
+      } catch (e) {
+        logger.warn(`[encode] large thumbnail backfill failed id=${fileId}`, e as Error);
+        // Do not retry forever: the 320 px thumbnail still works.
+        done = true;
+      }
+      if (done) {
+        await trpc.fileTask.setManyStatusByFileAndType.mutate([
+          { fileId, type: 'encode_thumbnail', status: 'succeeded' },
+          { fileId, type: 'encode_optimised', status: 'succeeded' },
+        ]);
+        logger.info(`[encode] [image:lg] ${fileId} | ${Date.now() - startedAt}ms`);
+        return { type: 'image', status: 'success' };
+      }
+      // Optimised file missing on disk: fall through to a full encode below.
+    } else {
+      await trpc.fileTask.setManyStatusByFileAndType.mutate([
+        { fileId, type: 'encode_thumbnail', status: 'succeeded' },
+        { fileId, type: 'encode_optimised', status: 'succeeded' },
+      ]);
+      logger.info(`[encode] [image] ${fileId} | ${Date.now() - startedAt}ms`);
+      return { type: 'image', status: 'success' };
+    }
   }
 
   // Log if quality changed and we need to re-encode
@@ -832,6 +956,23 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
     optSize = optStat.size;
   }
 
+  // Large poster (640 px wide) for the grid, from the optimised MP4 on local
+  // disk. Optional: the grid falls back to the 320 px poster.
+  const lgName = `${base}__thumb640.jpg`;
+  const lgPath = join(destDir, lgName);
+  let lgSize: number | null = null;
+  try {
+    if (!existsSync(lgPath)) {
+      await runFfmpeg(
+        ['-y', '-i', optPath, '-frames:v', '1', '-vf', "scale='min(640,iw)':'-2'", '-q:v', '3', lgPath],
+        'thumbnail_lg',
+      );
+    }
+    lgSize = (await stat(lgPath)).size;
+  } catch (e) {
+    logger.warn(`[encode:video] large poster failed for id=${file.id}`, e as Error);
+  }
+
   // Generate blurhash from the poster frame using Sharp's file path input
   let blurhash: string | null = null;
   try {
@@ -873,6 +1014,18 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
         mime: 'video/mp4',
         size: optSize,
       },
+      ...(lgSize != null
+        ? [
+            {
+              type: 'thumbnail_lg' as const,
+              fileType: 'image' as const,
+              dir: destDir,
+              name: lgName,
+              mime: 'image/jpeg',
+              size: lgSize,
+            },
+          ]
+        : []),
     ],
   });
 

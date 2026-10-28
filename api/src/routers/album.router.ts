@@ -619,7 +619,12 @@ export const albumRouter = router({
 
       // files - order matches the asset view's prev/next navigation
       const files = await db
-        .select({ file: FileTable, blurhash: ImageMetadataTable.blurhash })
+        .select({
+          file: FileTable,
+          blurhash: ImageMetadataTable.blurhash,
+          width: ImageMetadataTable.width,
+          height: ImageMetadataTable.height,
+        })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .innerJoin(
@@ -782,7 +787,12 @@ export const albumRouter = router({
             accessScope.isAdmin ||
             accessScope.ownedLibraryIds.has(albumRow.libraryId),
         },
-        files: files.map((r) => ({ ...r.file, blurhash: r.blurhash })),
+        files: files.map((r) => ({
+          ...r.file,
+          blurhash: r.blurhash,
+          width: r.width,
+          height: r.height,
+        })),
         children: childrenWithMeta,
         tree: {
           rootPath, // absolute media root path

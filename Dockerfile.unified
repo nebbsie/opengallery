@@ -84,7 +84,7 @@ COPY face-service/requirements.txt /opt/face/requirements.txt
 # numpy + cython up front so insightface's native build finds its headers.
 RUN pip install --no-cache-dir numpy==1.26.4 cython \
     && pip install --no-cache-dir -r /opt/face/requirements.txt
-# Pre-download buffalo_l into the model root so the service runs offline.
+# Pre-download the face model pack (buffalo_l) so the service runs offline.
 COPY scripts/download-face-models.sh /opt/face/download-face-models.sh
 RUN bash /opt/face/download-face-models.sh
 

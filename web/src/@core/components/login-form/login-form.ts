@@ -48,68 +48,98 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     HlmSpinner,
   ],
   template: `
-    @if (allowsRegistration.isSuccess()) {
-      <div class="mb-6 flex justify-center">
-        <app-logo />
+    <!-- The card always renders. Only the "Sign up" link depends on the
+         registration query, so a failed query never blanks the page. -->
+    <div class="mb-6 flex justify-center">
+      <app-logo />
+    </div>
+    <form class="w-full" hlmCard [formGroup]="form" (ngSubmit)="login()" novalidate>
+      <div hlmCardHeader>
+        <h1 hlmCardTitle class="text-balance">Log in to your account</h1>
+        <p hlmCardDescription>Enter your email and password.</p>
       </div>
-      <section class="w-full" hlmCard>
-        <div hlmCardHeader>
-          <h3 hlmCardTitle>Login to your account</h3>
-          <p hlmCardDescription>Enter your email below to login to your account</p>
-        </div>
 
-        <div hlmCardContent>
-          <form>
-            <div class="flex flex-col gap-6">
-              <div class="grid gap-2">
-                <label hlmLabel for="email">Email</label>
-                <input
-                  [formControl]="emailControl"
-                  type="email"
-                  id="email"
-                  placeholder="john@smith.com"
-                  required
-                  hlmInput
-                />
-              </div>
-
-              <div class="grid gap-2">
-                <div class="flex items-center">
-                  <label hlmLabel for="password">Password</label>
-                </div>
-                <input [formControl]="passwordControl" type="password" id="password" hlmInput />
-              </div>
-            </div>
-          </form>
-        </div>
-
-        <div hlmCardFooter class="flex-col gap-2">
-          <button [disabled]="form.invalid || loading()" hlmBtn type="submit" class="w-full" (click)="login()">
-            @if (loading()) {
-              <hlm-spinner class="size-6" />
-            } @else {
-              Login
+      <div hlmCardContent>
+        <fieldset class="flex flex-col gap-6" [disabled]="loading()">
+          <div class="grid gap-2">
+            <label hlmLabel for="login-email">Email</label>
+            <input
+              formControlName="email"
+              type="email"
+              id="login-email"
+              name="email"
+              placeholder="john@smith.com"
+              autocomplete="username"
+              inputmode="email"
+              autocapitalize="off"
+              spellcheck="false"
+              required
+              hlmInput
+              [attr.aria-invalid]="showError(emailControl) ? 'true' : null"
+              [attr.aria-describedby]="showError(emailControl) ? 'login-email-error' : null"
+            />
+            @if (showError(emailControl)) {
+              <p id="login-email-error" class="text-destructive text-sm">
+                @if (emailControl.hasError('required')) {
+                  Enter your email.
+                } @else {
+                  Enter a valid email address.
+                }
+              </p>
             }
-          </button>
+          </div>
 
-          @if (allowsRegistration.data()) {
-            <a class="text-sm hover:underline" routerLink="/register">Need an account? Sign up</a>
-          }
-        </div>
+          <div class="grid gap-2">
+            <label hlmLabel for="login-password">Password</label>
+            <input
+              formControlName="password"
+              type="password"
+              id="login-password"
+              name="password"
+              autocomplete="current-password"
+              required
+              hlmInput
+              [attr.aria-invalid]="showError(passwordControl) ? 'true' : null"
+              [attr.aria-describedby]="showError(passwordControl) ? 'login-password-error' : null"
+            />
+            @if (showError(passwordControl)) {
+              <p id="login-password-error" class="text-destructive text-sm">Enter your password.</p>
+            }
+          </div>
+        </fieldset>
 
-        @if (error()) {
-          <div hlmCardContent>
-            <div hlmAlert variant="destructive">
-              <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
-              <h4 hlmAlertTitle>Failed to login</h4>
-              <div hlmAlertDescription>
-                <p>Please check your details and try again.</p>
-              </div>
+        @if (error(); as message) {
+          <div hlmAlert variant="destructive" class="mt-6" role="alert">
+            <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
+            <h2 hlmAlertTitle>Could not log in</h2>
+            <div hlmAlertDescription>
+              <p>{{ message }}</p>
             </div>
           </div>
         }
-      </section>
-    }
+      </div>
+
+      <div hlmCardFooter class="flex-col gap-2">
+        <button
+          [disabled]="loading()"
+          [attr.aria-busy]="loading()"
+          hlmBtn
+          type="submit"
+          class="w-full transition-transform duration-100 active:scale-[0.96]"
+        >
+          @if (loading()) {
+            <hlm-spinner class="size-5" />
+            <span>Logging in</span>
+          } @else {
+            Log in
+          }
+        </button>
+
+        @if (allowsRegistration.data()) {
+          <a class="text-sm hover:underline" routerLink="/register">Need an account? Sign up</a>
+        }
+      </div>
+    </form>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -118,48 +148,74 @@ export class LoginForm {
   private router = inject(Router);
   private trpc = injectTrpc();
 
-  error = signal(false);
+  error = signal<string | null>(null);
   loading = signal(false);
+  private submitted = signal(false);
 
   allowsRegistration = injectQuery(() => ({
     queryKey: [CacheKey.AllowsUserSelfRegistration],
     queryFn: async () => this.trpc.settings.allowsSelfRegistration.query(),
   }));
 
-  emailControl = new FormControl<null | string>(null, [Validators.email, Validators.required]);
-  passwordControl = new FormControl<null | string>(null, [
-    Validators.required,
-    Validators.minLength(5),
-  ]);
+  emailControl = new FormControl<string>('', {
+    nonNullable: true,
+    validators: [Validators.email, Validators.required],
+  });
+  passwordControl = new FormControl<string>('', {
+    nonNullable: true,
+    validators: [Validators.required],
+  });
 
   form = new FormGroup({
     email: this.emailControl,
     password: this.passwordControl,
   });
 
+  showError(control: FormControl<string>): boolean {
+    return control.invalid && (control.touched || this.submitted());
+  }
+
   async login() {
-    if (this.emailControl.value === null || this.passwordControl.value === null) {
+    this.submitted.set(true);
+    this.form.markAllAsTouched();
+    if (this.form.invalid || this.loading()) {
       return;
     }
 
-    this.error.set(false);
+    this.error.set(null);
     this.loading.set(true);
 
     const { error, data } = await this.auth
       .signInEmail({
-        email: this.emailControl.value,
+        email: this.emailControl.value.trim(),
         password: this.passwordControl.value,
       })
       .catch((e: unknown) => ({ error: e, data: null }));
 
-    if (error) {
-      this.error.set(true);
+    if (error || !data) {
+      this.error.set(loginErrorMessage(error));
       this.loading.set(false);
       return;
     }
 
-    if (data) {
-      await this.router.navigate(['/gallery']);
-    }
+    await this.router.navigate(['/gallery']);
   }
+}
+
+function loginErrorMessage(error: unknown): string {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (status === 401 || status === 400) {
+    return 'The email or password is wrong. Check them and try again.';
+  }
+  if (status === 429) {
+    return 'Too many tries. Wait a minute and try again.';
+  }
+  if (status === 0 || (error instanceof TypeError && /fetch/i.test(error.message))) {
+    return 'Could not reach the server. Check your connection and try again.';
+  }
+  const message = (error as { message?: unknown } | null)?.message;
+  if (typeof message === 'string' && message.length > 0 && message.length < 160) {
+    return message;
+  }
+  return 'Something went wrong. Try again.';
 }

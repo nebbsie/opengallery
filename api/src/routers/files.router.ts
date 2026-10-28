@@ -7,6 +7,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  ne,
   or,
   sql,
 } from "drizzle-orm";
@@ -15,7 +16,9 @@ import { z } from "zod";
 import {
   buildFileAccessFilter,
   canUserViewFile,
+  clearScopeCache,
   getAccessScope,
+  isAdminSession,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
@@ -39,9 +42,19 @@ import {
   LibraryFileTable,
   LibraryTable,
   PersonTable,
+  SharedItemTable,
+  UserTable,
   VideoMetadataTable,
+  ViewerHiddenFileTable,
+  type FileVariantType,
 } from "../db/schema.js";
-import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import {
+  adminProcedure,
+  internalProcedure,
+  privateProcedure,
+  router,
+} from "../trpc.js";
+import { createDownloadTicket } from "../utils/zip-download.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 import {
   deleteFilesWithCascade,
@@ -50,6 +63,12 @@ import {
 } from "../utils/file-operations.js";
 import { getCachedMediaSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
+
+// 640 px aspect-kept grid thumbnail. Plain text in the DB; see saveVariants.
+export const THUMBNAIL_LG = "thumbnail_lg" satisfies FileVariantType;
+
+// Most items one bulk action (share, hide, download) takes at once.
+const BULK_MAX = 5000;
 
 export const filesRouter = router({
   create: internalProcedure
@@ -79,6 +98,8 @@ export const filesRouter = router({
         } else {
           taskRows.push({ fileId: f.id, type: "video_poster" });
           taskRows.push({ fileId: f.id, type: "encode_optimised" });
+          // Faces from sampled frames (worker face-detection/detect.ts).
+          taskRows.push({ fileId: f.id, type: "detect_faces" });
         }
         // GPS extraction runs independently of encoding (it only reads EXIF /
         // ffprobe tags off the original) so geolocation lands even when the
@@ -627,7 +648,10 @@ export const filesRouter = router({
         variants: z
           .array(
             z.object({
-              type: z.enum(["thumbnail", "optimised"]),
+              // thumbnail_lg: 640 px on the short side, aspect kept, for
+              // retina grids and justified rows. Optional; the 320 px square
+              // `thumbnail` stays the required one.
+              type: z.enum(["thumbnail", "optimised", "thumbnail_lg"]),
               fileType: z.enum(["image", "video"]),
               dir: z.string(),
               name: z.string(), // e.g. `${base}__thumb.avif`
@@ -637,7 +661,7 @@ export const filesRouter = router({
             }),
           )
           .min(1)
-          .max(2),
+          .max(3),
       }),
     )
     .mutation(async ({ input }) => {
@@ -647,7 +671,8 @@ export const filesRouter = router({
         originalFileId: string;
         thumbnail: null | { id: string; dir: string; name: string };
         optimised: null | { id: string; dir: string; name: string };
-      } = { originalFileId, thumbnail: null, optimised: null };
+        thumbnail_lg: null | { id: string; dir: string; name: string };
+      } = { originalFileId, thumbnail: null, optimised: null, thumbnail_lg: null };
 
       for (const v of variants) {
         const [res] = await db
@@ -721,12 +746,18 @@ export const filesRouter = router({
       .where(
         and(
           eq(FileVariantTable.originalFileId, file.id),
-          inArray(FileVariantTable.type, ["thumbnail", "optimised"]),
+          inArray(FileVariantTable.type, [
+            "thumbnail",
+            "optimised",
+            THUMBNAIL_LG,
+          ]),
         ),
       );
 
     const thumbnail = variants.find((v) => v.type === "thumbnail") ?? null;
     const optimized = variants.find((v) => v.type === "optimised") ?? null;
+    const thumbnailLg =
+      variants.find((v) => v.type === "thumbnail_lg") ?? null;
 
     return {
       raw: file,
@@ -745,6 +776,9 @@ export const filesRouter = router({
             name: `${basename(file.name, extname(file.name))}__opt.avif`,
             quality: optimized.quality,
           }
+        : null,
+      thumbnailLg: thumbnailLg
+        ? { id: thumbnailLg.id, quality: thumbnailLg.quality }
         : null,
     };
   }),
@@ -839,7 +873,257 @@ export const filesRouter = router({
       const total = months.reduce((sum, m) => sum + m.count, 0);
       return { months, total };
     }),
+
+  // ---- Bulk actions for the grid selection bar -----------------------------
+
+  // Users that files can be shared with (non-admins other than the caller).
+  // Only people who can share (an admin, or a user who owns a library) may
+  // list the users; only an admin sees their email addresses.
+  shareTargets: privateProcedure.query(async ({ ctx: { userId, session } }) => {
+    if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+    const scope = await getAccessScope(userId, session);
+    if (!scope.isAdmin && scope.ownedLibraryIds.size === 0) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    const rows = await db
+      .select({ id: UserTable.id, name: UserTable.name, email: UserTable.email })
+      .from(UserTable)
+      .where(ne(UserTable.type, "admin"));
+    return rows
+      .filter((u) => u.id !== userId)
+      .map((u) => ({ id: u.id, name: u.name, email: scope.isAdmin ? u.email : null }));
+  }),
+
+  // Share (or stop sharing) many files with many users. Only files the caller
+  // can manage are touched (an admin manages all; a user manages files in
+  // their own libraries). Existing shares to other users are kept.
+  bulkShare: privateProcedure
+    .input(
+      z.object({
+        fileIds: z.array(z.string()).min(1).max(BULK_MAX),
+        userIds: z.array(z.string()).min(1).max(200),
+        mode: z.enum(["add", "remove"]),
+      }),
+    )
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const fileIds = await manageableFileIds(
+        userId,
+        session,
+        [...new Set(input.fileIds)],
+      );
+      const targets = await nonAdminUserIds([...new Set(input.userIds)]);
+      if (targets.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "No valid users" });
+      }
+
+      for (const ids of chunk(fileIds, 400)) {
+        const match = and(
+          eq(SharedItemTable.sourceType, "file"),
+          inArray(SharedItemTable.sourceId, ids),
+          eq(SharedItemTable.shareType, "user"),
+          inArray(SharedItemTable.sharedToUserId, targets),
+        );
+        if (input.mode === "remove") {
+          await db.delete(SharedItemTable).where(match);
+          continue;
+        }
+        const existing = await db
+          .select({
+            fileId: SharedItemTable.sourceId,
+            userId: SharedItemTable.sharedToUserId,
+          })
+          .from(SharedItemTable)
+          .where(match);
+        const have = new Set(existing.map((e) => `${e.fileId}|${e.userId}`));
+        const rows: (typeof SharedItemTable.$inferInsert)[] = [];
+        for (const fileId of ids) {
+          for (const to of targets) {
+            if (have.has(`${fileId}|${to}`)) continue;
+            rows.push({
+              sourceType: "file",
+              sourceId: fileId,
+              shareType: "user",
+              accessLevel: "view",
+              sharedToUserId: to,
+            });
+          }
+        }
+        for (const part of chunk(rows, 500)) {
+          await db.insert(SharedItemTable).values(part);
+        }
+      }
+      for (const id of targets) clearScopeCache(id);
+      return {
+        count: fileIds.length,
+        skipped: input.fileIds.length - fileIds.length,
+      };
+    }),
+
+  // Admin: hide (or unhide) many files from many viewers.
+  bulkSetHidden: adminProcedure
+    .input(
+      z.object({
+        fileIds: z.array(z.string()).min(1).max(BULK_MAX),
+        userIds: z.array(z.string()).min(1).max(200),
+        hidden: z.boolean(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const fileIds = [...new Set(input.fileIds)];
+      const targets = await nonAdminUserIds([...new Set(input.userIds)]);
+      if (targets.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "No valid users" });
+      }
+      for (const ids of chunk(fileIds, 400)) {
+        if (input.hidden) {
+          const rows = ids.flatMap((fileId) =>
+            targets.map((viewerUserId) => ({ viewerUserId, fileId })),
+          );
+          for (const part of chunk(rows, 500)) {
+            await db
+              .insert(ViewerHiddenFileTable)
+              .values(part)
+              .onConflictDoNothing();
+          }
+        } else {
+          await db
+            .delete(ViewerHiddenFileTable)
+            .where(
+              and(
+                inArray(ViewerHiddenFileTable.fileId, ids),
+                inArray(ViewerHiddenFileTable.viewerUserId, targets),
+              ),
+            );
+        }
+      }
+      for (const id of targets) clearScopeCache(id);
+      return { count: fileIds.length };
+    }),
+
+  // Start a zip download of many files. Returns a one-time token for
+  // GET /download/:token (see server.ts). Files the caller cannot see are
+  // dropped silently, the same as a missing file.
+  createDownload: privateProcedure
+    .input(z.object({ fileIds: z.array(z.string()).min(1).max(BULK_MAX) }))
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const ids = [...new Set(input.fileIds)];
+      const allowed: string[] = [];
+      for (const id of ids) {
+        if (await canUserViewFile(userId, session, id)) allowed.push(id);
+      }
+      if (allowed.length === 0) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Nothing to download" });
+      }
+      return {
+        token: createDownloadTicket(userId, allowed),
+        count: allowed.length,
+      };
+    }),
+
+  // Admin: queue the 640 px grid thumbnail for images that do not have one
+  // yet. Safe to run again; it only touches files that still miss it.
+  backfillLargeThumbnails: adminProcedure.mutation(async () => ({
+    queued: await backfillLargeThumbnails(),
+  })),
 });
+
+function chunk<T>(list: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
+async function nonAdminUserIds(ids: string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ id: UserTable.id })
+    .from(UserTable)
+    .where(and(inArray(UserTable.id, ids), ne(UserTable.type, "admin")));
+  return rows.map((r) => r.id);
+}
+
+// The subset of fileIds the caller may share: all for an admin, else the ones
+// in a library the caller owns (same rule as canUserManageSharedItem).
+async function manageableFileIds(
+  userId: string,
+  session: { user?: { type?: string } } | null,
+  fileIds: string[],
+): Promise<string[]> {
+  if (isAdminSession(session)) return fileIds;
+  const out: string[] = [];
+  for (const ids of chunk(fileIds, 400)) {
+    const rows = await db
+      .selectDistinct({ fileId: LibraryFileTable.fileId })
+      .from(LibraryFileTable)
+      .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
+      .where(
+        and(
+          inArray(LibraryFileTable.fileId, ids),
+          isNull(LibraryFileTable.deletedAt),
+          eq(LibraryTable.userId, userId),
+        ),
+      );
+    out.push(...rows.map((r) => r.fileId));
+  }
+  return out;
+}
+
+/**
+ * Queue the 640 px `thumbnail_lg` variant for every image that has the 320 px
+ * thumbnail but not the large one, by setting its `encode_thumbnail` task back
+ * to pending. The worker sees thumbnail + optimised already present and only
+ * renders the large thumbnail, from the optimised variant (no read of the
+ * original). Idempotent: files that have the variant, SVGs, and files whose
+ * encode was skipped as undecodable are left alone. Returns how many it queued.
+ */
+export async function backfillLargeThumbnails(): Promise<number> {
+  const rows = await db
+    .select({ id: FileTable.id })
+    .from(FileTable)
+    .where(
+      and(
+        eq(FileTable.type, "image"),
+        ne(FileTable.mime, "image/svg+xml"),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(FileVariantTable)
+            .where(
+              and(
+                eq(FileVariantTable.originalFileId, FileTable.id),
+                eq(FileVariantTable.type, "thumbnail"),
+              ),
+            ),
+        ),
+        sql`NOT EXISTS (SELECT 1 FROM ${FileVariantTable} WHERE ${FileVariantTable.originalFileId} = ${FileTable.id} AND ${FileVariantTable.type} = 'thumbnail_lg')`,
+        sql`NOT EXISTS (SELECT 1 FROM ${FileTaskTable} WHERE ${FileTaskTable.fileId} = ${FileTable.id} AND ${FileTaskTable.type} = 'encode_thumbnail' AND ${FileTaskTable.status} IN ('skipped', 'pending', 'in_progress'))`,
+      ),
+    );
+
+  const ids = rows.map((r) => r.id);
+  // The encode lease takes the oldest updatedAt first. Stamp the backfill a
+  // day ahead so photos imported today are not stuck behind a large backlog.
+  const now = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  for (const part of chunk(ids, 500)) {
+    await db
+      .insert(FileTaskTable)
+      .values(
+        part.map((fileId) => ({
+          fileId,
+          type: "encode_thumbnail" as const,
+          status: "pending" as const,
+          updatedAt: now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [FileTaskTable.fileId, FileTaskTable.type, FileTaskTable.version],
+        set: { status: "pending", attempts: 0, lastError: null, updatedAt: now },
+      });
+  }
+  return ids.length;
+}
 
 const getHideUndated = async (userId: string): Promise<boolean> => {
   const settings = await getCachedMediaSettings(userId);
@@ -888,6 +1172,8 @@ const getUsersFiles = async (
       file: FileTable,
       blurhash: ImageMetadataTable.blurhash,
       takenAt: ImageMetadataTable.takenAt,
+      width: ImageMetadataTable.width,
+      height: ImageMetadataTable.height,
       sortAt: sortExpr,
     })
     .from(FileTable)
@@ -933,6 +1219,8 @@ const getUsersFiles = async (
     ...r.file,
     blurhash: r.blurhash,
     takenAt: r.takenAt,
+    width: r.width,
+    height: r.height,
     sortAt: r.sortAt,
   }));
 

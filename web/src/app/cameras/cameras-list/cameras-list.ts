@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { PluralPipe } from '@core/pipes/plural.pipe';
 import { ErrorAlert } from '@core/components/error/error';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
@@ -12,7 +13,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 @Component({
   selector: 'app-cameras-list',
   providers: [provideIcons({ lucideCamera })],
-  imports: [ErrorAlert, Loading, NgIcon, HlmIcon, RouterLink],
+  imports: [PluralPipe, ErrorAlert, Loading, NgIcon, HlmIcon, RouterLink],
   host: { class: 'block h-full overflow-y-auto' },
   template: `
     @if (cameras.isPending() && !cameras.data()) {
@@ -40,7 +41,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
                 <div class="min-w-0 flex-1">
                   <p class="text-foreground truncate font-medium capitalize">{{ camera.make }}</p>
                   <p class="text-muted-foreground truncate text-sm">{{ camera.model }}</p>
-                  <p class="text-muted-foreground text-xs">{{ camera.count }} photos</p>
+                  <p class="text-muted-foreground text-xs tabular-nums">{{ camera.count | plural: 'photo' }}</p>
                 </div>
               </div>
             </a>

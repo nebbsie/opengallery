@@ -57,6 +57,20 @@
       "when": 1793145600000,
       "tag": "0007_viewer_rules_invites",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793232000000,
+      "tag": "0008_face_pipeline_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793318400000,
+      "tag": "0009_uploads",
+      "breakpoints": true
     }
   ]
 }

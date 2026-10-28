@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { relations, sql } from "drizzle-orm";
 import {
+  blob,
   index,
   integer,
   real,
@@ -27,7 +28,8 @@ const id = () =>
 // SQLite doesn't support enums natively, using text columns with type hints
 export type FileType = "image" | "video";
 export type SharedItemType = "library" | "album" | "file";
-export type FileVariantType = "thumbnail" | "optimised";
+// thumbnail_lg: 640px uncropped thumbnail for retina grids (srcset).
+export type FileVariantType = "thumbnail" | "optimised" | "thumbnail_lg";
 export type ShareType = "user" | "public";
 export type SharedAccessLevel = "view" | "add" | "edit";
 export type LogType = "error" | "info" | "warn" | "debug";
@@ -291,6 +293,10 @@ export const PersonTable = sqliteTable(
     centroid: text("centroid"), // JSON number[] — mean embedding
     faceCount: integer("face_count").notNull().default(0),
     hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
+    // Set once a user has curated this person (named it, merged into it, or put
+    // faces on it). Faces of a pinned person are fixed anchors when faces are
+    // regrouped, so a regroup never undoes the user's work.
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -311,8 +317,24 @@ export const FaceTable = sqliteTable(
     fileId: text("file_id")
       .notNull()
       .references(() => FileTable.id),
+    // Null = detected but not in any group yet (an unclustered face).
     personId: text("person_id").references(() => PersonTable.id),
-    embedding: text("embedding").notNull(), // JSON number[]
+    // Legacy JSON number[] embedding (pre-"vec" rows). New rows use vec.
+    embedding: text("embedding"),
+    // L2-normalized Float32 embedding as raw little-endian bytes.
+    vec: blob("vec", { mode: "buffer" }),
+    // Recognition model that produced vec. Embeddings from different models
+    // are never compared.
+    model: text("model"),
+    // 0..1 face quality (size, sharpness, pose, detector score). Low-quality
+    // faces never start a group on their own.
+    quality: real("quality"),
+    // Head turn from the 5 landmarks: 0 = frontal, about 1 = full profile.
+    yaw: real("yaw"),
+    // Drawn by a user, not found by the detector. Kept across rescans.
+    manual: integer("manual", { mode: "boolean" }).notNull().default(false),
+    // A user said this face is this person. Kept across rescans and regroups.
+    confirmed: integer("confirmed", { mode: "boolean" }).notNull().default(false),
     boxX: real("box_x").notNull(),
     boxY: real("box_y").notNull(),
     boxW: real("box_w").notNull(),
@@ -326,6 +348,23 @@ export const FaceTable = sqliteTable(
   (t) => [
     index("face_file_id_idx").on(t.fileId),
     index("face_person_id_idx").on(t.personId),
+  ],
+);
+
+// "This face is not that person": a user answer. Regrouping and live matching
+// never put the face back on that person. Survives rescans because a rescanned
+// face keeps its row id when its box overlaps the old one.
+export const FaceRejectionTable = sqliteTable(
+  "face_rejection",
+  {
+    id: id(),
+    faceId: text("face_id").notNull(),
+    personId: text("person_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("face_rejection_uidx").on(t.faceId, t.personId),
+    index("face_rejection_person_idx").on(t.personId),
   ],
 );
 
@@ -428,6 +467,10 @@ export const SystemSettingsTable = sqliteTable("system_settings", {
   // Higher = stricter (fewer false merges, more cluster fragmentation). Tunable
   // in Settings → Faces. See assignFace in faces.router.ts.
   faceMatchThreshold: real("face_match_threshold").notNull().default(0.4),
+  // When faces were last regrouped (faces/recluster.ts).
+  faceLastReclusterAt: text("face_last_recluster_at"),
+  // Largest file one upload may be (bytes). See uploads/upload-store.ts.
+  maxUploadBytes: integer("max_upload_bytes").notNull().default(10737418240),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -613,4 +656,33 @@ export const InviteTable = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("invite_token_hash_uidx").on(t.tokenHash)],
+);
+
+export type UploadSessionStatus = "open" | "done" | "duplicate" | "cancelled";
+
+// One resumable upload (uploads/upload-store.ts). Chunks are appended to
+// part_path; `received` is the byte count on disk, so a client resumes from it
+// after a dropped connection. dest_dir is the absolute album folder inside the
+// user's uploads folder.
+export const UploadSessionTable = sqliteTable(
+  "upload_session",
+  {
+    id: id(),
+    userId: text("user_id").notNull(),
+    fileName: text("file_name").notNull(),
+    size: integer("size").notNull(),
+    mime: text("mime").notNull(),
+    destDir: text("dest_dir").notNull(),
+    partPath: text("part_path").notNull(),
+    received: integer("received").notNull().default(0),
+    status: text("status").$type<UploadSessionStatus>().notNull().default("open"),
+    fileId: text("file_id"),
+    albumId: text("album_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("upload_session_user_idx").on(t.userId, t.status),
+    index("upload_session_updated_idx").on(t.updatedAt),
+  ],
 );

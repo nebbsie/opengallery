@@ -11,12 +11,15 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay, lucideImagePlus } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { Loading } from '@core/components/loading/loading';
+import { GridSkeleton } from '@core/components/loading-thumbnail/grid-skeleton';
+import { SelectionBar } from '@core/components/selection-bar/selection-bar';
+import { GridSelection } from '@core/services/selection/grid-selection';
 import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-all',
   providers: [
+    GridSelection,
     provideIcons({
       lucideCirclePlay,
       lucideCirclePause,
@@ -24,7 +27,8 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
     }),
   ],
   imports: [
-    Loading,
+    GridSkeleton,
+    SelectionBar,
     ErrorAlert,
     AssetThumbnail,
     RouterLink,
@@ -36,7 +40,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
   host: { class: 'block h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <app-loading />
+      <app-grid-skeleton [rail]="true" />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
@@ -67,6 +71,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
             <app-asset-thumbnail from="/gallery" kind="all" [asset]="asset" />
           </ng-template>
         </app-virtual-thumbnail-grid>
+        <app-selection-bar />
       }
     }
   `,

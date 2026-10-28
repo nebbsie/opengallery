@@ -64,6 +64,7 @@ export const settingsRouter = router({
         selectedGpu: null,
         faceConcurrency: 2,
         faceMatchThreshold: 0.4,
+        maxUploadBytes: 10 * 1024 * 1024 * 1024,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -89,6 +90,10 @@ export const settingsRouter = router({
         faceMatchThreshold: z.optional(z.number().min(0.2).max(0.7)),
         uploadPath: z.optional(z.string().nullable()),
         variantsPath: z.optional(z.string().nullable()),
+        // 1 MB to 1 TB.
+        maxUploadBytes: z.optional(
+          z.number().int().min(1024 * 1024).max(1024 * 1024 * 1024 * 1024),
+        ),
       }),
     )
     .mutation(async (ctx) => {

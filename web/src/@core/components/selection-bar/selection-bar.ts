@@ -1,0 +1,162 @@
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  signal,
+} from '@angular/core';
+import { PluralPipe } from '@core/pipes/plural.pipe';
+import { Auth } from '@core/services/auth/auth';
+import { GridSelection } from '@core/services/selection/grid-selection';
+import { ToastService } from '@core/services/toast/toast';
+import { injectTrpc } from '@core/services/trpc';
+import { environment } from '@env/environment';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideDownload, lucideEyeOff, lucideShare2, lucideX } from '@ng-icons/lucide';
+import { HlmDialogService } from '@spartan-ng/helm/dialog';
+import { HlmIcon } from '@spartan-ng/helm/icon';
+import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog';
+
+/**
+ * Bottom action bar for a grid selection. Put it once in a page that provides
+ * `GridSelection`. On phones it covers the bottom nav while items are
+ * selected (like Google Photos); on wider screens it floats above the grid.
+ */
+@Component({
+  selector: 'app-selection-bar',
+  imports: [NgIcon, HlmIcon, HlmSpinner, PluralPipe],
+  providers: [provideIcons({ lucideDownload, lucideEyeOff, lucideShare2, lucideX })],
+  host: { class: 'contents' },
+  template: `
+    <div
+      class="bg-popover text-popover-foreground fixed inset-x-0 bottom-0 z-50 flex min-h-[3.5rem] items-center gap-1 border-t px-2 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgba(0,0,0,0.08)] transition-[translate,opacity] duration-200 ease-out sm:inset-x-auto sm:bottom-4 sm:left-1/2 sm:-translate-x-1/2 sm:rounded-full sm:border sm:pb-0 sm:pl-2 sm:pr-3 sm:shadow-xl"
+      [class]="
+        visible()
+          ? 'translate-y-0 opacity-100'
+          : 'pointer-events-none translate-y-[calc(100%+1rem)] opacity-0'
+      "
+      role="toolbar"
+      aria-label="Selection actions"
+      [attr.aria-hidden]="!visible()"
+      [attr.inert]="visible() ? null : ''"
+    >
+      <button
+        type="button"
+        class="hover:bg-muted grid size-10 shrink-0 place-items-center rounded-full transition-[background-color,scale] duration-150 active:scale-[0.96]"
+        aria-label="Clear selection"
+        title="Clear selection (Esc)"
+        (click)="selection.clear()"
+      >
+        <ng-icon hlm size="sm" name="lucideX" />
+      </button>
+      <span class="mr-auto min-w-0 truncate pr-2 text-sm font-semibold tabular-nums sm:mr-3" aria-live="polite">
+        {{ shownCount() | plural: 'item' }} selected
+      </span>
+
+      <button
+        type="button"
+        class="hover:bg-muted flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:opacity-50"
+        [disabled]="downloading()"
+        (click)="download()"
+      >
+        @if (downloading()) {
+          <hlm-spinner class="size-4" />
+        } @else {
+          <ng-icon hlm size="sm" name="lucideDownload" />
+        }
+        <span class="hidden sm:inline">Download</span>
+        <span class="sr-only sm:hidden">Download</span>
+      </button>
+      <button
+        type="button"
+        class="hover:bg-muted flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
+        (click)="openPeople('share')"
+      >
+        <ng-icon hlm size="sm" name="lucideShare2" />
+        <span class="hidden sm:inline">Share</span>
+        <span class="sr-only sm:hidden">Share</span>
+      </button>
+      @if (isAdmin()) {
+        <button
+          type="button"
+          class="hover:bg-muted flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
+          (click)="openPeople('hide')"
+        >
+          <ng-icon hlm size="sm" name="lucideEyeOff" />
+          <span class="hidden sm:inline">Hide from</span>
+          <span class="sr-only sm:hidden">Hide from</span>
+        </button>
+      }
+    </div>
+  `,
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class SelectionBar {
+  protected readonly selection = inject(GridSelection);
+  private readonly trpc = injectTrpc();
+  private readonly toast = inject(ToastService);
+  private readonly dialog = inject(HlmDialogService);
+  protected readonly isAdmin = inject(Auth).isAdmin;
+  private readonly apiUrl = environment.api.url;
+
+  protected readonly visible = computed(() => this.selection.active());
+  protected readonly downloading = signal(false);
+
+  // Keep the last count while the bar slides away, so it never reads "0 items".
+  private readonly lastCount = signal(0);
+  protected readonly shownCount = computed(() => this.selection.count() || this.lastCount());
+
+  constructor() {
+    effect(() => {
+      const n = this.selection.count();
+      if (n > 0) this.lastCount.set(n);
+    });
+  }
+
+  protected async download(): Promise<void> {
+    const ids = [...this.selection.ids()];
+    if (!ids.length || this.downloading()) return;
+
+    if (ids.length === 1) {
+      this.startDownload(`${this.apiUrl}/asset/${encodeURIComponent(ids[0])}?download=1`);
+      this.toast.show('Download started');
+      return;
+    }
+
+    this.downloading.set(true);
+    try {
+      const { token, count } = await this.trpc.files.createDownload.mutate({ fileIds: ids });
+      this.startDownload(`${this.apiUrl}/download/${encodeURIComponent(token)}`);
+      this.toast.success(`Zipping ${count.toLocaleString()} ${count === 1 ? 'item' : 'items'}. The download starts soon.`);
+    } catch (err) {
+      this.toast.error((err as Error)?.message || 'Could not start the download. Try again.');
+    } finally {
+      this.downloading.set(false);
+    }
+  }
+
+  private startDownload(url: string): void {
+    // An attachment response does not leave the page.
+    const a = document.createElement('a');
+    a.href = url;
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  protected openPeople(mode: BulkPeopleDialogContext['mode']): void {
+    const fileIds = [...this.selection.ids()];
+    if (!fileIds.length) return;
+    const ref = this.dialog.open(BulkPeopleDialog, {
+      context: { mode, fileIds } satisfies BulkPeopleDialogContext,
+      contentClass: 'sm:max-w-md',
+    });
+    ref.closed$.subscribe((done) => {
+      if (done) this.selection.clear();
+    });
+  }
+}

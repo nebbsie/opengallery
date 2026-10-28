@@ -8,9 +8,10 @@ import {
   signal,
   viewChild,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { ErrorAlert } from '@core/components/error/error';
+import { PickerPerson } from '@core/components/people-picker/people-picker';
+import { PluralPipe } from '@core/pipes/plural.pipe';
 import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
 import { optimisticEdit } from '@core/services/optimistic';
@@ -20,6 +21,8 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideArrowRight,
   lucideCheck,
+  lucideScanFace,
+  lucideSearch,
   lucideSparkles,
   lucideUser,
   lucideUsers,
@@ -28,22 +31,29 @@ import {
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
-import { Loading } from '@core/components/loading/loading';
 import {
   injectInfiniteQuery,
   injectMutation,
   injectQuery,
+  keepPreviousData,
   QueryClient,
 } from '@tanstack/angular-query-experimental';
+import { FaceActions, faceAlt } from '../face-actions';
+import { FaceReview, REVIEW_LIMIT, reviewCountText, reviewQueryKey } from '../face-review/face-review';
+import { NameInput } from '../name-input/name-input';
 
 type Person = RouterOutputs['faces']['listPeoplePage']['items'][number];
 type Suggestion = RouterOutputs['faces']['listMergeSuggestions'][number];
+type Filter = 'all' | 'named' | 'unnamed';
 
 // Shape of the paginated infinite-query cache, for optimistic edits.
 type PeoplePages = {
   pages: { items: Person[]; nextCursor: string | null }[];
   pageParams: unknown[];
 };
+
+const SKELETON = Array.from({ length: 15 }, (_, i) => i);
+const SEARCH_DEBOUNCE_MS = 250;
 
 @Component({
   selector: 'app-faces-list',
@@ -53,153 +63,214 @@ type PeoplePages = {
       lucideUser,
       lucideArrowRight,
       lucideCheck,
+      lucideScanFace,
+      lucideSearch,
       lucideSparkles,
       lucideX,
     }),
   ],
   imports: [
     ErrorAlert,
-    Loading,
     NgIcon,
     HlmIcon,
     HlmInput,
     HlmButton,
     RouterLink,
-    FormsModule,
+    PluralPipe,
+    NameInput,
+    FaceReview,
   ],
   host: { class: 'block h-full overflow-y-auto' },
   template: `
+    <div class="mb-4 flex flex-wrap items-center gap-3">
+      <h1 class="text-foreground text-2xl font-bold">People</h1>
+      @if (isAdmin() && reviewCount() > 0) {
+        <button
+          hlmBtn
+          variant="outline"
+          class="ml-auto h-11 active:scale-[0.96] sm:h-9"
+          (click)="reviewOpen.set(true)"
+        >
+          <ng-icon hlm size="sm" name="lucideScanFace" />
+          Review faces
+          <span class="bg-primary text-primary-foreground rounded-full px-1.5 text-xs tabular-nums">
+            {{ reviewCountLabel() }}
+          </span>
+        </button>
+      }
+    </div>
+
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <div class="relative w-full sm:w-72">
+        <ng-icon
+          hlm
+          size="sm"
+          name="lucideSearch"
+          class="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2"
+        />
+        <input
+          hlmInput
+          type="search"
+          class="h-11 w-full pl-8 sm:h-9"
+          placeholder="Search people"
+          aria-label="Search people by name"
+          [value]="searchInput()"
+          (input)="searchInput.set($any($event.target).value)"
+        />
+      </div>
+      <div role="radiogroup" aria-label="Show" class="flex gap-1">
+        @for (f of filters; track f.id) {
+          <button
+            type="button"
+            role="radio"
+            [attr.aria-checked]="filter() === f.id"
+            class="focus-visible:ring-ring min-h-11 rounded-full border px-4 text-sm font-medium outline-none transition-[background-color,color,border-color] duration-150 focus-visible:ring-2 active:scale-[0.96] sm:min-h-8"
+            [class]="
+              filter() === f.id
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'text-foreground hover:bg-accent'
+            "
+            (click)="filter.set(f.id)"
+          >
+            {{ f.label }}
+          </button>
+        }
+      </div>
+    </div>
+
+    <!-- Admin-only: clusters that look like the same person split in two.
+         Merge folds the source into the named or larger target in one click,
+         with Undo in the toast. "Not the same" dismisses the pair for good. -->
+    @if (isAdmin() && suggestions().length > 0 && !search()) {
+      <section class="bg-card mb-6 rounded-2xl border p-4" aria-labelledby="suggestions-title">
+        <div class="mb-3 flex items-center gap-2">
+          <ng-icon hlm size="sm" name="lucideSparkles" class="text-primary" />
+          <h2 id="suggestions-title" class="text-foreground text-sm font-semibold">
+            Same person?
+          </h2>
+          <span class="text-muted-foreground text-xs tabular-nums">({{ suggestions().length }})</span>
+        </div>
+        <div class="flex gap-3 overflow-x-auto pb-1">
+          @for (s of suggestions(); track s.source.id + '|' + s.target.id) {
+            <div class="bg-background flex w-64 shrink-0 flex-col gap-3 rounded-lg border p-3">
+              <div class="flex items-center justify-center gap-2">
+                @for (p of [s.source, s.target]; track p.id; let first = $first) {
+                  @if (!first) {
+                    <ng-icon hlm size="sm" name="lucideArrowRight" class="text-muted-foreground" />
+                  }
+                  <div class="flex w-20 flex-col items-center gap-1">
+                    <a
+                      [routerLink]="['/faces', p.id]"
+                      class="bg-muted group focus-visible:ring-ring relative block h-16 w-16 overflow-hidden rounded-full outline-none focus-visible:ring-2"
+                    >
+                      @if (p.coverFaceId) {
+                        <img
+                          class="h-full w-full object-cover transition-transform group-hover:scale-105"
+                          [src]="apiUrl + '/face/' + p.coverFaceId"
+                          [alt]="faceAlt(p.name)"
+                          loading="lazy"
+                        />
+                      } @else {
+                        <span class="text-muted-foreground grid h-full w-full place-items-center">
+                          <ng-icon hlm size="lg" name="lucideUser" />
+                        </span>
+                      }
+                    </a>
+                    <span class="w-full truncate text-center text-[11px] font-medium">
+                      {{ p.name || 'Unnamed' }}
+                    </span>
+                    <span class="text-muted-foreground text-[11px] tabular-nums">
+                      {{ p.faceCount | plural: 'photo' }}
+                    </span>
+                  </div>
+                }
+              </div>
+
+              <p class="text-muted-foreground text-center text-xs tabular-nums">
+                {{ (s.similarity * 100).toFixed(0) }}% match
+              </p>
+
+              <div class="flex gap-2">
+                <button
+                  hlmBtn
+                  class="h-11 flex-1 active:scale-[0.96] sm:h-8"
+                  [disabled]="busyPair() === pairKey(s)"
+                  (click)="acceptSuggestion(s)"
+                >
+                  <ng-icon hlm size="sm" name="lucideCheck" />
+                  Merge
+                </button>
+                <button
+                  hlmBtn
+                  variant="ghost"
+                  class="h-11 w-11 p-0 active:scale-[0.96] sm:h-8 sm:w-8"
+                  [attr.aria-label]="'Not the same person: keep ' + (s.source.name || 'these people') + ' apart'"
+                  title="Not the same person"
+                  [disabled]="busyPair() === pairKey(s)"
+                  (click)="dismissSuggestion(s)"
+                >
+                  <ng-icon hlm size="sm" name="lucideX" />
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+        @if (suggestionDismiss.isError()) {
+          <app-error-alert [error]="suggestionDismiss.error() || undefined" class="mt-3 block" />
+        }
+      </section>
+    }
+
     @if (people.isPending()) {
-      <app-loading />
+      <!-- First load: the same grid with grey avatars, so nothing moves when data lands. -->
+      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5" aria-busy="true" aria-label="Loading people">
+        @for (i of skeleton; track i) {
+          <div class="flex flex-col items-center rounded-lg border p-3">
+            <div class="bg-muted h-28 w-28 animate-pulse rounded-full"></div>
+            <div class="bg-muted mt-3 h-4 w-20 animate-pulse rounded"></div>
+            <div class="bg-muted mt-1.5 h-3 w-12 animate-pulse rounded"></div>
+          </div>
+        }
+      </div>
     } @else if (people.isError() && !people.data()) {
       <app-error-alert [error]="people.error()" />
     } @else {
-      <!-- Admin-only: clusters that look like the same person split in two.
-           Merge folds the source into the named/larger target; "Not the same"
-           dismisses the pair so it won't be suggested again. -->
-      @if (isAdmin() && suggestions().length > 0) {
-        <div class="bg-card mb-6 rounded-2xl border p-4">
-          <div class="mb-3 flex items-center gap-2">
-            <ng-icon hlm size="sm" name="lucideSparkles" class="text-primary" />
-            <h2 class="text-foreground text-sm font-semibold">
-              People that might be the same
-            </h2>
-            <span class="text-muted-foreground text-xs">({{ suggestions().length }})</span>
-          </div>
-          <div class="flex gap-3 overflow-x-auto pb-1">
-            @for (s of suggestions(); track s.source.id + '|' + s.target.id) {
-              <div class="bg-background flex w-64 shrink-0 flex-col gap-3 rounded-lg border p-3">
-                <div class="flex items-center justify-center gap-2">
-                  <div class="flex w-20 flex-col items-center gap-1">
-                    <a
-                      [routerLink]="['/faces', s.source.id]"
-                      class="bg-muted group relative block h-16 w-16 overflow-hidden rounded-full"
-                    >
-                      @if (s.source.coverFaceId) {
-                        <img
-                          class="h-full w-full object-cover transition-transform group-hover:scale-105"
-                          [src]="apiUrl + '/face/' + s.source.coverFaceId"
-                          [alt]="s.source.name || 'Unnamed person'"
-                          loading="lazy"
-                        />
-                      } @else {
-                        <span class="text-muted-foreground grid h-full w-full place-items-center">
-                          <ng-icon hlm size="lg" name="lucideUser" />
-                        </span>
-                      }
-                    </a>
-                    <span class="w-full truncate text-center text-[11px] font-medium">
-                      {{ s.source.name || 'Unnamed' }}
-                    </span>
-                    <span class="text-muted-foreground text-[11px]">
-                      {{ s.source.faceCount }} {{ s.source.faceCount === 1 ? 'photo' : 'photos' }}
-                    </span>
-                  </div>
-                  <ng-icon hlm size="sm" name="lucideArrowRight" class="text-muted-foreground" />
-                  <div class="flex w-20 flex-col items-center gap-1">
-                    <a
-                      [routerLink]="['/faces', s.target.id]"
-                      class="bg-muted group relative block h-16 w-16 overflow-hidden rounded-full"
-                    >
-                      @if (s.target.coverFaceId) {
-                        <img
-                          class="h-full w-full object-cover transition-transform group-hover:scale-105"
-                          [src]="apiUrl + '/face/' + s.target.coverFaceId"
-                          [alt]="s.target.name || 'Unnamed person'"
-                          loading="lazy"
-                        />
-                      } @else {
-                        <span class="text-muted-foreground grid h-full w-full place-items-center">
-                          <ng-icon hlm size="lg" name="lucideUser" />
-                        </span>
-                      }
-                    </a>
-                    <span class="w-full truncate text-center text-[11px] font-medium">
-                      {{ s.target.name || 'Unnamed' }}
-                    </span>
-                    <span class="text-muted-foreground text-[11px]">
-                      {{ s.target.faceCount }} {{ s.target.faceCount === 1 ? 'photo' : 'photos' }}
-                    </span>
-                  </div>
-                </div>
-
-                <p class="text-muted-foreground text-center text-xs">
-                  {{ (s.similarity * 100).toFixed(0) }}% match
-                </p>
-
-                <div class="flex gap-2">
-                  <button
-                    hlmBtn
-                    size="sm"
-                    class="flex-1"
-                    [disabled]="busyPair() === s.source.id"
-                    (click)="acceptSuggestion(s)"
-                  >
-                    <ng-icon hlm size="sm" name="lucideCheck" class="mr-1" />
-                    Merge
-                  </button>
-                  <button
-                    hlmBtn
-                    size="sm"
-                    variant="ghost"
-                    [disabled]="busyPair() === s.source.id"
-                    (click)="dismissSuggestion(s)"
-                  >
-                    <ng-icon hlm size="sm" name="lucideX" />
-                  </button>
-                </div>
-              </div>
-            }
-          </div>
-          @if (suggestionMerge.isError() || suggestionDismiss.isError()) {
-            <app-error-alert
-              [error]="(suggestionMerge.error() || suggestionDismiss.error()) || undefined"
-              class="mt-3 block"
-            />
-          }
-        </div>
-      }
-
       @if (allPeople().length === 0) {
-        <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
+        <div class="text-muted-foreground flex flex-col items-center justify-center py-12 text-center">
           <ng-icon hlm size="xl" name="lucideUsers" class="mb-4" />
-          <p>No people detected yet</p>
-          @if (isAdmin()) {
-            <p class="text-sm">Faces appear here as your photos are scanned</p>
+          @if (search()) {
+            <p>Nobody matches "{{ search() }}"</p>
+          } @else if (filter() !== 'all') {
+            <p>No {{ filter() }} people</p>
+          } @else {
+            <p>No people found yet</p>
+            @if (isAdmin()) {
+              <p class="text-sm">Faces show here after your photos are scanned</p>
+            }
           }
         </div>
       } @else {
-        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        <ul
+          class="grid grid-cols-2 gap-4 transition-opacity duration-150 sm:grid-cols-3 lg:grid-cols-5"
+          [class.opacity-60]="people.isPlaceholderData()"
+          aria-label="People"
+        >
           @for (person of allPeople(); track person.id) {
-            <div
+            <li
               class="bg-card flex flex-col items-center rounded-lg border p-3"
               [class.opacity-60]="isAdmin() && person.hidden"
             >
-              <a [routerLink]="['/faces', person.id]" class="group block">
-                <div class="bg-muted relative h-28 w-28 overflow-hidden rounded-full">
+              <a
+                [routerLink]="['/faces', person.id]"
+                class="group focus-visible:ring-ring block rounded-full outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                [attr.aria-label]="(person.name || 'Unnamed person') + ', ' + (person.faceCount | plural: 'photo')"
+              >
+                <div
+                  class="bg-muted relative h-28 w-28 overflow-hidden rounded-full outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+                >
                   @if (isAdmin() && person.hidden) {
                     <span
-                      class="absolute right-1 top-1 z-10 rounded bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                      class="absolute top-1 right-1 z-10 rounded bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-black"
                     >
                       Hidden
                     </span>
@@ -208,7 +279,7 @@ type PeoplePages = {
                     <img
                       class="h-full w-full object-cover transition-transform group-hover:scale-105"
                       [src]="apiUrl + '/face/' + person.coverFaceId"
-                      [alt]="person.name || 'Unnamed person'"
+                      [alt]="faceAlt(person.name)"
                       loading="lazy"
                     />
                   } @else {
@@ -221,45 +292,74 @@ type PeoplePages = {
 
               <div class="mt-2 w-full text-center">
                 @if (editingId() === person.id) {
-                  <input
-                    hlmInput
-                    class="h-8 w-full text-center text-sm"
-                    [(ngModel)]="draftName"
-                    (keydown.enter)="save(person.id)"
-                    (keydown.escape)="cancel()"
-                    (blur)="save(person.id)"
-                    placeholder="Add a name"
-                    autofocus
+                  <app-name-input
+                    [personId]="person.id"
+                    [initial]="person.name"
+                    [label]="'Name for ' + (person.name || 'unnamed person')"
+                    (saved)="saveName(person.id, $event)"
+                    (merge)="mergeInto(person, $event)"
+                    (cancelled)="editingId.set(null)"
                   />
                 } @else if (!isAdmin()) {
                   <!-- Only the admin names people. -->
-                  <p class="w-full truncate text-sm font-medium">
+                  <p class="flex min-h-9 items-center justify-center truncate text-sm font-medium">
                     {{ person.name || 'Unnamed person' }}
                   </p>
                 } @else if (person.name) {
-                  <button class="w-full truncate text-sm font-medium" (click)="edit(person.id, person.name)">
+                  <button
+                    class="hover:bg-accent focus-visible:ring-ring min-h-9 w-full truncate rounded-md px-1 text-sm font-medium outline-none focus-visible:ring-2"
+                    [attr.aria-label]="'Rename ' + person.name"
+                    (click)="editingId.set(person.id)"
+                  >
                     {{ person.name }}
                   </button>
                 } @else {
                   <button
-                    class="text-primary w-full truncate text-sm"
-                    (click)="edit(person.id, null)"
+                    class="text-primary hover:bg-accent focus-visible:ring-ring min-h-9 w-full truncate rounded-md px-1 text-sm font-medium outline-none focus-visible:ring-2"
+                    (click)="editingId.set(person.id)"
                   >
                     Add a name
                   </button>
                 }
-                <p class="text-muted-foreground text-xs">{{ person.faceCount }} photos</p>
+                <p class="text-muted-foreground text-xs tabular-nums">
+                  {{ person.faceCount | plural: 'photo' }}
+                </p>
               </div>
-            </div>
+            </li>
           }
-        </div>
+        </ul>
 
         <!-- Sentinel: when it scrolls near the viewport, fetch the next page. -->
         <div #sentinel class="h-px w-full"></div>
         @if (people.isFetchingNextPage()) {
-          <div class="text-muted-foreground py-6 text-center text-sm">Loading more…</div>
+          <div class="text-muted-foreground py-6 text-center text-sm">Loading more people</div>
         }
       }
+
+      <!-- Google-style: unnamed people in fewer than 3 photos stay out of the
+           way unless asked for. Shown once the main list has fully loaded. -->
+      @if (filter() !== 'named' && !people.hasNextPage()) {
+        <div class="flex justify-center py-6">
+          <button
+            hlmBtn
+            variant="ghost"
+            class="h-11 active:scale-[0.96]"
+            [attr.aria-pressed]="includeSmall()"
+            (click)="includeSmall.set(!includeSmall())"
+          >
+            {{ includeSmall() ? 'Hide small groups' : 'Show small groups' }}
+          </button>
+        </div>
+        @if (!includeSmall()) {
+          <p class="text-muted-foreground -mt-4 pb-6 text-center text-xs text-pretty">
+            Small groups are unnamed people in fewer than 3 photos.
+          </p>
+        }
+      }
+    }
+
+    @if (reviewOpen()) {
+      <app-face-review [personId]="null" (closed)="reviewOpen.set(false)" />
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -269,37 +369,70 @@ export class FacesList {
   private readonly trpc = injectTrpc();
   private readonly queryClient = inject(QueryClient);
   private readonly auth = inject(Auth);
+  private readonly actions = inject(FaceActions);
   private readonly host = inject(ElementRef<HTMLElement>);
   private readonly sentinel = viewChild<ElementRef<HTMLElement>>('sentinel');
+  protected readonly skeleton = SKELETON;
+  protected readonly faceAlt = faceAlt;
 
   // False while the admin previews as another user, so the page looks exactly
   // as that user sees it.
   protected readonly isAdmin = this.auth.isAdmin;
 
   protected readonly editingId = signal<string | null>(null);
-  protected draftName = '';
+  protected readonly reviewOpen = signal(false);
 
-  // Admins also see hidden people so they can unhide them; regular users don't.
-  // Paginated so the page loads ~100 clusters at a time on scroll instead of
-  // every cluster (and an avatar request each) up front.
+  protected readonly filters: { id: Filter; label: string }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'named', label: 'Named' },
+    { id: 'unnamed', label: 'Unnamed' },
+  ];
+  protected readonly filter = signal<Filter>('all');
+  protected readonly includeSmall = signal(false);
+  // What the user types; the query uses the debounced copy.
+  protected readonly searchInput = signal('');
+  protected readonly search = signal('');
+
+  // Admins also see hidden people so they can unhide them; regular users do not.
+  // Paginated: about 100 people at a time on scroll. The previous result stays
+  // on screen (dimmed) while a new search or filter loads, so nothing jumps.
   people = injectInfiniteQuery(() => ({
-    queryKey: [CacheKey.FacesPage, this.isAdmin() ? 'with-hidden' : 'visible'],
+    queryKey: [
+      CacheKey.FacesPage,
+      this.isAdmin() ? 'with-hidden' : 'visible',
+      this.search(),
+      this.filter(),
+      this.includeSmall(),
+    ],
     queryFn: async ({ pageParam }) =>
       this.trpc.faces.listPeoplePage.query({
         includeHidden: this.isAdmin(),
         limit: 100,
         cursor: pageParam,
+        search: this.search() || undefined,
+        filter: this.filter(),
+        includeSmall: this.includeSmall(),
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
+    placeholderData: keepPreviousData,
   }));
 
-  protected readonly allPeople = computed(
+  protected readonly allPeople = computed<Person[]>(
     () => this.people.data()?.pages.flatMap((p) => p.items) ?? [],
   );
 
+  // Admin-only "Is this X?" queue across every named person.
+  private readonly review = injectQuery(() => ({
+    queryKey: reviewQueryKey(null),
+    queryFn: async () => this.trpc.faces.listConfirmCandidates.query({ limit: REVIEW_LIMIT }),
+    enabled: this.isAdmin(),
+  }));
+  protected readonly reviewCount = computed(() => this.review.data()?.length ?? 0);
+  protected readonly reviewCountLabel = computed(() => reviewCountText(this.reviewCount()));
+
   // Admin-only merge suggestions ("might be the same person"). The card being
-  // acted on is tracked by its source id so only that card's buttons disable.
+  // acted on is tracked by its pair key so only that card's buttons disable.
   protected readonly busyPair = signal<string | null>(null);
 
   private readonly suggestionsQuery = injectQuery(() => ({
@@ -312,24 +445,7 @@ export class FacesList {
     () => (this.suggestionsQuery.data() ?? []) as Suggestion[],
   );
 
-  // Accept a suggestion = the existing admin merge (source folded into target).
-  // Drop the card immediately, then reconcile the people list and suggestions.
-  protected readonly suggestionMerge = injectMutation(() => ({
-    mutationFn: (vars: { targetId: string; sourceId: string }) =>
-      this.trpc.faces.mergePeople.mutate(vars),
-    onSuccess: (_data, vars) => {
-      this.removeSuggestion(vars.sourceId, vars.targetId);
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesPage] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSuggestions] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, vars.targetId] });
-      // Asset People chips still link to the merged-away person otherwise.
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
-    },
-    onSettled: () => this.busyPair.set(null),
-  }));
-
-  // Dismiss = remember the pair is "not the same person" so it's not re-offered.
+  // Dismiss = remember the pair is "not the same person" so it is not offered again.
   protected readonly suggestionDismiss = injectMutation(() => ({
     mutationFn: (vars: { personIdA: string; personIdB: string }) =>
       this.trpc.faces.dismissMergeSuggestion.mutate(vars),
@@ -340,15 +456,30 @@ export class FacesList {
     onSettled: () => this.busyPair.set(null),
   }));
 
-  acceptSuggestion(s: Suggestion): void {
+  protected pairKey(s: Suggestion): string {
+    return `${s.source.id}|${s.target.id}`;
+  }
+
+  // One click merges; the toast offers Undo (valid for 10 minutes).
+  async acceptSuggestion(s: Suggestion): Promise<void> {
     if (this.busyPair()) return;
-    this.busyPair.set(s.source.id);
-    this.suggestionMerge.mutate({ targetId: s.target.id, sourceId: s.source.id });
+    this.busyPair.set(this.pairKey(s));
+    try {
+      const who = s.target.name || s.source.name;
+      await this.actions.merge(
+        s.target.id,
+        s.source.id,
+        who ? `Merged into ${who}` : 'Merged into one person',
+        { done: () => this.removeSuggestion(s.source.id, s.target.id) },
+      );
+    } finally {
+      this.busyPair.set(null);
+    }
   }
 
   dismissSuggestion(s: Suggestion): void {
     if (this.busyPair()) return;
-    this.busyPair.set(s.source.id);
+    this.busyPair.set(this.pairKey(s));
     this.suggestionDismiss.mutate({ personIdA: s.source.id, personIdB: s.target.id });
   }
 
@@ -366,6 +497,13 @@ export class FacesList {
   }
 
   constructor() {
+    // Debounce the search box so each key press does not start a request.
+    effect((onCleanup) => {
+      const value = this.searchInput().trim();
+      const t = setTimeout(() => this.search.set(value), SEARCH_DEBOUNCE_MS);
+      onCleanup(() => clearTimeout(t));
+    });
+
     // Observe the bottom sentinel within the scroll container; prefetch the next
     // page a bit before it comes into view. Re-runs if the sentinel re-renders.
     effect((onCleanup) => {
@@ -388,7 +526,7 @@ export class FacesList {
     }
   }
 
-  // Optimistic: the new name shows instantly, rolls back if the server rejects,
+  // Optimistic: the new name shows at once, rolls back if the server rejects,
   // and is reconciled by the background refetch in onSettled.
   private rename = injectMutation(() => ({
     mutationFn: (vars: { id: string; name: string | null }) =>
@@ -412,7 +550,7 @@ export class FacesList {
           },
         },
         {
-          // Keep the merge picker's flat list (faces-all) consistent too.
+          // Keep the flat lists (merge picker, autocomplete) consistent too.
           queryKey: [CacheKey.FacesAll],
           update: (old) =>
             Array.isArray(old)
@@ -426,29 +564,18 @@ export class FacesList {
       ]);
     },
     onError: (_err, _vars, ctx) => ctx?.rollback(),
-    onSettled: (_data, _err, { id }) => {
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesPage] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, id] });
-      // The asset viewer's People chips show this name (cached with no stale time).
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
-    },
+    // Every face cache shows names, the viewer's face boxes and chips too.
+    onSettled: () => this.actions.invalidateFaces(),
   }));
 
-  edit(id: string, current: string | null): void {
-    this.draftName = current ?? '';
-    this.editingId.set(id);
+  saveName(id: string, name: string | null): void {
+    this.editingId.set(null);
+    this.rename.mutate({ id, name });
   }
 
-  cancel(): void {
+  // "Add a name" picked an existing name: fold this person into that one.
+  async mergeInto(source: Person, target: PickerPerson): Promise<void> {
     this.editingId.set(null);
-    this.draftName = '';
-  }
-
-  save(id: string): void {
-    if (this.editingId() !== id) return;
-    const name = this.draftName.trim();
-    this.editingId.set(null);
-    this.rename.mutate({ id, name: name.length > 0 ? name : null });
+    await this.actions.merge(target.id, source.id, `Merged into ${target.name}`);
   }
 }

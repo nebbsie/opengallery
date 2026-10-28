@@ -12,6 +12,8 @@ import { Confirm } from '@core/dialogs/confirm/confirm';
 import { PathSelect } from '@core/dialogs/path-select/path-select';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
+import { ToastService } from '@core/services/toast/toast';
+import { toSignal } from '@angular/core/rxjs-interop';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideFolder, lucideHardDrive, lucideImages, lucideTrash2 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
@@ -20,6 +22,8 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { Loading } from '@core/components/loading/loading';
 import { injectMutation, injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
+
+const GB = 1024 * 1024 * 1024;
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -93,8 +97,9 @@ function formatBytes(bytes: number): string {
       <div class="mb-3 flex items-center justify-between gap-4">
         <div>
           <h2 class="text-foreground block text-lg font-bold">Uploads Location</h2>
-          <p class="text-muted-foreground text-sm">
-            Where new uploads will be stored. Required for video encoding.
+          <p class="text-muted-foreground text-sm text-pretty">
+            Where uploaded photos and videos are saved. Each user gets a folder here, and each
+            album is a folder inside it. Pick a writable folder outside your read-only library.
           </p>
         </div>
       </div>
@@ -116,9 +121,39 @@ function formatBytes(bytes: number): string {
         <p class="text-muted-foreground mb-4 text-sm italic">No upload path set. Defaults to source path/uploads when added.</p>
       }
 
-      <button class="mb-10" hlmBtn variant="outline" (click)="setUploadPath()">
+      <button class="mb-6" hlmBtn variant="outline" (click)="setUploadPath()">
         {{ uploadPath() ? 'Change Upload Path' : 'Add Upload Path' }}
       </button>
+
+      <div class="mb-10 max-w-lg">
+        <label for="max-upload" class="text-foreground mb-1 block text-sm font-medium">
+          Largest file per upload
+        </label>
+        <div class="flex items-center gap-2">
+          <input
+            id="max-upload"
+            hlmInput
+            type="number"
+            inputmode="decimal"
+            min="0.001"
+            max="1024"
+            step="0.5"
+            class="w-32 tabular-nums"
+            [formControl]="maxUploadGb"
+            (keydown.enter)="saveMaxUpload()"
+          />
+          <span class="text-muted-foreground text-sm">GB</span>
+          <button
+            hlmBtn
+            variant="outline"
+            [disabled]="maxUploadGb.invalid || !maxUploadChanged()"
+            (click)="saveMaxUpload()"
+          >
+            Save
+          </button>
+        </div>
+        <p class="text-muted-foreground mt-1 text-xs">Uploads larger than this are refused. 1 MB to 1024 GB.</p>
+      </div>
 
       <!-- Encoded Files Location -->
 
@@ -206,6 +241,21 @@ export class SettingsStorage {
     queryFn: async () => this.trpc.mediaSourcesSettings.get.query(),
   }));
 
+  private toast = inject(ToastService);
+
+  // Max upload size, edited in GB.
+  readonly maxUploadGb = new FormControl<number | null>(null, [
+    Validators.required,
+    Validators.min(1 / 1024),
+    Validators.max(1024),
+  ]);
+  private readonly maxUploadValue = toSignal(this.maxUploadGb.valueChanges, { initialValue: null });
+  protected readonly maxUploadChanged = computed(() => {
+    const saved = this.settings.data()?.maxUploadBytes;
+    const v = this.maxUploadValue();
+    return v != null && saved != null && Math.round(v * GB) !== saved;
+  });
+
   uploadPath = signal<string | null>(null);
   variantsPath = signal<string | null>(null);
 
@@ -231,7 +281,14 @@ export class SettingsStorage {
       }
     });
 
-    // Separate effect for auto-setting defaults
+    effect(() => {
+      const bytes = this.settings.data()?.maxUploadBytes;
+      if (bytes != null && !this.maxUploadGb.dirty) {
+        this.maxUploadGb.setValue(Math.round((bytes / GB) * 1000) / 1000);
+      }
+    });
+
+        // Separate effect for auto-setting defaults
     effect(() => {
       const data = this.settings.data();
       const sourcesData = this.sources.data();
@@ -346,7 +403,22 @@ export class SettingsStorage {
     }).then(() => {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.SystemSettings], refetchType: 'all' });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.StorageStats], refetchType: 'all' });
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.UploadConfig] });
     });
+  }
+
+  saveMaxUpload() {
+    const gb = this.maxUploadGb.value;
+    if (gb == null || this.maxUploadGb.invalid) return;
+    this.trpc.settings.update
+      .mutate({ maxUploadBytes: Math.round(gb * GB) })
+      .then(() => {
+        this.maxUploadGb.markAsPristine();
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.SystemSettings] });
+        this.queryClient.invalidateQueries({ queryKey: [CacheKey.UploadConfig] });
+        this.toast.success('Upload limit saved');
+      })
+      .catch(() => this.toast.error('Could not save the upload limit. Try again.'));
   }
 
   originalSize = computed(() => formatBytes(this.stats.data()?.original.totalSize ?? 0));

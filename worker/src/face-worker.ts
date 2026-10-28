@@ -28,10 +28,12 @@ async function backfillCrops(): Promise<void> {
       try {
         const fileResult = await trpc.files.getFileById.query(f.fileId);
         const file = fileResult.raw;
+        // Video faces come from a frame; their crop is made at detection time.
+        if (file.type !== 'image') continue;
         const sourcePath = toContainerPath(join(file.dir, file.name));
         const crop = await createFaceCrop({
           faceId: f.faceId,
-          sourcePath,
+          source: sourcePath,
           box: { x: f.boxX, y: f.boxY, width: f.boxW, height: f.boxH },
           variantsPath,
         });

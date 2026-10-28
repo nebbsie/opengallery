@@ -1,17 +1,36 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-escape.directive';
 import { ErrorAlert } from '@core/components/error/error';
+import { PickerPerson } from '@core/components/people-picker/people-picker';
+import { SelectionBar } from '@core/components/selection-bar/selection-bar';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
+import { PluralPipe } from '@core/pipes/plural.pipe';
 import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
+import { GridSelection } from '@core/services/selection/grid-selection';
 import { optimisticEdit } from '@core/services/optimistic';
 import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideEyeOff, lucideUser } from '@ng-icons/lucide';
+import {
+  lucideEye,
+  lucideEyeOff,
+  lucideMerge,
+  lucidePencil,
+  lucideScanFace,
+  lucideUser,
+} from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
@@ -25,6 +44,10 @@ import {
 } from '@tanstack/angular-query-experimental';
 import { HideFromDialog, HideFromTarget } from '../../shared-viewer/hide-from-dialog/hide-from-dialog';
 import { joinNames, Viewer, viewerRulesKeys } from '../../shared-viewer/viewer-rules';
+import { FaceActions, faceAlt } from '../face-actions';
+import { FaceReview, REVIEW_LIMIT, reviewCountText, reviewQueryKey } from '../face-review/face-review';
+import { NameInput } from '../name-input/name-input';
+import { PersonFaces } from './person-faces';
 
 // Shape of a person row from faces.listPeople. Declared locally so the merge
 // dropdown stays typed even when the tRPC router type resolves to `any` in the
@@ -37,25 +60,14 @@ interface PersonSummary {
   hidden: boolean;
 }
 
-// Cache keys for every browse surface a hide/merge can affect, so the UI
-// reflects the change immediately instead of showing stale (now-hidden) photos.
-const BROWSE_KEYS = [
-  CacheKey.GalleryAll,
-  CacheKey.GalleryPhotos,
-  CacheKey.GalleryVideos,
-  CacheKey.TimelineAll,
-  CacheKey.TimelinePhotos,
-  CacheKey.TimelineVideos,
-  CacheKey.LocationAll,
-  CacheKey.LocationSingle,
-  CacheKey.CamerasAll,
-  CacheKey.CameraSingle,
-  CacheKey.AssetSingle,
-];
+type Tab = 'photos' | 'faces';
 
 @Component({
   selector: 'app-face-detail',
-  providers: [provideIcons({ lucideEyeOff, lucideUser })],
+  providers: [
+    GridSelection,
+    provideIcons({ lucideEye, lucideEyeOff, lucideMerge, lucidePencil, lucideScanFace, lucideUser }),
+  ],
   imports: [
     ErrorAlert,
     Loading,
@@ -65,7 +77,12 @@ const BROWSE_KEYS = [
     NgIcon,
     AssetThumbnail,
     VirtualThumbnailGrid,
+    SelectionBar,
     FormsModule,
+    PluralPipe,
+    NameInput,
+    PersonFaces,
+    FaceReview,
   ],
   hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex flex-col h-full' },
@@ -75,26 +92,39 @@ const BROWSE_KEYS = [
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <div class="mb-3 flex flex-wrap items-center gap-2">
-        @if (editing()) {
-          <input
-            hlmInput
-            class="h-9 text-xl font-bold"
-            [(ngModel)]="draftName"
-            (keydown.enter)="save()"
-            (keydown.escape)="editing.set(false)"
-            placeholder="Add a name"
-            autofocus
+      <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        @if (person.data()?.coverFaceId; as cover) {
+          <img
+            class="bg-muted size-12 shrink-0 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+            [src]="apiUrl + '/face/' + cover"
+            [alt]="faceAlt(person.data()?.name)"
           />
-          <button hlmBtn size="sm" (click)="save()">Save</button>
+        }
+        @if (editing()) {
+          <app-name-input
+            class="w-full max-w-sm"
+            [personId]="id()"
+            [initial]="person.data()?.name ?? null"
+            [large]="true"
+            (saved)="saveName($event)"
+            (merge)="mergeInto($event)"
+            (cancelled)="editing.set(false)"
+          />
         } @else {
-          <h1 class="text-foreground text-2xl font-bold text-balance">
-            {{ person.data()?.name || 'Unnamed person' }}
-          </h1>
+          <div class="min-w-0">
+            <h1 class="text-foreground truncate text-2xl font-bold text-balance">
+              {{ person.data()?.name || 'Unnamed person' }}
+            </h1>
+            @if (person.data(); as p) {
+              <p class="text-muted-foreground text-sm tabular-nums">
+                {{ p.faceCount | plural: 'photo' }}
+              </p>
+            }
+          </div>
           @if (isAdmin()) {
             @if (person.data()?.hidden) {
               <span
-                class="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"
+                class="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
               >
                 Hidden
               </span>
@@ -103,7 +133,7 @@ const BROWSE_KEYS = [
               <!-- Admin-only: who this person is hidden from. Opens the picker. -->
               <button
                 type="button"
-                class="text-muted-foreground hover:bg-muted inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs"
+                class="text-muted-foreground hover:bg-muted focus-visible:ring-ring inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 sm:min-h-8"
                 title="Change who this person is hidden from"
                 (click)="openHideFrom()"
               >
@@ -111,7 +141,13 @@ const BROWSE_KEYS = [
                 Hidden from {{ label }}
               </button>
             }
-            <button hlmBtn variant="ghost" size="sm" (click)="startEdit()">
+            <button
+              hlmBtn
+              variant="ghost"
+              class="h-11 active:scale-[0.96] sm:h-8"
+              (click)="editing.set(true)"
+            >
+              <ng-icon hlm size="sm" name="lucidePencil" />
               {{ person.data()?.name ? 'Rename' : 'Add a name' }}
             </button>
           }
@@ -119,40 +155,51 @@ const BROWSE_KEYS = [
       </div>
 
       <!-- Admin-only curation: merge this person into another, and hide/unhide
-           (hiding also removes their photos from the gallery, timeline & map). -->
+           (hiding also removes their photos from the gallery, timeline and map).
+           Each change shows a toast with Undo. -->
       @if (isAdmin()) {
-        <div class="bg-muted/40 mb-4 flex flex-wrap items-center gap-2 rounded-lg border p-2">
+        <div class="bg-muted/40 mb-3 flex flex-wrap items-center gap-2 rounded-lg border p-2">
           @if (!mergeOpen()) {
-            <button hlmBtn size="sm" variant="outline" (click)="openMerge()">
-              Merge…
+            <button
+              hlmBtn
+              variant="outline"
+              class="h-11 active:scale-[0.96] sm:h-8"
+              (click)="mergeOpen.set(true)"
+            >
+              <ng-icon hlm size="sm" name="lucideMerge" />
+              Merge...
             </button>
-          } @else if (!confirmingMerge()) {
-            <!-- Pick a person to merge into. Clicking a row goes straight to the
-                 confirm step — no separate "select" button. -->
+          } @else if (!selectedTarget()) {
+            <!-- Pick a person to merge into. Clicking a row goes to the confirm step. -->
             <div class="flex w-full max-w-sm flex-col gap-2">
               <div class="flex items-center gap-2">
                 <input
                   hlmInput
-                  class="h-9 flex-1 text-sm"
-                  [(ngModel)]="mergeSearch"
-                  placeholder="Merge into… type to search people"
+                  type="search"
+                  class="h-11 flex-1 text-sm sm:h-9"
+                  [ngModel]="mergeSearch()"
+                  (ngModelChange)="mergeSearch.set($event)"
+                  placeholder="Merge into... type to search people"
+                  aria-label="Search people to merge into"
                   autofocus
                 />
-                <button hlmBtn size="sm" variant="ghost" (click)="closeMerge()">Cancel</button>
+                <button hlmBtn variant="ghost" class="h-11 sm:h-9" (click)="closeMerge()">
+                  Cancel
+                </button>
               </div>
               <div class="bg-background max-h-56 divide-y overflow-y-auto rounded-md border">
                 @for (p of mergeTargets(); track p.id) {
                   <button
                     type="button"
-                    class="hover:bg-muted flex w-full items-center gap-2 px-2 py-2 text-left text-sm"
-                    (click)="pickMergeTarget(p.id)"
+                    class="hover:bg-muted focus-visible:bg-muted flex min-h-11 w-full items-center gap-2 px-2 py-1.5 text-left text-sm outline-none"
+                    (click)="mergeTargetId.set(p.id)"
                   >
-                    <span class="bg-muted relative h-7 w-7 shrink-0 overflow-hidden rounded-full">
+                    <span class="bg-muted relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
                       @if (p.coverFaceId) {
                         <img
                           class="h-full w-full object-cover"
                           [src]="apiUrl + '/face/' + p.coverFaceId"
-                          [alt]="p.name || ''"
+                          alt=""
                           loading="lazy"
                         />
                       } @else {
@@ -162,7 +209,9 @@ const BROWSE_KEYS = [
                       }
                     </span>
                     <span class="truncate">{{ p.name }}</span>
-                    <span class="text-muted-foreground ml-auto shrink-0">({{ p.faceCount }})</span>
+                    <span class="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
+                      {{ p.faceCount | plural: 'photo' }}
+                    </span>
                   </button>
                 } @empty {
                   <p class="text-muted-foreground px-2 py-2 text-sm">No matching people.</p>
@@ -170,35 +219,36 @@ const BROWSE_KEYS = [
               </div>
             </div>
           } @else if (selectedTarget(); as t) {
-            <div class="flex w-full max-w-sm flex-wrap items-center gap-2">
+            <div class="flex w-full max-w-md flex-wrap items-center gap-2">
               <span class="bg-muted relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
                 @if (t.coverFaceId) {
                   <img
                     class="h-full w-full object-cover"
                     [src]="apiUrl + '/face/' + t.coverFaceId"
-                    [alt]="t.name || ''"
+                    [alt]="faceAlt(t.name)"
                     loading="lazy"
                   />
-                } @else {
-                  <span class="text-muted-foreground grid h-full w-full place-items-center">
-                    <ng-icon hlm size="sm" name="lucideUser" />
-                  </span>
                 }
               </span>
               <span class="text-sm">
                 Merge into <strong>{{ t.name }}</strong>?
-                <span class="text-muted-foreground">Can't be undone.</span>
+                <span class="text-muted-foreground">You can undo this for 10 minutes.</span>
               </span>
               <div class="ml-auto flex gap-2">
-                <button hlmBtn size="sm" (click)="merge()" [disabled]="mergeMutation.isPending()">
-                  {{ mergeMutation.isPending() ? 'Merging…' : 'Merge' }}
+                <button
+                  hlmBtn
+                  class="h-11 active:scale-[0.96] sm:h-8"
+                  (click)="mergeInto(t)"
+                  [disabled]="busy()"
+                >
+                  {{ busy() ? 'Merging' : 'Merge' }}
                 </button>
                 <button
                   hlmBtn
-                  size="sm"
                   variant="ghost"
-                  [disabled]="mergeMutation.isPending()"
-                  (click)="confirmingMerge.set(false)"
+                  class="h-11 sm:h-8"
+                  [disabled]="busy()"
+                  (click)="mergeTargetId.set('')"
                 >
                   Back
                 </button>
@@ -209,47 +259,114 @@ const BROWSE_KEYS = [
           <div class="ml-auto flex flex-wrap gap-2">
             <button
               hlmBtn
-              size="sm"
               variant="outline"
+              class="h-11 active:scale-[0.96] sm:h-8"
               title="Choose who cannot see photos with this person"
               (click)="openHideFrom()"
             >
               <ng-icon hlm size="sm" name="lucideEyeOff" />
-              Hide from…
+              Hide from...
             </button>
             <button
               hlmBtn
-              size="sm"
-              [variant]="person.data()?.hidden ? 'outline' : 'destructive'"
-              title="Hide this person and their photos for everyone, you included"
+              variant="outline"
+              class="h-11 active:scale-[0.96] sm:h-8"
+              [title]="
+                person.data()?.hidden
+                  ? 'Show this person and their photos again'
+                  : 'Hide this person and their photos for everyone, you included'
+              "
               (click)="toggleHidden()"
-              [disabled]="hideMutation.isPending()"
+              [disabled]="busy()"
             >
+              <ng-icon hlm size="sm" [name]="person.data()?.hidden ? 'lucideEye' : 'lucideEyeOff'" />
               {{ person.data()?.hidden ? 'Unhide person' : 'Hide person' }}
             </button>
           </div>
         </div>
 
-        @if (mergeMutation.isError()) {
-          <app-error-alert [error]="mergeMutation.error() || undefined" />
-        }
-        @if (hideMutation.isError()) {
-          <app-error-alert [error]="hideMutation.error() || undefined" />
+        @if (reviewCount() > 0) {
+          <div
+            class="bg-primary/5 border-primary/20 mb-3 flex flex-wrap items-center gap-3 rounded-lg border p-2 pl-3"
+          >
+            <ng-icon hlm size="sm" name="lucideScanFace" class="text-primary" />
+            <p class="text-foreground text-sm">
+              <span class="font-medium tabular-nums">{{ reviewCountLabel() }}</span>
+              {{ reviewCount() === 1 ? 'face' : 'faces' }} to review: is this
+              {{ person.data()?.name || 'this person' }}?
+            </p>
+            <button
+              hlmBtn
+              class="ml-auto h-11 active:scale-[0.96] sm:h-8"
+              (click)="reviewOpen.set(true)"
+            >
+              Review
+            </button>
+          </div>
         }
       }
 
-      <app-virtual-thumbnail-grid
-        class="min-h-0 flex-1"
-        [items]="allItems()"
-        [hasMore]="files.hasNextPage()"
-        [isLoadingMore]="files.isFetchingNextPage()"
-        [scrollKey]="scrollKey()"
-        (loadMore)="loadMore()"
-      >
-        <ng-template let-asset>
-          <app-asset-thumbnail [from]="fromPath()" [personId]="id()" [asset]="asset" />
-        </ng-template>
-      </app-virtual-thumbnail-grid>
+      <div role="tablist" aria-label="Show" class="bg-muted mb-3 inline-flex w-fit rounded-lg p-1">
+        @for (t of tabs; track t.id) {
+          <button
+            type="button"
+            role="tab"
+            [id]="'person-tab-' + t.id"
+            [attr.aria-selected]="tab() === t.id"
+            [attr.aria-controls]="'person-panel-' + t.id"
+            [attr.tabindex]="tab() === t.id ? 0 : -1"
+            class="focus-visible:ring-ring min-h-11 rounded-md px-4 text-sm font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 sm:min-h-8"
+            [class]="
+              tab() === t.id
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            "
+            (click)="tab.set(t.id)"
+            (keydown.arrowRight)="switchTab()"
+            (keydown.arrowLeft)="switchTab()"
+          >
+            {{ t.label }}
+          </button>
+        }
+      </div>
+
+      @if (tab() === 'photos') {
+        <app-virtual-thumbnail-grid
+          id="person-panel-photos"
+          role="tabpanel"
+          aria-labelledby="person-tab-photos"
+          class="min-h-0 flex-1"
+          [items]="allItems()"
+          [hasMore]="files.hasNextPage()"
+          [isLoadingMore]="files.isFetchingNextPage()"
+          [scrollKey]="scrollKey()"
+          (loadMore)="loadMore()"
+        >
+          <ng-template let-asset>
+            <app-asset-thumbnail [from]="fromPath()" [personId]="id()" [asset]="asset" />
+          </ng-template>
+        </app-virtual-thumbnail-grid>
+        <app-selection-bar />
+      } @else {
+        <div
+          #facesPanel
+          id="person-panel-faces"
+          role="tabpanel"
+          aria-labelledby="person-tab-faces"
+          class="min-h-0 flex-1 overflow-y-auto"
+        >
+          <app-person-faces
+            [personId]="id()"
+            [name]="person.data()?.name ?? null"
+            [isAdmin]="isAdmin()"
+            [scrollRoot]="facesPanel"
+          />
+        </div>
+      }
+    }
+
+    @if (reviewOpen()) {
+      <app-face-review [personId]="id()" (closed)="reviewOpen.set(false)" />
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -262,19 +379,32 @@ export class FaceDetail {
   private readonly auth = inject(Auth);
   private readonly router = inject(Router);
   private readonly dialog = inject(HlmDialogService);
+  private readonly actions = inject(FaceActions);
 
   // False while the admin previews as another user, so the page looks exactly
   // as that user sees it.
   protected readonly isAdmin = this.auth.isAdmin;
+  protected readonly faceAlt = faceAlt;
+
+  protected readonly tabs: { id: Tab; label: string }[] = [
+    { id: 'photos', label: 'Photos' },
+    { id: 'faces', label: 'Faces' },
+  ];
+  protected readonly tab = signal<Tab>('photos');
+  private readonly selection = inject(GridSelection);
+  // The photo selection belongs to the Photos tab; leaving it drops the selection.
+  private readonly clearSelectionOnTab = effect(() => {
+    if (this.tab() !== 'photos') this.selection.clear();
+  });
 
   protected readonly editing = signal(false);
-  protected draftName = '';
+  protected readonly busy = signal(false);
+  protected readonly reviewOpen = signal(false);
 
-  // Merge controls stay collapsed behind a "Merge…" button until the admin opens
-  // them, so the toolbar isn't cluttered for the common (view/rename) case.
+  // Merge controls stay collapsed behind a "Merge..." button until the admin
+  // opens them, so the toolbar stays calm for the common view/rename case.
   protected readonly mergeOpen = signal(false);
   protected readonly mergeTargetId = signal<string>('');
-  protected readonly confirmingMerge = signal(false);
   protected readonly mergeSearch = signal('');
 
   protected readonly apiUrl = environment.api.url;
@@ -288,11 +418,11 @@ export class FaceDetail {
   }));
 
   // Other people this cluster can be merged into. Admin-only, so include hidden
-  // clusters too. Excludes the current person.
+  // clusters too. Shares its cache entry with the "Add a name" autocomplete.
   private readonly peopleList = injectQuery(() => ({
     queryKey: [CacheKey.FacesAll, 'merge-targets'],
     queryFn: async () => this.trpc.faces.listPeople.query({ includeHidden: true }),
-    enabled: this.isAdmin(),
+    enabled: this.isAdmin() && (this.mergeOpen() || this.editing()),
   }));
 
   protected readonly mergeTargets = computed(() => {
@@ -302,24 +432,35 @@ export class FaceDetail {
     const query = this.mergeSearch().trim().toLowerCase();
     return people.filter(
       (p: PersonSummary) =>
-        // Exclude the current cluster, and only offer named people as merge
-        // targets — merging into an "Unnamed person" is never the intent.
+        // Only named people are offered: merging into an unnamed person is
+        // rarely the intent (merge the unnamed one into this person instead).
         p.id !== this.id() &&
         !!p.name &&
         (query === '' || p.name.toLowerCase().includes(query)),
     );
   });
 
-  // The chosen merge target, shown (with avatar) in the confirm step once the
-  // search list has collapsed.
+  // The chosen merge target, shown with its avatar in the confirm step.
   protected readonly selectedTarget = computed(() => {
     const id = this.mergeTargetId();
+    if (!id) return null;
     const people = (this.peopleList.data() ?? []) as PersonSummary[];
     return people.find((p: PersonSummary) => p.id === id) ?? null;
   });
 
+  // Admin-only "Is this X?" queue for this person. Same key and limit as the
+  // review panel, so opening it shows the same items with no new request.
+  private readonly review = injectQuery(() => ({
+    queryKey: reviewQueryKey(this.id()),
+    queryFn: async () =>
+      this.trpc.faces.listConfirmCandidates.query({ personId: this.id(), limit: REVIEW_LIMIT }),
+    enabled: this.isAdmin(),
+  }));
+  protected readonly reviewCount = computed(() => this.review.data()?.length ?? 0);
+  protected readonly reviewCountLabel = computed(() => reviewCountText(this.reviewCount()));
+
   // Admin-only: the users this person is hidden from, for the header label.
-  // Shares its cache keys with the "Hide from…" picker, so a save updates it.
+  // Shares its cache keys with the "Hide from..." picker, so a save updates it.
   private readonly viewers = injectQuery(() => ({
     queryKey: viewerRulesKeys.viewers(),
     queryFn: async (): Promise<Viewer[]> => this.trpc.viewerRules.viewers.query(),
@@ -351,8 +492,8 @@ export class FaceDetail {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   }));
 
-  // Optimistic rename: the heading + people list update instantly, roll back on
-  // failure, and reconcile via the background refetch in onSettled.
+  // Optimistic rename: the heading and people list update at once, roll back
+  // on failure, and reconcile with the background refetch in onSettled.
   private rename = injectMutation(() => ({
     mutationFn: (name: string | null) =>
       this.trpc.faces.renamePerson.mutate({ id: this.id(), name }),
@@ -378,71 +519,10 @@ export class FaceDetail {
     onSettled: () => {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, this.id()] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
-      // The asset viewer's People chips show this name (cached with no stale time).
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesPage] });
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceReview] });
+      // The asset viewer's People chips show this name.
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
-    },
-  }));
-
-  // Optimistic hide/unhide: the badge flips instantly. Browse surfaces (gallery,
-  // timeline, map) can't be updated optimistically — the server applies the
-  // person filter — so they're invalidated once the toggle actually succeeds.
-  hideMutation = injectMutation(() => ({
-    mutationFn: (hidden: boolean) =>
-      this.trpc.faces.hidePerson.mutate({ id: this.id(), hidden }),
-    onMutate: async (hidden) => {
-      const id = this.id();
-      await this.queryClient.cancelQueries({ queryKey: [CacheKey.FaceSingle, id] });
-      await this.queryClient.cancelQueries({ queryKey: [CacheKey.FacesAll] });
-      return optimisticEdit(this.queryClient, [
-        {
-          queryKey: [CacheKey.FaceSingle, id],
-          update: (old) => (old ? { ...(old as PersonSummary), hidden } : old),
-        },
-        {
-          queryKey: [CacheKey.FacesAll],
-          update: (old) =>
-            (old as PersonSummary[] | undefined)?.map((p) =>
-              p.id === id ? { ...p, hidden } : p,
-            ),
-        },
-      ]);
-    },
-    onError: (_err, _hidden, ctx) => ctx?.rollback(),
-    onSuccess: () => this.invalidateBrowseSurfaces(),
-    onSettled: () => {
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, this.id()] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceFiles, this.id()] });
-    },
-  }));
-
-  // Optimistic merge: drop this cluster from the people list immediately, then
-  // navigate to the target on success. Roll back (restore the cluster) on error.
-  mergeMutation = injectMutation(() => ({
-    mutationFn: (targetId: string) =>
-      this.trpc.faces.mergePeople.mutate({ targetId, sourceId: this.id() }),
-    onMutate: async () => {
-      const sourceId = this.id();
-      await this.queryClient.cancelQueries({ queryKey: [CacheKey.FacesAll] });
-      return optimisticEdit(this.queryClient, [
-        {
-          queryKey: [CacheKey.FacesAll],
-          update: (old) =>
-            (old as PersonSummary[] | undefined)?.filter((p) => p.id !== sourceId),
-        },
-      ]);
-    },
-    onError: (_err, _targetId, ctx) => ctx?.rollback(),
-    onSuccess: (_data, targetId) => {
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSuggestions] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, targetId] });
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceFiles, targetId] });
-      // Asset People chips still link to the merged-away person otherwise.
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
-      this.closeMerge();
-      // This cluster no longer exists — go to the cluster it merged into.
-      void this.router.navigate(['/faces', targetId]);
     },
   }));
 
@@ -452,19 +532,28 @@ export class FaceDetail {
     return data.pages.flatMap((page) => page.items);
   });
 
-  startEdit(): void {
-    this.draftName = this.person.data()?.name ?? '';
-    this.editing.set(true);
-  }
-
-  save(): void {
-    const name = this.draftName.trim();
+  saveName(name: string | null): void {
     this.editing.set(false);
-    this.rename.mutate(name.length > 0 ? name : null);
+    this.rename.mutate(name);
   }
 
-  toggleHidden(): void {
-    this.hideMutation.mutate(!this.person.data()?.hidden);
+  switchTab(): void {
+    const next: Tab = this.tab() === 'photos' ? 'faces' : 'photos';
+    this.tab.set(next);
+    queueMicrotask(() => document.getElementById(`person-tab-${next}`)?.focus());
+  }
+
+  async toggleHidden(): Promise<void> {
+    if (this.busy()) return;
+    const id = this.id();
+    const name = this.person.data()?.name ?? null;
+    this.busy.set(true);
+    try {
+      if (this.person.data()?.hidden) await this.actions.unhide(id, name);
+      else await this.actions.hide(id, name);
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   openHideFrom(): void {
@@ -476,38 +565,34 @@ export class FaceDetail {
     this.dialog.open(HideFromDialog, { context: { target } });
   }
 
-  openMerge(): void {
-    this.mergeOpen.set(true);
-  }
-
-  // Picking a person from the list jumps straight to the confirm step.
-  pickMergeTarget(id: string): void {
-    this.mergeTargetId.set(id);
-    this.confirmingMerge.set(true);
-  }
-
   closeMerge(): void {
     this.mergeOpen.set(false);
-    this.confirmingMerge.set(false);
     this.mergeTargetId.set('');
     this.mergeSearch.set('');
   }
 
-  merge(): void {
-    const targetId = this.mergeTargetId();
-    if (!targetId) return;
-    this.mergeMutation.mutate(targetId);
+  // Fold this person into target, then show the target. Undo comes back here.
+  async mergeInto(target: Pick<PickerPerson, 'id' | 'name'>): Promise<void> {
+    if (this.busy()) return;
+    this.editing.set(false);
+    const sourceId = this.id();
+    this.busy.set(true);
+    try {
+      await this.actions.merge(target.id, sourceId, `Merged into ${target.name || 'that person'}`, {
+        done: () => {
+          this.closeMerge();
+          void this.router.navigate(['/faces', target.id]);
+        },
+        undone: () => void this.router.navigate(['/faces', sourceId]),
+      });
+    } finally {
+      this.busy.set(false);
+    }
   }
 
   loadMore(): void {
     if (this.files.hasNextPage() && !this.files.isFetchingNextPage()) {
       this.files.fetchNextPage();
-    }
-  }
-
-  private invalidateBrowseSurfaces(): void {
-    for (const key of BROWSE_KEYS) {
-      this.queryClient.invalidateQueries({ queryKey: [key] });
     }
   }
 }

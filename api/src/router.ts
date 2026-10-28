@@ -22,6 +22,8 @@ import { uiSettingsRouter } from "./routers/ui-settings.router.js";
 import { usersRouter } from "./routers/users.router.js";
 import { invitesRouter } from "./routers/invites.router.js";
 import { viewerRulesRouter } from "./routers/viewer-rules.router.js";
+import { searchRouter } from "./routers/search.router.js";
+import { uploadRouter } from "./routers/upload.router.js";
 import { router } from "./trpc.js";
 
 export const appRouter = router({
@@ -49,6 +51,8 @@ export const appRouter = router({
   years: yearsRouter,
   invites: invitesRouter,
   viewerRules: viewerRulesRouter,
+  search: searchRouter,
+  upload: uploadRouter,
 });
 
 export type AppRouter = typeof appRouter;

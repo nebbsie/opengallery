@@ -14,14 +14,19 @@ import { lucideShare2 } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { Loading } from '@core/components/loading/loading';
+import { GridSkeleton } from '@core/components/loading-thumbnail/grid-skeleton';
+import { SelectionBar } from '@core/components/selection-bar/selection-bar';
+import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
+import { GridSelection } from '@core/services/selection/grid-selection';
 import { injectQuery } from '@tanstack/angular-query-experimental';
 import type { RouterOutputs } from '@core/services/trpc';
 
 @Component({
   selector: 'app-album-detail',
   imports: [
-    Loading,
+    GridSkeleton,
+    SelectionBar,
+    VirtualThumbnailGrid,
     ErrorAlert,
     AssetThumbnail,
     AlbumThumbnail,
@@ -32,12 +37,12 @@ import type { RouterOutputs } from '@core/services/trpc';
     HlmIcon,
     NgIcon,
   ],
-  providers: [provideIcons({ lucideShare2 })],
+  providers: [GridSelection, provideIcons({ lucideShare2 })],
   hostDirectives: [BackOnEscapeDirective],
-  host: { class: 'block h-full overflow-y-auto' },
+  host: { class: 'flex h-full min-h-0 flex-col' },
   template: `
     @if (response.isPending() && !response.data()) {
-      <app-loading />
+      <app-grid-skeleton class="min-h-0 flex-1" [headers]="false" />
     } @else if (response.isError() && !response.data()) {
       <app-error-alert [error]="response.error() ?? undefined" />
     } @else {
@@ -60,21 +65,36 @@ import type { RouterOutputs } from '@core/services/trpc';
         }
       </div>
 
-      @if (data.children.length) {
-        <app-thumbnail-grid class="mb-4">
-          @for (child of data.children; track child.id) {
-            <app-album-thumbnail [album]="child" />
-          }
-        </app-thumbnail-grid>
-      }
-
-      @if (data.files.length || data.album.pendingTasks) {
-        @if (data.children.length !== 0) {
-          <p class="mb-4 text-sm">Items</p>
+      @if (allItems().length === 0 && data.children.length === 0) {
+        <p class="text-muted-foreground py-12 text-center text-sm">This album is empty.</p>
+      } @else if (allItems().length === 0) {
+        <!-- Only sub-albums: a plain wrapping grid that scrolls with the page. -->
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <app-thumbnail-grid>
+            @for (child of data.children; track child.id) {
+              <app-album-thumbnail [album]="child" />
+            }
+          </app-thumbnail-grid>
+        </div>
+      } @else {
+        @if (data.children.length) {
+          <!-- Sub-albums sit in a strip so the photos below can use the
+               virtual grid (which owns its own scroll). -->
+          <div class="-mx-1 mb-3 flex shrink-0 snap-x gap-2 overflow-x-auto px-1 pb-1">
+            @for (child of data.children; track child.id) {
+              <app-album-thumbnail class="w-36 shrink-0 snap-start sm:w-44" [album]="child" />
+            }
+          </div>
         }
 
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
-          @for (item of allItems(); track item.id) {
+        <app-virtual-thumbnail-grid
+          class="min-h-0 flex-1"
+          [items]="allItems()"
+          [scrollKey]="'album-' + data.album.id"
+          [dateAccessor]="dateAccessor"
+          [dayHeaders]="false"
+        >
+          <ng-template let-item>
             @if (item.loading) {
               <app-loading-thumbnail />
             } @else {
@@ -84,8 +104,9 @@ import type { RouterOutputs } from '@core/services/trpc';
                 [albumId]="data.album.id"
               />
             }
-          }
-        </div>
+          </ng-template>
+        </app-virtual-thumbnail-grid>
+        <app-selection-bar />
       }
     }
   `,
@@ -106,6 +127,9 @@ export class AlbumDetail {
       (query.state.data?.album?.pendingTasks ?? 0) > 0 ? 5000 : false,
     staleTime: 5000,
   }));
+
+  protected readonly dateAccessor = (item: { takenAt?: string | null; loading?: boolean }) =>
+    item.loading ? null : (item.takenAt ?? null);
 
   allItems = computed(() => {
     const data = this.response.data();

@@ -48,95 +48,106 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     ReactiveFormsModule,
   ],
   template: `
-    @if (isFirstUser.isSuccess()) {
-      <div class="mb-6 flex justify-center">
-        <app-logo />
+    <!-- The card always renders. The first-user note only shows once the query
+         answers, so a failed query never blanks the page. -->
+    <div class="mb-6 flex justify-center">
+      <app-logo />
+    </div>
+    <form class="w-full" hlmCard [formGroup]="form" (ngSubmit)="register()" novalidate>
+      <div hlmCardHeader>
+        <h1 hlmCardTitle class="text-balance">Create an account</h1>
+        <p hlmCardDescription>Enter your details to create your account.</p>
       </div>
-      <section class="w-full" hlmCard>
-        <div hlmCardHeader>
-          <h3 hlmCardTitle>Create an account</h3>
-          <p hlmCardDescription>Enter your details below to create your account</p>
-        </div>
 
-        <div hlmCardContent>
-          <form>
-            <div class="flex flex-col gap-6">
-              <div class="grid gap-2">
-                <label hlmLabel for="name">Name</label>
-                <input
-                  [formControl]="nameControl"
-                  type="text"
-                  id="name"
-                  placeholder="John Smith"
-                  required
-                  hlmInput
-                />
-              </div>
-
-              <div class="grid gap-2">
-                <label hlmLabel for="email">Email</label>
-                <input
-                  [formControl]="emailControl"
-                  type="email"
-                  id="email"
-                  placeholder="john@smith.com"
-                  required
-                  hlmInput
-                />
-              </div>
-
-              <div class="grid gap-2">
-                <label hlmLabel for="password">Password</label>
-                <input
-                  [formControl]="passwordControl"
-                  type="password"
-                  id="password"
-                  required
-                  hlmInput
-                />
-              </div>
-            </div>
-          </form>
-        </div>
-
-        <div hlmCardFooter class="flex-col gap-2">
-          <button
-            [disabled]="form.invalid"
-            hlmBtn
-            type="submit"
-            class="w-full"
-            (click)="register()"
-          >
-            @if (loading()) {
-              <hlm-spinner class="size-6" />
-            } @else {
-              Sign Up
+      <div hlmCardContent>
+        <fieldset class="flex flex-col gap-6" [disabled]="loading()">
+          <div class="grid gap-2">
+            <label hlmLabel for="register-name">Name</label>
+            <input
+              formControlName="name"
+              type="text"
+              id="register-name"
+              name="name"
+              placeholder="John Smith"
+              autocomplete="name"
+              required
+              hlmInput
+              [attr.aria-invalid]="showError(nameControl) ? 'true' : null"
+              [attr.aria-describedby]="showError(nameControl) ? 'register-name-error' : null"
+            />
+            @if (showError(nameControl)) {
+              <p id="register-name-error" class="text-destructive text-sm">
+                @if (nameControl.hasError('required')) {
+                  Enter your name.
+                } @else {
+                  Use at least 2 characters.
+                }
+              </p>
             }
-          </button>
+          </div>
 
-          @if (!isFirstUser.data()) {
-            <a class="text-sm hover:underline" routerLink="/login"
-              >Already have an account? Log in</a
+          <div class="grid gap-2">
+            <label hlmLabel for="register-email">Email</label>
+            <input
+              formControlName="email"
+              type="email"
+              id="register-email"
+              name="email"
+              placeholder="john@smith.com"
+              autocomplete="email"
+              inputmode="email"
+              autocapitalize="off"
+              spellcheck="false"
+              required
+              hlmInput
+              [attr.aria-invalid]="showError(emailControl) ? 'true' : null"
+              [attr.aria-describedby]="showError(emailControl) ? 'register-email-error' : null"
+            />
+            @if (showError(emailControl)) {
+              <p id="register-email-error" class="text-destructive text-sm">
+                @if (emailControl.hasError('required')) {
+                  Enter your email.
+                } @else {
+                  Enter a valid email address.
+                }
+              </p>
+            }
+          </div>
+
+          <div class="grid gap-2">
+            <label hlmLabel for="register-password">Password</label>
+            <input
+              formControlName="password"
+              type="password"
+              id="register-password"
+              name="password"
+              autocomplete="new-password"
+              required
+              hlmInput
+              [attr.aria-invalid]="showError(passwordControl) ? 'true' : null"
+              aria-describedby="register-password-hint"
+            />
+            <p
+              id="register-password-hint"
+              class="text-sm"
+              [class.text-destructive]="showError(passwordControl)"
+              [class.text-muted-foreground]="!showError(passwordControl)"
             >
-          } @else {
-            <div class="mt-4" hlmAlert>
-              <ng-icon hlm hlmAlertIcon name="lucideInfo" />
-              <h4 hlmAlertTitle>First-Time Setup</h4>
-              <p hlmAlertDescription>Your first account will automatically become the admin.</p>
-            </div>
-          }
-        </div>
+              Use at least 8 characters.
+            </p>
+          </div>
+        </fieldset>
 
         @if (error()) {
-          <div hlmCardContent>
+          <div class="mt-6" role="alert">
             @if (isStoragePathError()) {
               <div hlmAlert>
                 <ng-icon hlm hlmAlertIcon name="lucideSettings" class="text-amber-500" />
-                <h4 hlmAlertTitle>Server Configuration Required</h4>
+                <h2 hlmAlertTitle>Server setup needed</h2>
                 <div hlmAlertDescription>
-                  <p class="mb-3">The server administrator needs to configure storage before creating the first account.</p>
+                  <p class="mb-3">The server administrator must set the storage path before the first account can be made.</p>
                   <div class="rounded-md bg-muted p-3 text-sm">
-                    <p class="font-medium">Required environment variable:</p>
+                    <p class="font-medium">Set this environment variable:</p>
                     <code class="text-foreground">STORAGE_PATH=/path/to/storage</code>
                   </div>
                 </div>
@@ -144,16 +155,43 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
             } @else {
               <div hlmAlert variant="destructive">
                 <ng-icon hlm hlmAlertIcon name="lucideCircleAlert" />
-                <h4 hlmAlertTitle>Failed to register</h4>
+                <h2 hlmAlertTitle>Could not create the account</h2>
                 <div hlmAlertDescription>
-                  <p>Please check your details and try again.</p>
+                  <p>{{ friendlyError() }}</p>
                 </div>
               </div>
             }
           </div>
         }
-      </section>
-    }
+      </div>
+
+      <div hlmCardFooter class="flex-col gap-2">
+        <button
+          [disabled]="loading()"
+          [attr.aria-busy]="loading()"
+          hlmBtn
+          type="submit"
+          class="w-full transition-transform duration-100 active:scale-[0.96]"
+        >
+          @if (loading()) {
+            <hlm-spinner class="size-5" />
+            <span>Creating account</span>
+          } @else {
+            Sign up
+          }
+        </button>
+
+        @if (isFirstUser.data()) {
+          <div class="mt-4" hlmAlert>
+            <ng-icon hlm hlmAlertIcon name="lucideInfo" />
+            <h2 hlmAlertTitle>First-time setup</h2>
+            <p hlmAlertDescription>The first account becomes the admin.</p>
+          </div>
+        } @else {
+          <a class="text-sm hover:underline" routerLink="/login">Already have an account? Log in</a>
+        }
+      </div>
+    </form>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -172,21 +210,42 @@ export class RegisterForm {
   errorCode = signal<string | null>(null);
   loading = signal(false);
 
-  emailControl = new FormControl<null | string>(null, [Validators.email, Validators.required]);
-  passwordControl = new FormControl<null | string>(null, [
-    Validators.required,
-    Validators.minLength(8),
-  ]);
-  nameControl = new FormControl<null | string>(null, [
-    Validators.required,
-    Validators.minLength(4),
-  ]);
+  private submitted = signal(false);
+
+  emailControl = new FormControl<string>('', {
+    nonNullable: true,
+    validators: [Validators.email, Validators.required],
+  });
+  passwordControl = new FormControl<string>('', {
+    nonNullable: true,
+    validators: [Validators.required, Validators.minLength(8)],
+  });
+  nameControl = new FormControl<string>('', {
+    nonNullable: true,
+    validators: [Validators.required, Validators.minLength(2)],
+  });
 
   form = new FormGroup({
     email: this.emailControl,
     password: this.passwordControl,
     name: this.nameControl,
   });
+
+  showError(control: FormControl<string>): boolean {
+    return control.invalid && (control.touched || this.submitted());
+  }
+
+  friendlyError(): string {
+    const code = this.errorCode();
+    if (code === 'USER_ALREADY_EXISTS' || code === 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL') {
+      return 'An account with this email already exists. Log in instead.';
+    }
+    if (code === 'PASSWORD_TOO_SHORT') return 'The password is too short. Use at least 8 characters.';
+    if (code === 'INVALID_EMAIL') return 'Enter a valid email address.';
+    const msg = this.errorMessage();
+    if (msg && msg.length < 160) return msg;
+    return 'Something went wrong. Check your details and try again.';
+  }
 
   isStoragePathError() {
     const msg = this.errorMessage();
@@ -237,11 +296,9 @@ export class RegisterForm {
   }
 
   async register() {
-    if (
-      this.emailControl.value === null ||
-      this.passwordControl.value === null ||
-      this.nameControl.value === null
-    ) {
+    this.submitted.set(true);
+    this.form.markAllAsTouched();
+    if (this.form.invalid || this.loading()) {
       return;
     }
 
@@ -250,14 +307,15 @@ export class RegisterForm {
     this.errorCode.set(null);
     this.loading.set(true);
 
-    const { error, data } = await this.auth.signUpEmail({
-      email: this.emailControl.value,
-      password: this.passwordControl.value,
-      name: this.nameControl.value,
-    });
+    const { error, data } = await this.auth
+      .signUpEmail({
+        email: this.emailControl.value.trim(),
+        password: this.passwordControl.value,
+        name: this.nameControl.value.trim(),
+      })
+      .catch((e: unknown) => ({ error: e, data: null }));
 
-    if (error) {
-      console.error('Register failed:', error);
+    if (error || !data) {
       this.error.set(true);
       const payload = this.extractErrorPayload(error);
       this.errorMessage.set(payload.message);
@@ -266,8 +324,6 @@ export class RegisterForm {
       return;
     }
 
-    if (data) {
-      this.router.navigate(['/gallery']);
-    }
+    await this.router.navigate(['/gallery']);
   }
 }

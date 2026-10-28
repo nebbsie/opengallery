@@ -8,23 +8,34 @@ import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCirclePause, lucideCirclePlay, lucideVideo } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
-import { Loading } from '@core/components/loading/loading';
+import { GridSkeleton } from '@core/components/loading-thumbnail/grid-skeleton';
+import { SelectionBar } from '@core/components/selection-bar/selection-bar';
+import { GridSelection } from '@core/services/selection/grid-selection';
 import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-gallery-videos',
   providers: [
+    GridSelection,
     provideIcons({
       lucideCirclePlay,
       lucideCirclePause,
       lucideVideo,
     }),
   ],
-  imports: [ErrorAlert, Loading, AssetThumbnail, VirtualThumbnailGrid, NgIcon, HlmIcon],
+  imports: [
+    ErrorAlert,
+    GridSkeleton,
+    SelectionBar,
+    AssetThumbnail,
+    VirtualThumbnailGrid,
+    NgIcon,
+    HlmIcon,
+  ],
   host: { class: 'block h-full' },
   template: `
     @if (files.isPending() && !files.data()) {
-      <app-loading />
+      <app-grid-skeleton [rail]="true" />
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
@@ -50,6 +61,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
             <app-asset-thumbnail from="/gallery/videos" kind="video" [asset]="asset" />
           </ng-template>
         </app-virtual-thumbnail-grid>
+        <app-selection-bar />
       }
     }
   `,

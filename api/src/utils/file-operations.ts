@@ -5,6 +5,7 @@ import { db } from '../db/index.js';
 import {
   AlbumFileTable,
   AlbumTable,
+  FaceRejectionTable,
   FaceTable,
   FileTable,
   FileTaskTable,
@@ -12,13 +13,14 @@ import {
   GeoLocationTable,
   ImageMetadataTable,
   LibraryFileTable,
-  PersonTable,
   VideoMetadataTable,
   ViewerHiddenFileTable,
   ViewerHiddenPersonTable,
 } from '../db/schema.js';
 import { clearScopeCache } from '../authz/shared-access.js';
 import { resolveAssetPath } from './media-path.js';
+import { removeFromIndexes, withFaceLock } from '../faces/face-index.js';
+import { refreshPeople } from '../faces/people.js';
 
 const RULE_CHUNK = 200;
 
@@ -112,16 +114,6 @@ export async function moveViewerRulesToPerson(
   await deleteViewerRulesForPeople([sourcePersonId]);
 }
 
-function parseEmbedding(json: string | null): number[] | null {
-  if (!json) return null;
-  try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? (parsed as number[]) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Best-effort unlink of the generated variant files (thumbnails / optimised /
  * posters) produced from the given original files. Each variant is itself a
@@ -163,9 +155,16 @@ export async function removeFacesForFiles(
   filesRemain = true,
 ): Promise<void> {
   if (!fileIds.length) return;
+  // Changes face -> person links, so it must not interleave with live
+  // matching or a regroup (faces/face-index.ts withFaceLock).
+  await withFaceLock(() => removeFacesForFilesLocked(fileIds, filesRemain));
+}
+
+async function removeFacesForFilesLocked(fileIds: string[], filesRemain: boolean): Promise<void> {
 
   const faces = await db
     .select({
+      id: FaceTable.id,
       personId: FaceTable.personId,
       cropDir: FaceTable.cropDir,
       cropName: FaceTable.cropName,
@@ -179,6 +178,7 @@ export async function removeFacesForFiles(
   );
 
   const pinned = filesRemain ? await pinViewerHiddenFaces(fileIds) : false;
+  const faceIds = faces.map((f) => f.id);
 
   await db.delete(FaceTable).where(inArray(FaceTable.fileId, fileIds));
 
@@ -194,62 +194,9 @@ export async function removeFacesForFiles(
     }
   }
 
-  const now = new Date().toISOString();
-  const deletedPersonIds: string[] = [];
-  for (const personId of affectedPersonIds) {
-    const remaining = await db
-      .select({ id: FaceTable.id, embedding: FaceTable.embedding })
-      .from(FaceTable)
-      .where(eq(FaceTable.personId, personId));
-
-    if (remaining.length === 0) {
-      await db.delete(PersonTable).where(eq(PersonTable.id, personId));
-      deletedPersonIds.push(personId);
-      continue;
-    }
-
-    // Recompute the centroid from the surviving faces so the removed faces no
-    // longer pollute the running mean used for clustering.
-    let dim = 0;
-    for (const r of remaining) {
-      const emb = parseEmbedding(r.embedding);
-      if (emb && emb.length > dim) dim = emb.length;
-    }
-    let centroidJson: string | undefined;
-    if (dim > 0) {
-      const sums = new Array<number>(dim).fill(0);
-      let counted = 0;
-      for (const r of remaining) {
-        const emb = parseEmbedding(r.embedding);
-        if (!emb) continue;
-        for (let i = 0; i < dim; i++) sums[i]! += emb[i] ?? 0;
-        counted++;
-      }
-      if (counted > 0) centroidJson = JSON.stringify(sums.map((s) => s / counted));
-    }
-
-    const [person] = await db
-      .select({ coverFaceId: PersonTable.coverFaceId })
-      .from(PersonTable)
-      .where(eq(PersonTable.id, personId))
-      .limit(1);
-    const coverStillValid =
-      !!person?.coverFaceId && remaining.some((r) => r.id === person.coverFaceId);
-
-    await db
-      .update(PersonTable)
-      .set({
-        faceCount: remaining.length,
-        ...(centroidJson ? { centroid: centroidJson } : {}),
-        ...(coverStillValid ? {} : { coverFaceId: remaining[0]!.id }),
-        updatedAt: now,
-      })
-      .where(eq(PersonTable.id, personId));
-  }
-
-  if (deletedPersonIds.length > 0) {
-    await deleteViewerRulesForPeople(deletedPersonIds);
-  }
+  removeFromIndexes(faceIds);
+  await db.delete(FaceRejectionTable).where(inArray(FaceRejectionTable.faceId, faceIds));
+  const deletedPersonIds = await refreshPeople(affectedPersonIds);
   if (pinned || deletedPersonIds.length > 0) clearScopeCache();
 }
 

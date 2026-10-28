@@ -56,6 +56,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/settings/profile"
+        aria-label="Profile"
         routerLinkActive="active"
         size="icon"
         #rlaProfile="routerLinkActive"
@@ -74,6 +75,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         position="right"
         hlmBtn
         routerLink="/settings/ui"
+        aria-label="Display"
         routerLinkActive="active"
         size="icon"
         #rlaUi="routerLinkActive"
@@ -94,6 +96,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/users"
+          aria-label="Users"
           routerLinkActive="active"
           size="icon"
           #rlaUsers="routerLinkActive"
@@ -112,6 +115,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/sources"
+          aria-label="Source Folders"
           routerLinkActive="active"
           size="icon"
           #rlaLibrary="routerLinkActive"
@@ -132,6 +136,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/encoding"
+          aria-label="Encoding"
           routerLinkActive="active"
           size="icon"
           #rlaEncoding="routerLinkActive"
@@ -150,6 +155,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/faces"
+          aria-label="Faces"
           routerLinkActive="active"
           size="icon"
           #rlaFaces="routerLinkActive"
@@ -168,6 +174,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/locations"
+          aria-label="Locations"
           routerLinkActive="active"
           size="icon"
           #rlaLocations="routerLinkActive"
@@ -186,6 +193,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/logs"
+          aria-label="Logs"
           routerLinkActive="active"
           size="icon"
           #rlaLogs="routerLinkActive"
@@ -204,6 +212,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/issues"
+          aria-label="Issues"
           routerLinkActive="active"
           size="icon"
           #rlaIssues="routerLinkActive"
@@ -249,6 +258,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/storage"
+          aria-label="Storage"
           routerLinkActive="active"
           size="icon"
           #rlaStorage="routerLinkActive"
@@ -267,6 +277,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           position="right"
           hlmBtn
           routerLink="/settings/duplicates"
+          aria-label="Duplicates"
           routerLinkActive="active"
           size="icon"
           #rlaDuplicates="routerLinkActive"

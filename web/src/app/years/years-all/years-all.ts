@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { RouterLink } from '@angular/router';
+import { PluralPipe } from '@core/pipes/plural.pipe';
 import { ErrorAlert } from '@core/components/error/error';
 import { Loading } from '@core/components/loading/loading';
 import { CacheKey } from '@core/services/cache-key.types';
@@ -12,7 +13,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 
 @Component({
   selector: 'app-years-all',
-  imports: [ErrorAlert, Loading, RouterLink, NgIcon, HlmIcon],
+  imports: [PluralPipe, ErrorAlert, Loading, RouterLink, NgIcon, HlmIcon],
   providers: [provideIcons({ lucideCalendar })],
   host: { class: 'block h-full overflow-y-auto' },
   template: `
@@ -52,7 +53,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
               </div>
               <div class="flex flex-col px-2">
                 <p class="text-sm font-bold">{{ entry.year ?? 'No Date' }}</p>
-                <p class="text-xs font-light">{{ entry.count }} items</p>
+                <p class="text-muted-foreground text-xs tabular-nums">{{ entry.count | plural: 'item' }}</p>
               </div>
             </a>
           }

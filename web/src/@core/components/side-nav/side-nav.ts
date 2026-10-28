@@ -24,6 +24,7 @@ import { Logo } from '@core/components/logo/logo';
 import { HlmTooltipImports } from '@spartan-ng/helm/tooltip';
 import { BrnTooltipImports } from '@spartan-ng/brain/tooltip';
 import { injectQuery } from '@tanstack/angular-query-experimental';
+import { SearchPalette } from '../../../app/search/search-palette';
 
 @Component({
   selector: 'app-side-nav',
@@ -37,6 +38,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     Logo,
     HlmTooltipImports,
     BrnTooltipImports,
+    SearchPalette,
   ],
   providers: [
     provideIcons({
@@ -62,7 +64,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
   },
   template: `
     <div class="flex items-center justify-center p-3 pt-4">
-      <a routerLink="/">
+      <a routerLink="/" aria-label="Open Gallery home">
         <app-logo [size]="20" />
       </a>
     </div>
@@ -79,6 +81,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
               position="right"
               size="icon"
               routerLink="/"
+              aria-label="Back"
               [variant]="'menu'"
             >
               <ng-icon hlm size="sm" name="lucideChevronLeft" />
@@ -98,6 +101,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
               position="right"
               size="icon"
               routerLink="/settings"
+              [attr.aria-label]="hasPendingWork() ? 'Settings, encoding in progress' : 'Settings'"
               [variant]="'menu'"
             >
               <div class="relative">
@@ -109,12 +113,14 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
             </a>
 
             <span *brnTooltipContent class="flex items-center">
-              Settings @if (hasPendingWork()) { · encoding }
+              Settings @if (hasPendingWork()) { (encoding) }
             </span>
           </hlm-tooltip>
         }
       }
     </div>
+
+    <app-search-palette />
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })

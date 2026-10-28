@@ -8,17 +8,26 @@ export interface DetectedFace {
   bbox: [number, number, number, number];
   kps: number[][] | null;
   detScore: number;
-  // L2-normalized 512-d ArcFace embedding (cosine similarity = dot product).
-  embedding: number[];
+  // Face height in pixels of the posted image.
+  facePx: number;
+  // Laplacian variance of the aligned 112px crop (higher = sharper).
+  blur: number;
+  // Head turn from the landmarks: 0 = frontal, about 1 = profile.
+  yaw: number;
+  // Norm of the raw embedding before normalization.
+  embNorm: number;
+  // base64 little-endian float32[512], unit length (cosine = dot product).
+  embedding: string;
 }
 
 export interface DetectResponse {
+  model: string;
   faces: DetectedFace[];
   width: number;
   height: number;
 }
 
-/** POST an (already oriented + downscaled) JPEG to the sidecar for detection. */
+/** POST an oriented JPEG (close to full resolution) to the sidecar for detection. */
 export async function detectFacesRemote(jpeg: Buffer): Promise<DetectResponse> {
   const form = new FormData();
   form.append('image', new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }), 'image.jpg');

@@ -9,7 +9,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   imports: [NgIcon, HlmIcon],
   providers: [provideIcons({ lucideLoader })],
   host: {
-    class: 'relative aspect-square overflow-hidden rounded-lg bg-black',
+    class: 'relative block aspect-square overflow-hidden rounded-lg bg-muted',
   },
   template: `
     <div
