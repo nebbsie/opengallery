@@ -107,7 +107,8 @@ export async function getAccessScope(
       .where(
         and(
           eq(SharedItemTable.shareType, "user"),
-          eq(SharedItemTable.accessLevel, "view"),
+          // "add" (collaborative album) and "edit" include viewing.
+          inArray(SharedItemTable.accessLevel, ["view", "add", "edit"]),
           eq(SharedItemTable.sharedToUserId, userId),
         ),
       ),

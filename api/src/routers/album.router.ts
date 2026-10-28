@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { contributableAlbum } from "../authz/album-contrib.js";
 import { alias } from "drizzle-orm/sqlite-core";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -850,6 +851,10 @@ export const albumRouter = router({
           canManageShares:
             accessScope.isAdmin ||
             accessScope.ownedLibraryIds.has(albumRow.libraryId),
+          // May upload into this album: the owner, or a collaborator.
+          canAdd:
+            accessScope.ownedLibraryIds.has(albumRow.libraryId) ||
+            (!!userId && !!(await contributableAlbum(userId, albumRow.albumId))),
         },
         files: files.map((r) => ({
           ...r.file,
@@ -901,19 +906,23 @@ export const albumRouter = router({
           })
           .from(UserTable),
         db
-          .select({ userId: SharedItemTable.sharedToUserId })
+          .select({ userId: SharedItemTable.sharedToUserId, accessLevel: SharedItemTable.accessLevel })
           .from(SharedItemTable)
           .where(
             and(
               eq(SharedItemTable.sourceType, input.sourceType),
               eq(SharedItemTable.sourceId, input.sourceId),
               eq(SharedItemTable.shareType, "user"),
-              eq(SharedItemTable.accessLevel, "view"),
             ),
           ),
       ]);
 
       const selectedUserIds = shares
+        .map((row) => row.userId)
+        .filter((value): value is string => !!value);
+      // Users who may also add photos (collaborative album).
+      const contributorIds = shares
+        .filter((row) => row.accessLevel !== "view")
         .map((row) => row.userId)
         .filter((value): value is string => !!value);
 
@@ -922,6 +931,7 @@ export const albumRouter = router({
           (candidate) => candidate.id !== userId && candidate.type !== "admin",
         ),
         selectedUserIds,
+        contributorIds,
       };
     }),
 
@@ -931,6 +941,8 @@ export const albumRouter = router({
         sourceType: z.enum(["album", "file"]),
         sourceId: z.string(),
         userIds: z.array(z.string()).default([]),
+        // Of userIds, the ones who may add photos (albums only).
+        contributorIds: z.array(z.string()).default([]),
       }),
     )
     .mutation(async ({ ctx: { userId, session }, input }) => {
@@ -950,6 +962,9 @@ export const albumRouter = router({
       }
 
       const distinctUserIds = Array.from(new Set(input.userIds));
+      const contributors = new Set(
+        input.sourceType === "album" ? input.contributorIds.filter((id) => distinctUserIds.includes(id)) : [],
+      );
 
       if (distinctUserIds.length > 0) {
         const existingUsers = await db
@@ -1002,7 +1017,7 @@ export const albumRouter = router({
                 sourceType: input.sourceType,
                 sourceId: input.sourceId,
                 shareType: "user" as const,
-                accessLevel: "view" as const,
+                accessLevel: contributors.has(sharedToUserId) ? ("add" as const) : ("view" as const),
                 sharedToUserId,
               })),
             )

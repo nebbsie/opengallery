@@ -38,9 +38,9 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
     <hlm-dialog-header>
       <h3 hlmDialogTitle>Share this {{ sourceLabel() }}</h3>
       <p hlmDialogDescription>
-        People you turn on can see {{ title || 'this ' + sourceLabel() }}{{
-          sourceType === 'album' ? ' and every photo in it' : ''
-        }}. Turn someone off to stop sharing with them.
+        People you turn on can see {{ title || 'this ' + sourceLabel()
+        }}{{ sourceType === 'album' ? ' and every photo in it' : '' }}. Turn someone off to stop
+        sharing with them.
       </p>
     </hlm-dialog-header>
 
@@ -85,13 +85,34 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
                   (changed)="toggleUser(user.id, $event)"
                 />
               </label>
+              @if (on && sourceType === 'album') {
+                <!-- Collaborative album: this person may also upload into it,
+                     and delete what they uploaded. -->
+                <label
+                  [for]="'contrib-' + user.id"
+                  class="mt-1 ml-3 flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 text-sm"
+                >
+                  <span class="text-muted-foreground min-w-0 flex-1 text-pretty">
+                    Can add photos
+                  </span>
+                  <hlm-switch
+                    [id]="'contrib-' + user.id"
+                    [checked]="contributors().has(user.id)"
+                    [disabled]="saving()"
+                    [aria-label]="user.name + ' can add photos'"
+                    (changed)="toggleContributor(user.id, $event)"
+                  />
+                </label>
+              }
             </li>
           }
         </ul>
       }
 
       <hlm-dialog-footer class="mt-6">
-        <button hlmBtn variant="ghost" type="button" [disabled]="saving()" (click)="close(false)">Cancel</button>
+        <button hlmBtn variant="ghost" type="button" [disabled]="saving()" (click)="close(false)">
+          Cancel
+        </button>
         <button hlmBtn type="button" [disabled]="saving()" (click)="save()">
           @if (saving()) {
             <hlm-spinner class="mr-2 h-4 w-4" />
@@ -116,6 +137,8 @@ export class ShareItem {
 
   protected readonly saving = signal(false);
   private readonly selected = signal<Set<string>>(new Set());
+  // Of the selected users, the ones who may add photos to the album.
+  protected readonly contributors = signal<Set<string>>(new Set());
 
   protected readonly sourceType = this.dialogContext.sourceType;
   protected readonly sourceId = this.dialogContext.sourceId;
@@ -140,6 +163,7 @@ export class ShareItem {
       const data = this.shares.data();
       if (!data) return;
       this.selected.set(new Set(data.selectedUserIds));
+      this.contributors.set(new Set(data.contributorIds));
     });
   }
 
@@ -153,6 +177,13 @@ export class ShareItem {
     this.selected.set(next);
   }
 
+  toggleContributor(userId: string, checked: boolean) {
+    const next = new Set(this.contributors());
+    if (checked) next.add(userId);
+    else next.delete(userId);
+    this.contributors.set(next);
+  }
+
   async save() {
     if (this.saving()) return;
     this.saving.set(true);
@@ -162,6 +193,7 @@ export class ShareItem {
         sourceType: this.sourceType,
         sourceId: this.sourceId,
         userIds,
+        contributorIds: [...this.contributors()].filter((id) => userIds.includes(id)),
       });
     } catch {
       this.saving.set(false);

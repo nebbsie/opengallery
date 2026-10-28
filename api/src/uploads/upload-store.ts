@@ -6,6 +6,7 @@ import * as fsp from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { contributableAlbums, uploadableAlbum } from "../authz/album-contrib.js";
 import { clearScopeCache } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
@@ -172,8 +173,9 @@ async function ensureUserSource(userId: string, userDir: string): Promise<void> 
 
 export type UploadDestination = { id: string; name: string; path: string };
 
-// Albums the user can upload into: the ones inside their uploads folder.
-// Albums from the read-only library are not writable.
+// Albums the user can upload into: the ones inside their uploads folder, their
+// other library albums, then albums other people shared with them to add
+// photos to (authz/album-contrib).
 export async function listDestinations(userId: string): Promise<UploadDestination[]> {
   const root = await getUploadsRoot();
   if (!root) return [];
@@ -183,10 +185,19 @@ export async function listDestinations(userId: string): Promise<UploadDestinatio
     .from(AlbumTable)
     .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
     .where(eq(LibraryTable.userId, userId));
-  return rows
+  const own = rows
     .filter((r) => isInside(userDir, r.dir))
     .map((r) => ({ id: r.id, name: r.name, path: relative(userDir, r.dir) }))
     .sort((a, b) => a.path.localeCompare(b.path));
+  // Library albums outside the uploads folder, by their folder path.
+  const library = rows
+    .filter((r) => !isInside(userDir, r.dir))
+    .map((r) => ({ id: r.id, name: r.name, path: r.dir }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const shared = (await contributableAlbums(userId))
+    .map((a) => ({ id: a.id, name: a.name, path: `${a.name} (shared by ${a.ownerName})` }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return [...own, ...library, ...shared];
 }
 
 // ---------- sessions ----------
@@ -224,13 +235,19 @@ export async function createUpload(input: CreateUploadInput) {
   let destDir: string;
   let albumId: string | null = null;
   if (input.albumId) {
-    const [album] = await db
+    const [own] = await db
       .select({ id: AlbumTable.id, dir: AlbumTable.dir })
       .from(AlbumTable)
       .innerJoin(LibraryTable, eq(LibraryTable.id, AlbumTable.libraryId))
       .where(and(eq(AlbumTable.id, input.albumId), eq(LibraryTable.userId, input.userId)))
       .limit(1);
-    if (!album || !isInside(userDir, resolve(album.dir))) {
+    // Else one of their library albums, or an album shared with them to add
+    // photos to (any folder).
+    const album =
+      own && isInside(userDir, resolve(own.dir))
+        ? own
+        : await uploadableAlbum(input.userId, input.albumId);
+    if (!album) {
       throw new UploadError(403, "BAD_ALBUM", "You cannot upload into that album");
     }
     destDir = resolve(album.dir);
@@ -239,7 +256,7 @@ export async function createUpload(input: CreateUploadInput) {
     const name = cleanAlbumName(input.newAlbumName ?? "") || DEFAULT_ALBUM_NAME;
     destDir = join(userDir, name);
   }
-  if (!isInside(userDir, destDir)) {
+  if (!albumId && !isInside(userDir, destDir)) {
     throw new UploadError(400, "BAD_ALBUM", "That album name is not allowed");
   }
 
@@ -595,11 +612,19 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
     const m = sniff.media;
 
     // destDir was fixed when the upload started (<root>/<userId>/...). If the
-    // admin moved the uploads location since, the file still goes there.
+    // admin moved the uploads location since, the file still goes there. An
+    // upload into a shared album goes to that album's folder and the owner's
+    // library; the share is checked again here, as it may be gone by now.
     const sessionUserDir = userDirOf(s.destDir, userId);
-    if (!sessionUserDir) {
-      throw new UploadError(400, "BAD_ALBUM", "Bad destination");
+    const shared =
+      !sessionUserDir && s.albumId ? await uploadableAlbum(userId, s.albumId) : null;
+    if (!sessionUserDir && !(shared && resolve(shared.dir) === s.destDir)) {
+      throw new UploadError(403, "BAD_ALBUM", "You can no longer upload into that album");
     }
+    // Duplicates are looked for in the library the file goes into.
+    const dupeScope = shared
+      ? eq(LibraryFileTable.libraryId, shared.libraryId)
+      : eq(LibraryTable.userId, userId);
 
     const contentHash = await hashFile(s.partPath);
     const [dupe] = await db
@@ -608,7 +633,7 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
       .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
       .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
       .leftJoin(AlbumFileTable, eq(AlbumFileTable.fileId, FileTable.id))
-      .where(and(eq(FileTable.contentHash, contentHash), eq(LibraryTable.userId, userId)))
+      .where(and(eq(FileTable.contentHash, contentHash), dupeScope))
       .limit(1);
     // The same RAW may already be here as the hidden companion of a photo:
     // that photo is the duplicate.
@@ -622,7 +647,7 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
           .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, rawPrimary.id))
           .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
           .leftJoin(AlbumFileTable, eq(AlbumFileTable.fileId, rawPrimary.id))
-          .where(and(eq(FileTable.contentHash, contentHash), eq(LibraryTable.userId, userId)))
+          .where(and(eq(FileTable.contentHash, contentHash), dupeScope))
           .limit(1);
     const existing = dupe ?? rawDupe;
     if (existing) {
@@ -639,18 +664,28 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
       return { status: "duplicate", fileId: existing.id, albumId: existing.albumId, name: s.fileName };
     }
 
-    await fsp.mkdir(s.destDir, { recursive: true });
-    // A symlink inside the uploads folder must not lead the file out of it.
-    const realDest = await fsp.realpath(s.destDir);
-    const realUser = await fsp.realpath(sessionUserDir);
-    if (!isInside(realUser, realDest)) {
-      throw new UploadError(400, "BAD_ALBUM", "Bad destination");
+    let libraryId: string;
+    let albumId: string;
+    let name: string;
+    if (shared) {
+      // The shared album's folder already exists; nothing is created above it.
+      name = await placeFile(s.partPath, s.destDir, finalFileName(s.fileName, m));
+      libraryId = shared.libraryId;
+      albumId = shared.id;
+    } else {
+      await fsp.mkdir(s.destDir, { recursive: true });
+      // A symlink inside the uploads folder must not lead the file out of it.
+      const realDest = await fsp.realpath(s.destDir);
+      const realUser = await fsp.realpath(sessionUserDir!);
+      if (!isInside(realUser, realDest)) {
+        throw new UploadError(400, "BAD_ALBUM", "Bad destination");
+      }
+      name = await placeFile(s.partPath, s.destDir, finalFileName(s.fileName, m));
+      libraryId = await getDefaultLibraryId(userId);
+      const chain = await ensureAlbumChain(sessionUserDir!, s.destDir, libraryId);
+      albumId = chain.albumId;
+      if (chain.created) clearScopeCache();
     }
-
-    const name = await placeFile(s.partPath, s.destDir, finalFileName(s.fileName, m));
-    const libraryId = await getDefaultLibraryId(userId);
-    const { albumId, created } = await ensureAlbumChain(sessionUserDir, s.destDir, libraryId);
-    if (created) clearScopeCache();
 
     let fileId: string;
     try {

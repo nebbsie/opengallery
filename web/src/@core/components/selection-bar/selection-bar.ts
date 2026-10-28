@@ -121,6 +121,8 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
             <span class="sr-only sm:hidden">Set as cover</span>
           </button>
         }
+      }
+      @if (isAdmin() || allowDelete()) {
         <button
           type="button"
           class="flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium text-red-700 transition-[background-color,scale] duration-150 hover:bg-red-500/15 active:scale-[0.96] disabled:opacity-50 dark:text-red-400"
@@ -151,6 +153,9 @@ export class SelectionBar {
   private readonly queryClient = inject(QueryClient);
   // Set on an album page: enables "Set as cover" for one selected item.
   readonly albumId = input<string | null>(null);
+  // Show Delete to a non-admin (a collaborator on this album). The server
+  // still deletes only the files they uploaded.
+  readonly allowDelete = input(false);
 
   protected readonly visible = computed(() => this.selection.active());
   protected readonly downloading = signal(false);

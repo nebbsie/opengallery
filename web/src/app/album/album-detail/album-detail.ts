@@ -5,6 +5,7 @@ import { Confirm } from '@core/dialogs/confirm/confirm';
 import { Auth } from '@core/services/auth/auth';
 import { ToastService } from '@core/services/toast/toast';
 import { HlmInput } from '@spartan-ng/helm/input';
+import { UploadService } from '@core/services/upload/upload';
 import { AlbumThumbnail } from '@core/components/album-thumbnail/album-thumbnail';
 import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
@@ -19,6 +20,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideEllipsis,
   lucideImage,
+  lucideImagePlus,
   lucidePencil,
   lucideShare2,
   lucideTrash2,
@@ -53,7 +55,14 @@ import type { RouterOutputs } from '@core/services/trpc';
   ],
   providers: [
     GridSelection,
-    provideIcons({ lucideEllipsis, lucideImage, lucidePencil, lucideShare2, lucideTrash2 }),
+    provideIcons({
+      lucideEllipsis,
+      lucideImage,
+      lucideImagePlus,
+      lucidePencil,
+      lucideShare2,
+      lucideTrash2,
+    }),
   ],
   hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex h-full min-h-0 flex-col' },
@@ -105,6 +114,20 @@ import type { RouterOutputs } from '@core/services/trpc';
         }
 
         <div class="flex shrink-0 items-center gap-1">
+          @if (data.album.canAdd && !renaming()) {
+            <!-- Owner or collaborator: upload straight into this album. -->
+            <button
+              hlmBtn
+              variant="outline"
+              type="button"
+              class="transition-transform active:scale-[0.96]"
+              (click)="uploads.openPicker()"
+            >
+              <ng-icon hlm size="sm" name="lucideImagePlus" />
+              <span class="hidden sm:inline">Add photos</span>
+              <span class="sr-only sm:hidden">Add photos</span>
+            </button>
+          }
           @if (data.album.canManageShares && !renaming()) {
             <button
               hlmBtn
@@ -229,7 +252,7 @@ import type { RouterOutputs } from '@core/services/trpc';
             }
           </ng-template>
         </app-virtual-thumbnail-grid>
-        <app-selection-bar [albumId]="data.album.id" />
+        <app-selection-bar [albumId]="data.album.id" [allowDelete]="data.album.canAdd" />
       }
     }
   `,
@@ -242,6 +265,7 @@ export class AlbumDetail {
   private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
   protected readonly isAdmin = inject(Auth).isAdmin;
+  protected readonly uploads = inject(UploadService);
   id = input.required<string>();
 
   protected readonly menuOpen = signal(false);
