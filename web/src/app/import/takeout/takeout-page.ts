@@ -7,6 +7,9 @@ import { lucideFileArchive, lucidePause, lucidePlay, lucideRotateCw, lucideX } f
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
+import { CacheKey } from '@core/services/cache-key.types';
+import { injectTrpc } from '@core/services/trpc';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 import { SKIP_LABELS } from './takeout-plan';
 import { TakeoutImport } from './takeout-import';
 
@@ -75,6 +78,20 @@ import { TakeoutImport } from './takeout-import';
                   {{ plan.withJson.toLocaleString() }} with Google dates and places
                 </p>
               </div>
+              @if (space(); as sp) {
+                <!-- Uploads and their encoded copies share the server disk. -->
+                <p
+                  class="text-sm tabular-nums text-pretty"
+                  [class]="sp.short ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'"
+                >
+                  Needs about {{ size(sp.need) }} on the server, with the encoded copies.
+                  {{ size(sp.free) }} is free.
+                  @if (sp.short) {
+                    That would leave less than {{ size(sp.reserve) }} free, so the import cannot
+                    start. Free up space, or set a bigger uploads location in Settings, Storage.
+                  }
+                </p>
+              }
               @if (importer.alreadyDone()) {
                 <p class="text-sm tabular-nums">
                   {{ importer.alreadyDone().toLocaleString() }} already imported from these zips. They are
@@ -182,7 +199,12 @@ import { TakeoutImport } from './takeout-import';
             <div class="flex flex-wrap gap-2">
               @switch (importer.phase()) {
                 @case ('ready') {
-                  <button hlmBtn class="h-11 sm:h-9" (click)="importer.start()">
+                  <button
+                    hlmBtn
+                    class="h-11 sm:h-9"
+                    [disabled]="space()?.short"
+                    (click)="importer.start()"
+                  >
                     <ng-icon hlm size="sm" name="lucidePlay" />
                     {{ importer.alreadyDone() ? 'Continue import' : 'Start import' }}
                   </button>
@@ -233,6 +255,25 @@ export class TakeoutPage {
   protected readonly skippedTotal = computed(
     () => this.importer.plan()?.skipped.reduce((n, s) => n + s.count, 0) ?? 0,
   );
+
+  private readonly trpc = injectTrpc();
+  private readonly config = injectQuery(() => ({
+    queryKey: [CacheKey.UploadConfig],
+    queryFn: () => this.trpc.upload.config.query(),
+  }));
+
+  // Space check before a start: the files still to upload plus about 25% for
+  // their encoded copies, against the server's free space, keeping a reserve
+  // so the disk (it also holds the database) never fills up.
+  protected readonly space = computed(() => {
+    const plan = this.importer.plan();
+    const free = this.config.data()?.freeBytes;
+    if (!plan || free == null) return null;
+    const reserve = 20 * 1024 ** 3;
+    const done = this.importer.progress().sent;
+    const need = Math.max(0, Math.round((plan.totalBytes - done) * 1.25));
+    return { need, free, reserve, short: free - need < reserve };
+  });
 
   protected readonly percent = computed(() => {
     const p = this.importer.progress();

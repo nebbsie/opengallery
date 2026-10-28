@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { statfs } from "node:fs/promises";
 import { z } from "zod";
 import { isAdminSession } from "../authz/shared-access.js";
 import { strictPrivateProcedure, router } from "../trpc.js";
@@ -53,6 +54,13 @@ export const uploadRouter = router({
       chunkBytes: CHUNK_BYTES,
       defaultAlbumName: DEFAULT_ALBUM_NAME,
       albums: await listDestinations(ctx.userId),
+      // Free space where uploads land, so a big import (Google Takeout) can
+      // stop before it fills the disk. Null when it cannot be read.
+      freeBytes: root
+        ? await statfs(root)
+            .then((s) => s.bavail * s.bsize)
+            .catch(() => null)
+        : null,
       // Where files land on the server: admin-only detail.
       root: isAdminSession(ctx.session) ? root : null,
     };
