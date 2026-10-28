@@ -54,7 +54,7 @@ async function imageFrame(sourcePath: string): Promise<Frame> {
 }
 
 // One JPEG frame at `seconds`. ffmpeg applies the rotation metadata itself.
-function videoFrameAt(path: string, seconds: number): Promise<Buffer | null> {
+export function videoFrameAt(path: string, seconds: number): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const args = [
       '-v', 'error',

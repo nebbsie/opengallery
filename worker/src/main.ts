@@ -38,6 +38,14 @@ async function main() {
     );
   }
 
+  // Object search embeddings, same sidecar as faces and the same isolation.
+  try {
+    const { runClipWorker } = await import('./clip-worker.js');
+    runClipWorker();
+  } catch (e) {
+    logger.error('[clip] disabled: failed to load (encoding continues)', e as Error);
+  }
+
   try {
     await runWatcher();
   } catch (e) {

@@ -87,6 +87,24 @@ RUN pip install --no-cache-dir numpy==1.26.4 cython \
 # Pre-download the face model pack (buffalo_l) so the service runs offline.
 COPY scripts/download-face-models.sh /opt/face/download-face-models.sh
 RUN bash /opt/face/download-face-models.sh
+# Image-text model for object search (about 1.5 GB), so it also runs offline.
+ENV CLIP_HOME=/opt/clip
+COPY scripts/download-clip-model.sh /opt/face/download-clip-model.sh
+RUN bash /opt/face/download-clip-model.sh
+
+# -------- Build libva (VAAPI) --------
+# The static ffmpeg build needs libva >= 2.21 (vaMapBuffer2); Debian bookworm
+# ships 2.17, so h264_vaapi aborted at load. Build a newer libva; the distro's
+# Mesa VAAPI driver (mesa-va-drivers) loads fine under it. Tested on the AMD
+# Renoir iGPU: 1080p H.264 encodes about 4x faster than libx264 on 4 threads.
+FROM debian:bookworm-slim AS build-libva
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential meson ninja-build pkg-config libdrm-dev wget ca-certificates bzip2 \
+    && rm -rf /var/lib/apt/lists/*
+RUN cd /tmp && wget -q https://github.com/intel/libva/releases/download/2.22.0/libva-2.22.0.tar.bz2 \
+    && tar -xjf libva-2.22.0.tar.bz2 && cd libva-2.22.0 \
+    && meson setup build --prefix=/opt/libva --libdir=lib -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no \
+    && ninja -C build && ninja -C build install
 
 # -------- Build Web --------
 # Web build emits static assets only (no native runtime), so musl/glibc is moot.
@@ -109,8 +127,8 @@ FROM node:22-slim AS runner
 
 # Install runtime dependencies (Debian/glibc). python3 runs the face-service venv;
 # libgomp1 (onnxruntime) + libglib2.0-0 (opencv-headless) are its shared-lib deps.
-# libva + mesa-va-drivers let ffmpeg use AMD/Intel GPUs through VAAPI
-# (/dev/dri); without them h264_vaapi aborts on a missing libva-drm.so.2.
+# mesa-va-drivers (+ libva from the build-libva stage) let ffmpeg use AMD/Intel
+# GPUs through VAAPI (/dev/dri); vainfo is used by the GPU detection in Settings.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       supervisor nginx wget xz-utils ca-certificates \
       python3 libgomp1 libglib2.0-0 \
@@ -157,6 +175,12 @@ COPY web/package*.json /app/web/
 # -------- Copy face-service (Python venv + model + app) --------
 COPY --from=build-face /opt/venv /opt/venv
 COPY --from=build-face /opt/insightface /opt/insightface
+COPY --from=build-face /opt/clip /opt/clip
+# Newer libva for ffmpeg's VAAPI path (see build-libva). Only libva sonames
+# live here, so putting it first on the library path is safe for node/python.
+COPY --from=build-libva /opt/libva/lib /opt/libva/lib
+ENV LD_LIBRARY_PATH=/opt/libva/lib
+ENV LIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri:/usr/lib/aarch64-linux-gnu/dri
 COPY face-service /app/face-service
 
 # -------- Copy config files --------
@@ -176,6 +200,7 @@ ENV NODE_ENV=production
 ENV API_PORT=3219
 ENV FACE_PORT=3220
 ENV INSIGHTFACE_HOME=/opt/insightface
+ENV CLIP_HOME=/opt/clip
 ENV DATABASE_PATH=/data/opengallery.db
 ENV STORAGE_PATH=/data
 ENV HOST_ROOT_PREFIX=/host

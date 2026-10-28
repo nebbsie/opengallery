@@ -22,6 +22,11 @@ Endpoints:
                                "detScore": float, "facePx": float,
                                "blur": float, "yaw": float, "embNorm": float,
                                "embedding": base64 float32[512] (unit length)}]}
+  POST /clip/image -> multipart `image`: {"model": str, "embedding": base64 float32}
+  POST /clip/text  -> {"text": str}: {"model": str, "embedding": base64 float32}
+                   Image-text (CLIP-style) embeddings for object search. Both
+                   are unit length in one space, so text-to-photo relevance is
+                   a dot product (api/src/clip).
   POST /knn     -> raw body: float32[n*d] unit vectors, then int32[n] group ids
                    query: n, d, k. Returns raw int32[n*k] neighbour indices then
                    float32[n*k] cosine similarities, best first. Rows in the same
@@ -30,14 +35,22 @@ Endpoints:
 """
 
 import base64
+import io
+import json
 import os
+import string
+import threading
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+import onnxruntime as ort
 from insightface.app import FaceAnalysis
 from insightface.utils import face_align
+from PIL import Image, ImageOps
+from pydantic import BaseModel
+from tokenizers import Tokenizer
 
 MODEL_NAME = os.environ.get("FACE_MODEL_NAME", "buffalo_l")
 # Detection input size. The detector downsamples to this internally and maps
@@ -45,6 +58,13 @@ MODEL_NAME = os.environ.get("FACE_MODEL_NAME", "buffalo_l")
 DET_SIZE = int(os.environ.get("FACE_DET_SIZE", "1024"))
 # InsightFace model root (expects <root>/models/<name>/*.onnx).
 MODEL_ROOT = os.path.expanduser(os.environ.get("INSIGHTFACE_HOME", "~/.insightface"))
+
+# Image-text model for object search: an Immich ONNX export
+# (huggingface.co/immich-app/<name>) under CLIP_HOME/<name>/ with
+# visual/model.onnx, visual/preprocess_cfg.json, textual/model.onnx and
+# textual/tokenizer.json (scripts/download-clip-model.sh).
+CLIP_MODEL = os.environ.get("CLIP_MODEL", "ViT-B-16-SigLIP2__webli")
+CLIP_HOME = os.path.expanduser(os.environ.get("CLIP_HOME", "~/.clip"))
 
 app = FastAPI(title="opengallery-face-service")
 
@@ -66,10 +86,112 @@ def get_analysis() -> FaceAnalysis:
     return _analysis
 
 
+class _Clip:
+    """Lazily loaded image-text model. The text encoder loads on the first
+    search (SigLIP's is about 1 GB), the image encoder on the first photo."""
+
+    def __init__(self) -> None:
+        self.dir = os.path.join(CLIP_HOME, CLIP_MODEL)
+        self.lock = threading.Lock()
+        self.visual: ort.InferenceSession | None = None
+        self.textual: ort.InferenceSession | None = None
+        self.tokenizer: Tokenizer | None = None
+        self.cfg: dict | None = None
+        self.siglip = "siglip" in CLIP_MODEL.lower()
+
+    def available(self) -> bool:
+        return os.path.exists(os.path.join(self.dir, "visual", "model.onnx"))
+
+    def _session(self, path: str) -> ort.InferenceSession:
+        so = ort.SessionOptions()
+        return ort.InferenceSession(path, so, providers=["CPUExecutionProvider"])
+
+    def image(self, img: Image.Image) -> np.ndarray:
+        with self.lock:
+            if self.visual is None:
+                self.visual = self._session(os.path.join(self.dir, "visual", "model.onnx"))
+                with open(os.path.join(self.dir, "visual", "preprocess_cfg.json")) as f:
+                    self.cfg = json.load(f)
+        cfg = self.cfg
+        size = cfg["size"][0]
+        img = img.convert("RGB")
+        if cfg.get("resize_mode") == "squash":
+            img = img.resize((size, size), Image.BICUBIC)
+        else:
+            img = ImageOps.fit(img, (size, size), Image.BICUBIC)
+        a = np.asarray(img, np.float32) / 255.0
+        a = (a - np.array(cfg["mean"], np.float32)) / np.array(cfg["std"], np.float32)
+        x = a.transpose(2, 0, 1)[None]
+        out = self.visual.run(None, {self.visual.get_inputs()[0].name: x})[0][0]
+        return out / np.linalg.norm(out)
+
+    def text(self, text: str) -> np.ndarray:
+        with self.lock:
+            if self.textual is None:
+                self.textual = self._session(os.path.join(self.dir, "textual", "model.onnx"))
+                tok = Tokenizer.from_file(os.path.join(self.dir, "textual", "tokenizer.json"))
+                ctx = 64 if self.siglip else 77
+                pad = tok.token_to_id("<pad>") if self.siglip else 0
+                tok.enable_padding(length=ctx, pad_id=pad or 0)
+                tok.enable_truncation(ctx)
+                self.tokenizer = tok
+        if self.siglip:
+            # SigLIP was trained on canonicalized text: lower case, no punctuation.
+            text = text.lower().translate(str.maketrans("", "", string.punctuation))
+            text = " ".join(text.split())
+        ids = np.array([self.tokenizer.encode(text).ids], dtype=np.int32)
+        inp = self.textual.get_inputs()[0]
+        if "int64" in inp.type:
+            ids = ids.astype(np.int64)
+        out = self.textual.run(None, {inp.name: ids})[0][0]
+        return out / np.linalg.norm(out)
+
+
+_clip = _Clip()
+
+
+def _b64(v: np.ndarray) -> str:
+    return base64.b64encode(np.asarray(v, dtype="<f4").tobytes()).decode("ascii")
+
+
 @app.on_event("startup")
 def _warm() -> None:
     fa = get_analysis()
     fa.get(np.zeros((64, 64, 3), dtype=np.uint8))
+
+
+@app.post("/clip/image")
+async def clip_image(image: UploadFile = File(...)) -> dict:
+    if not _clip.available():
+        raise HTTPException(status_code=503, detail=f"model {CLIP_MODEL} not installed")
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty image")
+
+    def run() -> dict:
+        try:
+            img = Image.open(io.BytesIO(raw))
+            img.load()
+        except Exception as e:  # noqa: BLE001 - any decode failure is a bad input
+            raise HTTPException(status_code=400, detail=f"could not decode image: {e}")
+        return {"model": CLIP_MODEL, "embedding": _b64(_clip.image(img))}
+
+    return await run_in_threadpool(run)
+
+
+class TextIn(BaseModel):
+    text: str
+
+
+@app.post("/clip/text")
+async def clip_text(body: TextIn) -> dict:
+    if not _clip.available():
+        raise HTTPException(status_code=503, detail=f"model {CLIP_MODEL} not installed")
+    text = body.text.strip()[:300]
+    if not text:
+        raise HTTPException(status_code=400, detail="empty text")
+    v = await run_in_threadpool(_clip.text, text)
+    return {"model": CLIP_MODEL, "embedding": _b64(v)}
 
 
 @app.get("/health")

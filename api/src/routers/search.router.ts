@@ -44,6 +44,8 @@ import {
   placeMatchesToken,
 } from "../search/places.js";
 import { privateProcedure, router } from "../trpc.js";
+import { embedText } from "../clip/clip-client.js";
+import { getClipIndex } from "../clip/clip-index.js";
 
 // ---------------------------------------------------------------------------
 // Query parsing
@@ -132,6 +134,9 @@ type ParsedQuery = {
   months: number[];
   kind: "all" | "video";
   tokens: string[];
+  // Every word in order, stop words included, for the object-search phrase
+  // ("dog on a sofa" must keep "on a").
+  words: string[];
 };
 
 export function parseQuery(raw: string): ParsedQuery {
@@ -148,6 +153,7 @@ export function parseQuery(raw: string): ParsedQuery {
     months: [],
     kind: "all",
     tokens: [],
+    words,
   };
   for (const word of words) {
     if (/^(18|19|20)\d{2}$/.test(word)) {
@@ -475,14 +481,62 @@ function tokenCondition(match: TokenMatches): SQL {
   return or(...ors)!;
 }
 
+// --- object search -----------------------------------------------------------
+
+// A token is "structured" when it names a person, album or place, or looks
+// like part of a file name (digits, "_" or "."); the rest describe what is in
+// the photo ("red car") and go to the image-text model instead.
+function isStructured(m: TokenMatches): boolean {
+  return m.people.length > 0 || m.albumIds.length > 0 || m.places.length > 0 || /[\d_.]/.test(m.token);
+}
+
+const PHOTO_WORDS = new Set(["photo", "photos", "picture", "pictures", "pic", "pics", "image", "images"]);
+
+// The object phrase in the user's word order, minus dates, "videos" and the
+// structured tokens.
+function objectPhrase(parsed: ParsedQuery, structured: Set<string>): string {
+  return parsed.words
+    .filter(
+      (w) =>
+        !structured.has(w) &&
+        !/^(18|19|20)\d{2}$/.test(w) &&
+        !(w in MONTHS) &&
+        !VIDEO_WORDS.has(w) &&
+        !PHOTO_WORDS.has(w),
+    )
+    .join(" ")
+    .replace(/^(?:(?:a|an|the|of|with|and|in|on|at|by|from)\s+)+|(?:\s+(?:a|an|the|of|with|and|in|on|at|by|from))+$/g, "")
+    .trim();
+}
+
+// Relevance floor per model family. Image-text cosine scales differ by model
+// (SigLIP scores sit much lower than CLIP's). Calibrated with
+// scripts/clip-eval on 3,000 real photos: SigLIP 2 hits for dog, beach,
+// football, christmas tree, pool and baby scored 0.10 to 0.155, a real teapot
+// 0.096, and a query with no matching photo ("wedding dress") topped out at
+// 0.077.
+function minScoreFor(model: string): number {
+  return model.toLowerCase().includes("siglip") ? SIGLIP_MIN_SCORE : CLIP_MIN_SCORE;
+}
+const SIGLIP_MIN_SCORE = 0.09;
+const CLIP_MIN_SCORE = 0.22;
+// Also keep only hits within this much of the best one, so a search for a
+// rare thing does not pad its few real hits with near-random photos.
+const RELATIVE_WINDOW = 0.08;
+// Never rank more than this many photos for one query.
+const MAX_RANKED = 1000;
+
 // A short human summary of how each part of the query was read, shown above
 // the photo grid ("Steve", "2019").
-function describe(parsed: ParsedQuery, matches: TokenMatches[]) {
+function describe(parsed: ParsedQuery, matches: TokenMatches[], phrase = "") {
   const chips: Array<{
-    kind: "person" | "place" | "album" | "date" | "text" | "kind";
+    kind: "person" | "place" | "album" | "date" | "text" | "kind" | "thing";
     label: string;
   }> = [];
+  if (phrase) chips.push({ kind: "thing", label: phrase });
   for (const m of matches) {
+    // Words of the object phrase are already in the "thing" chip.
+    if (phrase && !isStructured(m)) continue;
     if (m.people.length > 0)
       chips.push({ kind: "person", label: m.people[0]!.name });
     else if (m.places.length > 0)
@@ -589,6 +643,60 @@ export async function searchSuggest(
   };
 }
 
+async function rankedSearch(
+  parsed: ParsedQuery,
+  matches: TokenMatches[],
+  phrase: string,
+  visible: SQL[],
+  input: { limit: number; cursor?: string | null | undefined },
+) {
+  const [embedding, index] = await Promise.all([embedText(phrase), getClipIndex()]);
+  if (!embedding || !index || index.model !== embedding.model || index.size === 0) return null;
+
+  const candidates = await db
+    .select({ id: FileTable.id })
+    .from(FileTable)
+    .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+    .where(
+      and(
+        ...visible,
+        ...(parsed.kind === "video" ? [eq(FileTable.type, "video")] : []),
+        ...dateConditions(parsed),
+        ...matches.filter(isStructured).map(tokenCondition),
+      ),
+    );
+  const scored = index.rank(embedding.vec, new Set(candidates.map((c) => c.id)));
+  const best = scored[0]?.score ?? 0;
+  const floor = Math.max(minScoreFor(embedding.model), best - RELATIVE_WINDOW);
+  const hits = scored.filter((h) => h.score >= floor).slice(0, MAX_RANKED);
+
+  const offset = input.cursor?.startsWith("r:") ? Number(input.cursor.slice(2)) || 0 : 0;
+  const pageIds = hits.slice(offset, offset + input.limit).map((h) => h.fileId);
+  const rows = pageIds.length
+    ? await db
+        .select({
+          file: FileTable,
+          blurhash: ImageMetadataTable.blurhash,
+          takenAt: ImageMetadataTable.takenAt,
+          sortAt: undatedBottomSortExpr,
+        })
+        .from(FileTable)
+        .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+        .where(inArray(FileTable.id, pageIds))
+    : [];
+  const byId = new Map(rows.map((r) => [r.file.id, r]));
+  const items = pageIds
+    .map((id) => byId.get(id))
+    .filter((r): r is (typeof rows)[number] => !!r)
+    .map((r) => ({ ...r.file, blurhash: r.blurhash, takenAt: r.takenAt, sortAt: r.sortAt }));
+  const next = offset + input.limit;
+  return {
+    items,
+    nextCursor: next < hits.length ? `r:${next}` : null,
+    filters: describe(parsed, matches, phrase),
+  };
+}
+
 export async function searchPhotos(
   scope: AccessScope,
   input: { q: string; limit: number; cursor?: string | null | undefined },
@@ -611,6 +719,16 @@ export async function searchPhotos(
     visibleFileConditions(scope),
     resolveTokens(scope, parsed.tokens),
   ]);
+
+  // Words that describe what is in the photo go to object search; it ranks
+  // the photos that pass every other filter. With no image-text model or no
+  // embeddings yet, fall through to plain text matching.
+  const structured = new Set(matches.filter(isStructured).map((m) => m.token));
+  const phrase = objectPhrase(parsed, structured);
+  if (phrase) {
+    const ranked = await rankedSearch(parsed, matches, phrase, visible, input);
+    if (ranked) return ranked;
+  }
 
   const sortExpr = undatedBottomSortExpr;
   let cursorCondition: SQL | undefined;

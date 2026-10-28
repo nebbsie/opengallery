@@ -544,6 +544,7 @@ function insertFileRows(opts: {
             { fileId, type: "detect_faces" },
           ];
     tasks.push({ fileId, type: "extract_geolocation" });
+    tasks.push({ fileId, type: "embed_clip" });
     tx.insert(FileTaskTable).values(tasks).run();
     tx.insert(LibraryFileTable).values({ fileId, libraryId: opts.libraryId }).run();
     tx.insert(AlbumFileTable).values({ fileId, albumId: opts.albumId }).run();

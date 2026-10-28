@@ -853,7 +853,16 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
         if (encoder.codec === 'h264_nvenc') {
           baseArgs.splice(5, 0, '-preset', 'p4', '-cq', '23');
         } else if (encoder.codec === 'h264_vaapi') {
-          baseArgs.splice(5, 0, '-qp', '23');
+          // VAAPI encodes GPU surfaces: open the render node, decode on the
+          // CPU, then upload NV12 frames (a software pix_fmt here makes
+          // h264_vaapi fail and every video fall back to the CPU).
+          const device = process.env['VAAPI_DEVICE'] ?? '/dev/dri/renderD128';
+          baseArgs.splice(1, 0, '-vaapi_device', device);
+          const pix = baseArgs.indexOf('-pix_fmt');
+          if (pix >= 0) baseArgs.splice(pix, 2);
+          const vf = baseArgs.indexOf('-vf');
+          if (vf >= 0) baseArgs[vf + 1] = `${baseArgs[vf + 1]},format=nv12,hwupload`;
+          baseArgs.splice(baseArgs.indexOf('-c:v') + 2, 0, '-qp', '23');
         } else if (encoder.codec === 'h264_videotoolbox') {
           baseArgs.splice(5, 0, '-b:v', '5M');
         }

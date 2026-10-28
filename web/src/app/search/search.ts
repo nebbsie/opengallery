@@ -227,7 +227,8 @@ import { SearchState, searchLinks } from './search-state';
         <!-- Photos for the combined query. -->
         <section aria-labelledby="search-photos">
           <div class="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <h2 id="search-photos" class="text-base font-semibold">Photos</h2>
+            <!-- Ranked by how well the photo shows the thing searched for. -->
+            <h2 id="search-photos" class="text-base font-semibold">{{ ranked() ? 'Best matches' : 'Photos' }}</h2>
             @if (filters().length) {
               <p class="text-muted-foreground text-sm">
                 @for (f of filters(); track f.kind + f.label; let last = $last) {
@@ -250,8 +251,8 @@ import { SearchState, searchLinks } from './search-state';
               <ng-icon hlm size="xl" name="lucideSearchX" />
               <p class="text-foreground font-medium">No photos match "{{ q() }}"</p>
               <p class="max-w-sm text-sm text-pretty">
-                Check the spelling, or use fewer words. Each word must match a person, place,
-                album, camera, file name or date.
+                Check the spelling, or use fewer words. Search by person, place, album, camera,
+                file name or date, or describe what is in the photo, for example "red car".
               </p>
             </div>
           } @else {
@@ -321,6 +322,7 @@ export class Search {
     return this.sequence.newToken();
   });
   protected readonly filters = computed(() => this.photos.data()?.pages[0]?.filters ?? []);
+  protected readonly ranked = computed(() => this.filters().some((f) => f.kind === 'thing'));
 
   protected readonly retryPhotos = () => this.photos.refetch();
 

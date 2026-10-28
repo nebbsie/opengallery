@@ -7,6 +7,7 @@ import {
   AlbumTable,
   FaceRejectionTable,
   FaceTable,
+  FileEmbeddingTable,
   FileTable,
   FileTaskTable,
   FileVariantTable,
@@ -20,6 +21,7 @@ import {
 import { clearScopeCache } from '../authz/shared-access.js';
 import { resolveAssetPath } from './media-path.js';
 import { removeFromIndexes, withFaceLock } from '../faces/face-index.js';
+import { removeFromClipIndex } from '../clip/clip-index.js';
 import { refreshPeople } from '../faces/people.js';
 
 const RULE_CHUNK = 200;
@@ -236,6 +238,11 @@ export async function deleteFilesWithCascade(fileIds: string[]) {
 
   // Remove detected faces and repair/clean up their person clusters.
   await removeFacesForFiles(idsToDelete, false);
+
+  await db
+    .delete(FileEmbeddingTable)
+    .where(inArray(FileEmbeddingTable.fileId, idsToDelete));
+  removeFromClipIndex(idsToDelete);
 
   await db
     .delete(AlbumFileTable)

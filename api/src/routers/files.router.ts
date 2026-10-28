@@ -101,6 +101,8 @@ export const filesRouter = router({
           // Faces from sampled frames (worker face-detection/detect.ts).
           taskRows.push({ fileId: f.id, type: "detect_faces" });
         }
+        // Object search embedding (worker clip-worker.ts).
+        taskRows.push({ fileId: f.id, type: "embed_clip" });
         // GPS extraction runs independently of encoding (it only reads EXIF /
         // ffprobe tags off the original) so geolocation lands even when the
         // encode step is skipped because variants already exist.

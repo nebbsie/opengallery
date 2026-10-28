@@ -6,3 +6,6 @@ numpy==1.26.4
 fastapi==0.115.5
 uvicorn==0.32.1
 python-multipart==0.0.12
+# Object search (image-text embeddings, /clip/*).
+tokenizers==0.23.2
+pillow==12.0.0

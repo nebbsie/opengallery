@@ -17,7 +17,7 @@ import { wsManager } from "../ws-manager.js";
 // leases again after its batch settles, so a stale lease means the worker died
 // mid-task. Count that as an attempt (and fail the task at the cap) so a file
 // that crashes the worker cannot be re-leased forever.
-const staleRequeueSet = (now: string) => ({
+export const staleRequeueSet = (now: string) => ({
   status: sql<"pending" | "failed">`CASE WHEN ${FileTaskTable.attempts} + 1 >= 3 THEN 'failed' ELSE 'pending' END`,
   attempts: sql<number>`${FileTaskTable.attempts} + 1`,
   startedAt: null,
@@ -253,6 +253,7 @@ export const fileTaskRouter = router({
           "video_poster",
           "detect_faces",
           "extract_geolocation",
+          "embed_clip",
         ]),
         version: z.number().int().positive().default(1),
       })
@@ -280,6 +281,7 @@ export const fileTaskRouter = router({
           "video_poster",
           "detect_faces",
           "extract_geolocation",
+          "embed_clip",
         ]),
         status: z.enum([
           "pending",
@@ -352,6 +354,7 @@ export const fileTaskRouter = router({
             "video_poster",
             "detect_faces",
             "extract_geolocation",
+            "embed_clip",
           ]),
           status: z.enum([
             "pending",
@@ -839,6 +842,7 @@ export const fileTaskRouter = router({
           "video_poster",
           "detect_faces",
           "extract_geolocation",
+          "embed_clip",
         ]),
         progress: z.number().int().min(0).max(100),
       })

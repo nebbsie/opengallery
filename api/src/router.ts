@@ -1,6 +1,7 @@
 import { albumFileRouter } from "./routers/album-file.router.js";
 import { albumRouter } from "./routers/album.router.js";
 import { cameraRouter } from "./routers/camera.router.js";
+import { clipRouter } from "./routers/clip.router.js";
 import { duplicatesRouter } from "./routers/duplicates.router.js";
 import { yearsRouter } from "./routers/years.router.js";
 import { directoryRouter } from "./routers/directory.router.js";
@@ -33,6 +34,7 @@ export const appRouter = router({
   files: filesRouter,
   fileTask: fileTaskRouter,
   faces: facesRouter,
+  clip: clipRouter,
   log: logRouter,
   library: libraryRouter,
   libraryFile: libraryFileRouter,

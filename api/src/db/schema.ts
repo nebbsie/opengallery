@@ -45,7 +45,9 @@ export type FileTaskType =
   | "encode_optimised"
   | "video_poster"
   | "detect_faces"
-  | "extract_geolocation";
+  | "extract_geolocation"
+  // Image-text embedding for object search ("red car"), see api/src/clip.
+  | "embed_clip";
 // FileTaskStatusEnum semantics:
 // - pending: queued to be processed, not yet started
 // - in_progress: worker picked it up and is running
@@ -349,6 +351,23 @@ export const FaceTable = sqliteTable(
     index("face_file_id_idx").on(t.fileId),
     index("face_person_id_idx").on(t.personId),
   ],
+);
+
+// One image-text (CLIP-style) embedding per photo or video, for object search
+// ("red car", "teapot"). A text query is embedded by the same model and the
+// photos are ranked by cosine similarity (api/src/clip).
+export const FileEmbeddingTable = sqliteTable(
+  "file_embedding",
+  {
+    fileId: text("file_id").primaryKey(),
+    // Model that produced vec; embeddings from different models never mix.
+    model: text("model").notNull(),
+    // L2-normalized Float32 vector as raw little-endian bytes.
+    vec: blob("vec", { mode: "buffer" }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("file_embedding_model_idx").on(t.model)],
 );
 
 // "This face is not that person": a user answer. Regrouping and live matching
