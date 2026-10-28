@@ -1,5 +1,3 @@
-import * as fs from "node:fs";
-import path from "node:path";
 import { type SQL, and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -10,8 +8,7 @@ import {
 import { db } from "../db/index.js";
 import { FileTable, FileTaskTable } from "../db/schema.js";
 import { adminProcedure, router } from "../trpc.js";
-import { deleteFilesWithCascade } from "../utils/file-operations.js";
-import { resolveAssetPath } from "../utils/media-path.js";
+import { trashFiles } from "../utils/media-edit.js";
 
 // Restrict task rows to files in libraries the caller owns. Admins and the
 // internal worker are unrestricted. Shared (view-only) access is not enough to
@@ -99,19 +96,16 @@ export const issuesRouter = router({
     }));
   }),
 
-  // Remove files from the library: delete the original when the media folder
-  // is writable, then drop the rows, variants, faces and album links. With a
-  // read-only media mount the original stays on disk and the next scan
-  // imports it again, so the result names those files.
+  // Delete files: move the originals to the trash, then remove them from the
+  // library. A file that cannot move stays listed, with the reason.
   remove: adminProcedure
     .input(z.object({ fileIds: z.array(z.string().uuid()).min(1).max(200) }))
     .mutation(async ({ ctx: { userId, session }, input }) => {
       const owned = await ownedTaskFilter(userId, session);
       // Only files that are on this page.
       const rows = await db
-        .selectDistinct({ id: FileTable.id, dir: FileTable.dir, name: FileTable.name })
+        .selectDistinct({ id: FileTaskTable.fileId })
         .from(FileTaskTable)
-        .innerJoin(FileTable, eq(FileTable.id, FileTaskTable.fileId))
         .where(
           and(
             inArray(FileTaskTable.fileId, input.fileIds),
@@ -120,19 +114,10 @@ export const issuesRouter = router({
             owned,
           ),
         );
-      if (rows.length === 0) return { removed: 0, keptOnDisk: [] as string[] };
-
-      const keptOnDisk: string[] = [];
-      for (const f of rows) {
-        const abs = path.resolve(path.join(f.dir, f.name));
-        try {
-          await fs.promises.unlink(await resolveAssetPath(abs));
-        } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== "ENOENT") keptOnDisk.push(f.name);
-        }
-      }
-      await deleteFilesWithCascade(rows.map((f) => f.id));
-      return { removed: rows.length, keptOnDisk };
+      return trashFiles(
+        rows.map((r) => r.id),
+        userId,
+      );
     }),
 
   retry: adminProcedure

@@ -13,6 +13,8 @@ import { geoLocationRouter } from "./routers/geo-location.router.js";
 import { healthRouter } from "./routers/health.router.js";
 import { imageMetadataRouter } from "./routers/image-metadata.router.js";
 import { issuesRouter } from "./routers/issues.router.js";
+import { editRouter } from "./routers/edit.router.js";
+import { trashRouter } from "./routers/trash.router.js";
 import { libraryFileRouter } from "./routers/library-file.router.js";
 import { libraryRouter } from "./routers/library.router.js";
 import { logRouter } from "./routers/log.router.js";
@@ -48,6 +50,8 @@ export const appRouter = router({
   uiSettings: uiSettingsRouter,
   queue: queueRouter,
   issues: issuesRouter,
+  edit: editRouter,
+  trash: trashRouter,
   duplicates: duplicatesRouter,
   camera: cameraRouter,
   years: yearsRouter,

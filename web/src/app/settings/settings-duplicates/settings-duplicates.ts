@@ -48,8 +48,8 @@ type DupeGroup = {
       <div>
         <h1 class="text-foreground block text-lg font-bold">Duplicate files</h1>
         <p class="text-muted-foreground text-sm text-pretty">
-          These files have the same content. Choose the copy to keep, and the other copies are
-          deleted from disk.
+          These files have the same content. Choose the copy to keep, and the other copies move to
+          the trash.
         </p>
       </div>
       @if (duplicates.isSuccess() && duplicates.data().length > 0) {
@@ -184,7 +184,7 @@ export class SettingsDuplicates {
       .open(Confirm, {
         context: {
           type: 'danger',
-          message: `Keep ${keep.dir}/${keep.name} and permanently delete ${what} from disk?${rawNote} You cannot undo this.`,
+          message: `Keep ${keep.dir}/${keep.name} and move ${what} to the trash?${rawNote}`,
         },
       })
       .closed$.subscribe((confirmed: boolean) => {
@@ -196,23 +196,20 @@ export class SettingsDuplicates {
     this.busyGroup.set(group.contentHash);
     await this.queryClient.cancelQueries({ queryKey: [CacheKey.DuplicatesAll] });
     let deleted = 0;
-    const failed: DupeFile[] = [];
-    for (const file of others) {
-      try {
-        await this.trpc.duplicates.deleteFile.mutate({ fileId: file.id });
-        deleted++;
-      } catch {
-        failed.push(file);
-      }
+    let failed = 0;
+    try {
+      const res = await this.trpc.duplicates.deleteFiles.mutate({ fileIds: others.map((f) => f.id) });
+      deleted = res.deleted;
+      failed = res.failed.length;
+    } catch {
+      failed = others.length;
     }
     this.busyGroup.set(null);
     await this.queryClient.invalidateQueries({ queryKey: [CacheKey.DuplicatesAll] });
-    if (failed.length === 0) {
-      this.toast.success(deleted === 1 ? 'Deleted 1 copy' : `Deleted ${deleted} copies`);
+    if (failed === 0) {
+      this.toast.success(deleted === 1 ? 'Moved 1 copy to the trash' : `Moved ${deleted} copies to the trash`);
     } else {
-      this.toast.error(
-        `Could not delete ${failed.length === 1 ? '1 copy' : `${failed.length} copies`}. Try again.`,
-      );
+      this.toast.error(`Could not delete ${failed === 1 ? '1 copy' : `${failed} copies`}. Try again.`);
     }
   }
 }

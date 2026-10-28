@@ -1,7 +1,4 @@
-import * as fs from 'node:fs';
-import path from 'node:path';
-import { TRPCError } from '@trpc/server';
-import { type SQL, and, eq, inArray, isNotNull, isNull, ne, notInArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 import {
@@ -10,10 +7,9 @@ import {
   getAccessScope,
 } from '../authz/shared-access.js';
 import { db } from '../db/index.js';
-import { FileTable, ImageMetadataTable, LibraryFileTable } from '../db/schema.js';
+import { FileTable, ImageMetadataTable } from '../db/schema.js';
 import { adminProcedure, router } from '../trpc.js';
-import { deleteFilesWithCascade } from '../utils/file-operations.js';
-import { resolveAssetPath } from '../utils/media-path.js';
+import { trashFiles } from '../utils/media-edit.js';
 import { notRawCompanion } from '../utils/raw-pairing.js';
 
 // Files a user may treat as their own duplicates: those in libraries they own.
@@ -102,79 +98,42 @@ export const duplicatesRouter = router({
     }));
   }),
 
-  deleteFile: adminProcedure
-    .input(z.object({ fileId: z.string().uuid() }))
+  // Delete copies: move them to the trash and remove them from the library.
+  // A group always keeps at least one copy: a file is refused when every other
+  // copy of its content is also in this request (or already gone), so a stale
+  // list or a second tab cannot delete the last copy. A RAW companion stays on
+  // disk and becomes a photo of its own (the confirm text says so).
+  deleteFiles: adminProcedure
+    .input(z.object({ fileIds: z.array(z.string().uuid()).min(1).max(5000) }))
     .mutation(async ({ ctx: { userId, session }, input }) => {
       const run = deleteChain.then(async () => {
-        const scope = await ownedScope(userId, session);
-
-        const [file] = await db
-          .select({
-            dir: FileTable.dir,
-            name: FileTable.name,
-            contentHash: FileTable.contentHash,
-            rawFileId: FileTable.rawFileId,
-          })
+        const { filter } = await ownedScope(userId, session);
+        const wanted = new Set(input.fileIds);
+        const targets = await db
+          .select({ id: FileTable.id, name: FileTable.name, contentHash: FileTable.contentHash })
           .from(FileTable)
-          .where(and(sql`${FileTable.id} = ${input.fileId}`, scope.filter))
-          .limit(1);
-
-        if (!file) throw new Error('File not found');
-
-        // The caller must own every live library entry of this file. One
-        // file row can sit in several users' libraries (overlapping paths),
-        // and the unlink below removes it from disk for all of them.
-        if (!scope.isAdmin) {
-          const owned = [...scope.ownedLibraryIds];
-          const [foreign] = await db
-            .select({ id: LibraryFileTable.id })
-            .from(LibraryFileTable)
-            .where(
-              and(
-                eq(LibraryFileTable.fileId, input.fileId),
-                isNull(LibraryFileTable.deletedAt),
-                ...(owned.length > 0 ? [notInArray(LibraryFileTable.libraryId, owned)] : []),
-              ),
-            )
-            .limit(1);
-          if (foreign) throw new TRPCError({ code: 'FORBIDDEN' });
+          .where(and(inArray(FileTable.id, input.fileIds), filter));
+        const hashes = [...new Set(targets.map((t) => t.contentHash).filter((h): h is string => !!h))];
+        const keepers = new Set<string>();
+        for (let i = 0; i < hashes.length; i += 500) {
+          const rows = await db
+            .select({ id: FileTable.id, contentHash: FileTable.contentHash })
+            .from(FileTable)
+            .where(and(inArray(FileTable.contentHash, hashes.slice(i, i + 500)), filter));
+          for (const r of rows) if (!wanted.has(r.id)) keepers.add(r.contentHash!);
         }
-
-        // Never delete the last copy: another file with the same hash must
-        // still exist in the caller's scope (a stale list or a second tab can
-        // otherwise delete every copy in a group).
-        if (!file.contentHash) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'File has no content hash' });
+        // Every copy of a group requested: keep the first one asked for.
+        const refused: { id: string; name: string; reason: string }[] = [];
+        for (const t of targets) {
+          if (!t.contentHash || !keepers.has(t.contentHash)) {
+            refused.push({ id: t.id, name: t.name, reason: 'This is the last copy' });
+            if (t.contentHash) keepers.add(t.contentHash);
+          }
         }
-        const [other] = await db
-          .select({ id: FileTable.id })
-          .from(FileTable)
-          .where(
-            and(
-              eq(FileTable.contentHash, file.contentHash),
-              ne(FileTable.id, input.fileId),
-              scope.filter,
-            ),
-          )
-          .limit(1);
-        if (!other) {
-          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No other copy of this file exists' });
-        }
-
-        const abs = path.resolve(path.join(file.dir, file.name));
-        try {
-          const resolved = await resolveAssetPath(abs);
-          await fs.promises.unlink(resolved);
-        } catch {
-          // Best-effort: already deleted or path unresolvable
-        }
-
-        // A RAW+JPEG pair: never delete the RAW, it can be the only copy of
-        // that file. deleteFilesWithCascade promotes it to a photo of its own,
-        // so the user sees it and decides (the confirm text says so).
-        const ids = [input.fileId];
-        await deleteFilesWithCascade(ids);
-        return { ok: true } as const;
+        const refusedIds = new Set(refused.map((r) => r.id));
+        const ok = targets.filter((t) => !refusedIds.has(t.id)).map((t) => t.id);
+        const res = await trashFiles(ok, userId, { withRaw: false });
+        return { deleted: res.deleted, failed: [...refused, ...res.failed] };
       });
       deleteChain = run.catch(() => {});
       return run;

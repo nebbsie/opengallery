@@ -219,17 +219,19 @@ export class SettingsIssues {
     mutationFn: (fileIds: string[]) => this.trpc.issues.remove.mutate({ fileIds }),
     onMutate: async (fileIds) => this.dropFromList(fileIds),
     onSuccess: (res) => {
-      if (res.keptOnDisk.length > 0) {
-        // Read-only media mount: the original is still there and the next
-        // scan brings it back unless it is deleted on the drive.
-        this.toast.show(
-          `Removed ${res.removed} from the library. The media folder is read-only, so delete ` +
-            `${res.keptOnDisk.length === 1 ? res.keptOnDisk[0] : `${res.keptOnDisk.length} files`} ` +
-            'on the drive, or the next scan imports it again.',
+      // Files that could not move to the trash stay in the library (and come
+      // back into the list on the refetch), with the reason.
+      if (res.failed.length > 0) {
+        const first = res.failed[0]!;
+        this.toast.error(
+          res.failed.length === 1
+            ? `Could not delete ${first.name}: ${first.reason}`
+            : `Could not delete ${res.failed.length} files: ${first.reason}`,
           { duration: 12000 },
         );
-      } else {
-        this.toast.success(`Deleted ${res.removed} ${res.removed === 1 ? 'file' : 'files'}`);
+      }
+      if (res.deleted > 0) {
+        this.toast.success(`Moved ${res.deleted} ${res.deleted === 1 ? 'file' : 'files'} to the trash`);
       }
     },
     onError: (_err, _ids, ctx) => {

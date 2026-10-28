@@ -63,7 +63,8 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
       // If directory, add to queue for recursion (skip excluded folders)
       if (entry.isDirectory()) {
-        if (EXCLUDED_SCAN_FOLDERS.has(entry.name)) {
+        // Dot folders too: the UI trash is ".trash" (api/src/utils/media-trash.ts).
+        if (EXCLUDED_SCAN_FOLDERS.has(entry.name) || entry.name.startsWith('.')) {
           logger.debug(`Skipping excluded folder: ${path}`);
           continue;
         }

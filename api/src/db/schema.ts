@@ -740,3 +740,25 @@ export const UploadSessionTable = sqliteTable(
     index("upload_session_updated_idx").on(t.updatedAt),
   ],
 );
+
+export type TrashItemKind = "file" | "folder";
+
+// A file or folder the user deleted in the UI (utils/media-trash.ts). The
+// original was moved into a hidden ".trash" folder next to it, so it can be
+// restored until the trash is emptied. Paths are the real paths in this
+// process (after MEDIA_PATH_MAP); `name` and `originalPath` are for display.
+export const TrashItemTable = sqliteTable(
+  "trash_item",
+  {
+    id: id(),
+    kind: text("kind").$type<TrashItemKind>().notNull(),
+    name: text("name").notNull(),
+    originalPath: text("original_path").notNull(),
+    trashPath: text("trash_path").notNull(),
+    size: integer("size").notNull().default(0),
+    fileCount: integer("file_count").notNull().default(1),
+    deletedBy: text("deleted_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("trash_item_created_idx").on(t.createdAt)],
+);
