@@ -40,10 +40,11 @@ class UndecodableImageError extends Error {
 
 // Single-frame decode of one image. Generous for a slow USB read.
 const FFMPEG_DECODE_TIMEOUT_MS = 2 * 60 * 1000;
-// ffmpeg prints progress to stderr about twice a second. If it prints nothing
-// for this long it is hung (e.g. stuck on a dead USB read); kill it so one bad
-// file cannot stall the encode batch, and with it the whole encode loop.
-const FFMPEG_STALL_TIMEOUT_MS = 10 * 60 * 1000;
+// ffmpeg prints progress to stderr about twice a second. If it makes no
+// progress for this long it is hung (stuck on a dead USB read, or a status
+// line that repeats "frame=0" forever); kill it so one bad file cannot stall
+// the encode batch, and with it the whole encode loop.
+const FFMPEG_STALL_TIMEOUT_MS = 5 * 60 * 1000;
 // Keep only the tail of stderr for error messages.
 const FFMPEG_STDERR_MAX = 16 * 1024;
 
@@ -683,8 +684,9 @@ async function runFfmpeg(args: string[], label: string) {
     let stderr = '';
     const stall = armStallTimer(child, label, reject);
     child.stderr.on('data', (d) => {
-      stall.reset();
-      stderr = (stderr + String(d)).slice(-FFMPEG_STDERR_MAX);
+      const chunk = String(d);
+      stall.progress(chunk);
+      stderr = (stderr + chunk).slice(-FFMPEG_STDERR_MAX);
     });
     child.on('close', (code) => {
       stall.clear();
@@ -699,9 +701,11 @@ async function runFfmpeg(args: string[], label: string) {
   });
 }
 
-// Kill ffmpeg and reject if it goes silent for FFMPEG_STALL_TIMEOUT_MS. Rejects
-// at once rather than on 'close', because a process stuck in an uninterruptible
-// read may not exit after SIGKILL until the I/O returns.
+// Kill ffmpeg and reject if it makes no progress for FFMPEG_STALL_TIMEOUT_MS.
+// Output counts as progress unless it is a status line ("frame=... time=...")
+// that says the same as the last one: a hung encode keeps printing those.
+// Rejects at once rather than on 'close', because a process stuck in an
+// uninterruptible read may not exit after SIGKILL until the I/O returns.
 function armStallTimer(
   child: ReturnType<typeof spawn>,
   label: string,
@@ -717,7 +721,17 @@ function armStallTimer(
     }, FFMPEG_STALL_TIMEOUT_MS);
   };
   reset();
-  return { reset, clear: () => clearTimeout(timer) };
+  let lastStatus = '';
+  const progress = (chunk: string) => {
+    const lines = chunk.split(/[\r\n]+/).filter((l) => l.includes('frame=') || l.includes('size='));
+    if (lines.length === 0) return reset();
+    const status = lines[lines.length - 1]!.replace(/\s*(fps|speed|elapsed)=\s*\S+/g, '').trim();
+    if (status !== lastStatus) {
+      lastStatus = status;
+      reset();
+    }
+  };
+  return { progress, clear: () => clearTimeout(timer) };
 }
 
 async function runFfmpegWithProgress(
@@ -734,8 +748,8 @@ async function runFfmpegWithProgress(
     const stall = armStallTimer(child, label, reject);
 
     child.stderr.on('data', async (d) => {
-      stall.reset();
       const chunk = String(d);
+      stall.progress(chunk);
       // Bounded tail: the full stderr of a long encode is megabytes, and
       // re-scanning all of it on every chunk was quadratic.
       stderr = (stderr + chunk).slice(-FFMPEG_STDERR_MAX);
@@ -780,7 +794,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
     throw new Error('variantsPath missing from settings');
   }
 
-  const inputPath = toContainerPath(join(file.dir, file.name));
+  let inputPath = toContainerPath(join(file.dir, file.name));
 
   // Use path hash for stable folder naming across DB resets
   const pathHash = getFileStableHash(file);
@@ -907,6 +921,13 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
         );
         gpuFailed = true;
       }
+    }
+
+    // The folder may have been renamed while the GPU encode ran: open the file
+    // at its current path.
+    if (gpuFailed) {
+      const current = (await trpc.files.getFileById.query(file.id))?.raw;
+      if (current) inputPath = toContainerPath(join(current.dir, current.name));
     }
 
     // CPU encoding (fallback or if GPU not enabled)

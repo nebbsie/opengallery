@@ -58,6 +58,23 @@ function shortError(error: string | null): string | null {
   return last.replace(/^Error opening input files?:\s*/, "");
 }
 
+// Face detection is skipped while a file's encode is dead (file-task.router
+// leaseFilesForFaceDetection); a retried encode brings it back.
+async function requeueSkippedFaces(fileIds: string[]) {
+  for (let i = 0; i < fileIds.length; i += 500) {
+    await db
+      .update(FileTaskTable)
+      .set({ status: "pending", attempts: 0, startedAt: null, finishedAt: null, updatedAt: new Date().toISOString() })
+      .where(
+        and(
+          eq(FileTaskTable.type, "detect_faces"),
+          eq(FileTaskTable.status, "skipped"),
+          inArray(FileTaskTable.fileId, fileIds.slice(i, i + 500)),
+        ),
+      );
+  }
+}
+
 // Settings > Issues is an admin page: the failed tasks are system data.
 export const issuesRouter = router({
   list: adminProcedure.query(async ({ ctx: { userId, session } }) => {
@@ -141,6 +158,7 @@ export const issuesRouter = router({
             owned
           )
         );
+      await requeueSkippedFaces([input.fileId]);
       return { ok: true } as const;
     }),
 
@@ -164,6 +182,7 @@ export const issuesRouter = router({
         )
       )
       .returning({ fileId: FileTaskTable.fileId });
+    await requeueSkippedFaces([...new Set(result.map((r) => r.fileId))]);
 
     return { ok: true, count: result.length } as const;
   }),

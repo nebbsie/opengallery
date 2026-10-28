@@ -139,11 +139,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FFmpeg with NVENC/AMD support using the BtbN glibc static build.
-RUN wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz && \
-    tar -xf ffmpeg-master-latest-linux64-gpl.tar.xz && \
-    mv ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /usr/local/bin/ffmpeg && \
-    mv ffmpeg-master-latest-linux64-gpl/bin/ffprobe /usr/local/bin/ffprobe && \
-    rm -rf ffmpeg-master-latest-linux64-gpl*
+# A release branch, not master: the nightly master build of 2026-10-27 hung
+# on every encode that re-encodes AAC audio (GPU and CPU alike).
+ARG FFMPEG_BUILD=ffmpeg-n9.0-latest-linux64-gpl-9.0
+RUN wget -q https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FFMPEG_BUILD}.tar.xz && \
+    tar -xf ${FFMPEG_BUILD}.tar.xz && \
+    mv ${FFMPEG_BUILD}/bin/ffmpeg /usr/local/bin/ffmpeg && \
+    mv ${FFMPEG_BUILD}/bin/ffprobe /usr/local/bin/ffprobe && \
+    rm -rf ${FFMPEG_BUILD}*
 
 WORKDIR /app
 
