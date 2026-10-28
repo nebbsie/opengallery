@@ -30,6 +30,7 @@ export const CacheKey = {
   TimelinePhotos: 'timeline-photos',
   TimelineVideos: 'timeline-videos',
   DuplicatesAll: 'duplicates-all',
+  TrashAll: 'trash-all',
   YearsAll: 'years-all',
   YearSingle: 'year-single',
   YearTimeline: 'year-timeline',
