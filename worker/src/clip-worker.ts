@@ -94,7 +94,9 @@ export function runClipWorker(): void {
           await sleep(3000);
           continue;
         }
-        const results = await Promise.allSettled(fileIds.map((id: string) => limit(() => embedFile(id))));
+        const results: PromiseSettledResult<void>[] = await Promise.allSettled(
+          fileIds.map((id: string) => limit(() => embedFile(id))),
+        );
         if (results.some((r) => r.status === 'rejected' && r.reason instanceof ModelMissing)) {
           logger.warn('[clip] sidecar has no image-text model; object search indexing paused for 10 min');
           await sleep(10 * 60_000);
