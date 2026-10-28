@@ -10,6 +10,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ContentChild,
+  Directive,
   ElementRef,
   EventEmitter,
   Injector,
@@ -22,6 +23,7 @@ import {
   effect,
   inject,
   input,
+  output,
   signal,
 } from '@angular/core';
 import { GridSelection } from '@core/services/selection/grid-selection';
@@ -78,7 +80,26 @@ export type GridRow<T> =
       monthName: string;
       height: number;
     } & Span)
-  | ({ type: 'day-header'; key: number; label: string; height: number } & Span);
+  | ({ type: 'day-header'; key: number; label: string; height: number } & Span)
+  /** The `leading` template (e.g. sub-albums), first row, scrolls with the grid. */
+  | { type: 'leading'; height: number };
+
+/** Emits the element's height whenever it changes. */
+@Directive({ selector: '[ogMeasureHeight]' })
+export class MeasureHeight implements OnDestroy {
+  readonly heightChange = output<number>({ alias: 'ogMeasureHeight' });
+  private readonly observer = new ResizeObserver(([entry]) => {
+    if (entry) this.heightChange.emit(Math.ceil(entry.contentRect.height));
+  });
+
+  constructor() {
+    this.observer.observe(inject(ElementRef).nativeElement as Element);
+  }
+
+  ngOnDestroy(): void {
+    this.observer.disconnect();
+  }
+}
 
 
 class GridVirtualScrollStrategy implements VirtualScrollStrategy {
@@ -225,7 +246,7 @@ const RAIL_PADDING_Y = 24;
 @Component({
   selector: 'app-virtual-thumbnail-grid',
   standalone: true,
-  imports: [ScrollingModule, NgClass, NgTemplateOutlet, NgIcon, HlmIcon],
+  imports: [ScrollingModule, NgClass, NgTemplateOutlet, NgIcon, HlmIcon, MeasureHeight],
   providers: [
     { provide: VIRTUAL_SCROLL_STRATEGY, useFactory: () => new GridVirtualScrollStrategy() },
     provideIcons({ lucideLayoutGrid, lucideRows3 }),
@@ -278,7 +299,11 @@ const RAIL_PADDING_Y = 24;
           *cdkVirtualFor="let row of gridRows(); trackBy: trackRow"
           [style.height.px]="row.height"
         >
-          @if (row.type === 'year-header') {
+          @if (row.type === 'leading') {
+            <div (ogMeasureHeight)="leadingHeight.set($event)">
+              <ng-container *ngTemplateOutlet="leading()" />
+            </div>
+          } @else if (row.type === 'year-header') {
             <div class="flex h-full items-center justify-between gap-2 px-1">
               <h2 class="text-foreground/85 text-3xl font-bold tracking-tight tabular-nums">
                 {{ row.year || 'No Date' }}
@@ -734,7 +759,16 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     };
   }
 
-  readonly gridRows = computed((): GridRow<T>[] => this.layoutResult());
+  /** Content above the first row that scrolls away with the grid. */
+  leading = input<TemplateRef<unknown> | null>(null);
+  // Measured by the leading row itself; a guess until the first measure.
+  protected readonly leadingHeight = signal(160);
+
+  readonly gridRows = computed((): GridRow<T>[] => {
+    const rows = this.layoutResult();
+    if (!this.leading() || !rows.length) return rows;
+    return [{ type: 'leading', height: Math.max(1, this.leadingHeight()) }, ...rows];
+  });
 
   private readonly _rowHeights = computed(() => this.gridRows().map((r) => r.height));
 
@@ -1254,6 +1288,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   });
 
   trackRow = (index: number, row: GridRow<T>): string => {
+    if (row.type === 'leading') return 'leading';
     if (row.type === 'year-header') return `year-${row.year}`;
     if (row.type === 'month-header') return `month-${row.year}-${row.month}`;
     if (row.type === 'day-header') return `day-${row.key}`;

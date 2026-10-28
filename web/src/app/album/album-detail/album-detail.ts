@@ -223,15 +223,15 @@ import type { RouterOutputs } from '@core/services/trpc';
           </app-thumbnail-grid>
         </div>
       } @else {
-        @if (data.children.length) {
-          <!-- Sub-albums sit in a strip so the photos below can use the
-               virtual grid (which owns its own scroll). -->
-          <div class="-mx-1 mb-3 flex shrink-0 snap-x gap-2 overflow-x-auto px-1 pb-1">
+        <!-- Sub-albums: a strip that is the grid's first row, so it scrolls
+             away with the photos instead of staying at the top. -->
+        <ng-template #subAlbums>
+          <div class="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pt-0.5 pb-3">
             @for (child of data.children; track child.id) {
               <app-album-thumbnail class="w-36 shrink-0 snap-start sm:w-44" [album]="child" />
             }
           </div>
-        }
+        </ng-template>
 
         <app-virtual-thumbnail-grid
           class="min-h-0 flex-1"
@@ -239,6 +239,7 @@ import type { RouterOutputs } from '@core/services/trpc';
           [scrollKey]="'album-' + data.album.id"
           [dateAccessor]="dateAccessor"
           [dayHeaders]="false"
+          [leading]="data.children.length ? subAlbums : null"
         >
           <ng-template let-item>
             @if (item.loading) {

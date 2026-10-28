@@ -77,34 +77,38 @@ function readSort(): AlbumSort {
           <p class="text-foreground font-medium">No albums yet</p>
         </div>
       } @else {
-        <!-- Scrolls sideways on a narrow phone instead of wrapping. -->
-        <div
-          role="radiogroup"
-          aria-label="Sort albums"
-          class="-mx-1 mb-3 flex shrink-0 gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none]"
-        >
-          @for (s of sorts; track s.id) {
-            <button
-              type="button"
-              role="radio"
-              [attr.aria-checked]="sort() === s.id"
-              class="focus-visible:ring-ring min-h-11 shrink-0 rounded-full border px-4 text-sm font-medium whitespace-nowrap outline-none transition-[background-color,color,border-color] duration-150 focus-visible:ring-2 active:scale-[0.96] sm:min-h-8"
-              [class]="
-                sort() === s.id
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'text-foreground hover:bg-accent'
-              "
-              (click)="sort.set(s.id)"
-            >
-              {{ s.label }}
-            </button>
-          }
-        </div>
+        <!-- The sort chips are the grid's first row, so they scroll away. -->
+        <ng-template #sortChips>
+          <!-- Scrolls sideways on a narrow phone instead of wrapping. -->
+          <div
+            role="radiogroup"
+            aria-label="Sort albums"
+            class="-mx-1 flex shrink-0 gap-1 overflow-x-auto px-1 pb-3 [scrollbar-width:none]"
+          >
+            @for (s of sorts; track s.id) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="sort() === s.id"
+                class="focus-visible:ring-ring min-h-11 shrink-0 rounded-full border px-4 text-sm font-medium whitespace-nowrap outline-none transition-[background-color,color,border-color] duration-150 focus-visible:ring-2 active:scale-[0.96] sm:min-h-8"
+                [class]="
+                  sort() === s.id
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'text-foreground hover:bg-accent'
+                "
+                (click)="sort.set(s.id)"
+              >
+                {{ s.label }}
+              </button>
+            }
+          </div>
+        </ng-template>
         <app-virtual-thumbnail-grid
           class="min-h-0 flex-1"
           [items]="sorted()"
           [rowHeightExtra]="48"
           [dateHeaders]="false"
+          [leading]="sortChips"
         >
           <ng-template let-album>
             <app-album-thumbnail [album]="album" />
