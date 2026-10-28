@@ -24,6 +24,7 @@ import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
+  lucideEllipsis,
   lucideEye,
   lucideEyeOff,
   lucideMerge,
@@ -42,10 +43,18 @@ import {
   injectQuery,
   QueryClient,
 } from '@tanstack/angular-query-experimental';
-import { HideFromDialog, HideFromTarget } from '../../shared-viewer/hide-from-dialog/hide-from-dialog';
+import {
+  HideFromDialog,
+  HideFromTarget,
+} from '../../shared-viewer/hide-from-dialog/hide-from-dialog';
 import { joinNames, Viewer, viewerRulesKeys } from '../../shared-viewer/viewer-rules';
 import { FaceActions, faceAlt } from '../face-actions';
-import { FaceReview, REVIEW_LIMIT, reviewCountText, reviewQueryKey } from '../face-review/face-review';
+import {
+  FaceReview,
+  REVIEW_LIMIT,
+  reviewCountText,
+  reviewQueryKey,
+} from '../face-review/face-review';
 import { NameInput } from '../name-input/name-input';
 import { PersonFaces } from './person-faces';
 
@@ -66,7 +75,15 @@ type Tab = 'photos' | 'faces';
   selector: 'app-face-detail',
   providers: [
     GridSelection,
-    provideIcons({ lucideEye, lucideEyeOff, lucideMerge, lucidePencil, lucideScanFace, lucideUser }),
+    provideIcons({
+      lucideEllipsis,
+      lucideEye,
+      lucideEyeOff,
+      lucideMerge,
+      lucidePencil,
+      lucideScanFace,
+      lucideUser,
+    }),
   ],
   imports: [
     ErrorAlert,
@@ -92,7 +109,7 @@ type Tab = 'photos' | 'faces';
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div class="mb-3 flex items-center gap-3">
         @if (person.data()?.coverFaceId; as cover) {
           <img
             class="bg-muted size-12 shrink-0 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
@@ -111,45 +128,107 @@ type Tab = 'photos' | 'faces';
             (cancelled)="editing.set(false)"
           />
         } @else {
-          <div class="min-w-0">
+          <div class="min-w-0 flex-1">
             <h1 class="text-foreground truncate text-2xl font-bold text-balance">
               {{ person.data()?.name || 'Unnamed person' }}
             </h1>
-            @if (person.data(); as p) {
-              <p class="text-muted-foreground text-sm tabular-nums">
-                {{ p.faceCount | plural: 'photo' }}
-              </p>
-            }
+            <div class="flex flex-wrap items-center gap-x-2">
+              @if (person.data(); as p) {
+                <p class="text-muted-foreground text-sm tabular-nums">
+                  {{ p.faceCount | plural: 'photo' }}
+                </p>
+              }
+              @if (isAdmin() && person.data()?.hidden) {
+                <span
+                  class="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
+                >
+                  Hidden
+                </span>
+              }
+              @if (isAdmin() && hiddenFromLabel(); as label) {
+                <!-- Admin-only: who this person is hidden from. Opens the picker. -->
+                <button
+                  type="button"
+                  class="text-muted-foreground hover:bg-muted focus-visible:ring-ring -mx-1 inline-flex min-h-8 items-center gap-1 rounded px-1 text-xs outline-none focus-visible:ring-2"
+                  title="Change who this person is hidden from"
+                  (click)="openHideFrom()"
+                >
+                  <ng-icon hlm size="xs" name="lucideEyeOff" />
+                  Hidden from {{ label }}
+                </button>
+              }
+            </div>
           </div>
           @if (isAdmin()) {
-            @if (person.data()?.hidden) {
-              <span
-                class="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400"
-              >
-                Hidden
-              </span>
-            }
-            @if (hiddenFromLabel(); as label) {
-              <!-- Admin-only: who this person is hidden from. Opens the picker. -->
+            <!-- Admin actions live behind one menu so the header stays one row on mobile. -->
+            <div class="relative shrink-0 self-start">
               <button
                 type="button"
-                class="text-muted-foreground hover:bg-muted focus-visible:ring-ring inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs outline-none focus-visible:ring-2 sm:min-h-8"
-                title="Change who this person is hidden from"
-                (click)="openHideFrom()"
+                class="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-11 place-items-center rounded-full transition-[background-color,color,scale] duration-150 outline-none focus-visible:ring-2 active:scale-[0.96] sm:size-9"
+                aria-label="Person actions"
+                aria-haspopup="menu"
+                [attr.aria-expanded]="menuOpen()"
+                (click)="menuOpen.set(!menuOpen())"
               >
-                <ng-icon hlm size="xs" name="lucideEyeOff" />
-                Hidden from {{ label }}
+                <ng-icon hlm size="base" name="lucideEllipsis" />
               </button>
-            }
-            <button
-              hlmBtn
-              variant="ghost"
-              class="h-11 active:scale-[0.96] sm:h-8"
-              (click)="editing.set(true)"
-            >
-              <ng-icon hlm size="sm" name="lucidePencil" />
-              {{ person.data()?.name ? 'Rename' : 'Add a name' }}
-            </button>
+              @if (menuOpen()) {
+                <div
+                  class="fixed inset-0 z-40"
+                  aria-hidden="true"
+                  (click)="menuOpen.set(false)"
+                ></div>
+                <div
+                  role="menu"
+                  aria-label="Person actions"
+                  class="glass-strong motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 absolute top-full right-0 z-50 mt-1 flex w-56 origin-top-right flex-col rounded-xl p-1.5"
+                  (keydown.escape)="menuOpen.set(false)"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [class]="menuItemClass"
+                    (click)="menuAction('rename')"
+                  >
+                    <ng-icon hlm size="sm" name="lucidePencil" class="text-muted-foreground" />
+                    {{ person.data()?.name ? 'Rename' : 'Add a name' }}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [class]="menuItemClass"
+                    (click)="menuAction('merge')"
+                  >
+                    <ng-icon hlm size="sm" name="lucideMerge" class="text-muted-foreground" />
+                    Merge into...
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [class]="menuItemClass"
+                    (click)="menuAction('hideFrom')"
+                  >
+                    <ng-icon hlm size="sm" name="lucideEyeOff" class="text-muted-foreground" />
+                    Hide from...
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [class]="menuItemClass"
+                    [disabled]="busy()"
+                    (click)="menuAction('toggleHidden')"
+                  >
+                    <ng-icon
+                      hlm
+                      size="sm"
+                      [name]="person.data()?.hidden ? 'lucideEye' : 'lucideEyeOff'"
+                      class="text-muted-foreground"
+                    />
+                    {{ person.data()?.hidden ? 'Unhide person' : 'Hide person' }}
+                  </button>
+                </div>
+              }
+            </div>
           }
         }
       </div>
@@ -158,132 +237,97 @@ type Tab = 'photos' | 'faces';
            (hiding also removes their photos from the gallery, timeline and map).
            Each change shows a toast with Undo. -->
       @if (isAdmin()) {
-        <div class="bg-muted/40 mb-3 flex flex-wrap items-center gap-2 rounded-lg border p-2">
-          @if (!mergeOpen()) {
-            <button
-              hlmBtn
-              variant="outline"
-              class="h-11 active:scale-[0.96] sm:h-8"
-              (click)="mergeOpen.set(true)"
-            >
-              <ng-icon hlm size="sm" name="lucideMerge" />
-              Merge...
-            </button>
-          } @else if (!selectedTarget()) {
-            <!-- Pick a person to merge into. Clicking a row goes to the confirm step. -->
-            <div class="flex w-full max-w-sm flex-col gap-2">
-              <div class="flex items-center gap-2">
-                <input
-                  hlmInput
-                  type="search"
-                  class="h-11 flex-1 text-sm sm:h-9"
-                  [ngModel]="mergeSearch()"
-                  (ngModelChange)="mergeSearch.set($event)"
-                  placeholder="Merge into... type to search people"
-                  aria-label="Search people to merge into"
-                  autofocus
-                />
-                <button hlmBtn variant="ghost" class="h-11 sm:h-9" (click)="closeMerge()">
-                  Cancel
-                </button>
-              </div>
-              <div class="bg-background max-h-56 divide-y overflow-y-auto rounded-md border">
-                @for (p of mergeTargets(); track p.id) {
-                  <button
-                    type="button"
-                    class="hover:bg-muted focus-visible:bg-muted flex min-h-11 w-full items-center gap-2 px-2 py-1.5 text-left text-sm outline-none"
-                    (click)="mergeTargetId.set(p.id)"
-                  >
-                    <span class="bg-muted relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
-                      @if (p.coverFaceId) {
-                        <img
-                          class="h-full w-full object-cover"
-                          [src]="apiUrl + '/face/' + p.coverFaceId"
-                          alt=""
-                          loading="lazy"
-                        />
-                      } @else {
-                        <span class="text-muted-foreground grid h-full w-full place-items-center">
-                          <ng-icon hlm size="sm" name="lucideUser" />
-                        </span>
-                      }
-                    </span>
-                    <span class="truncate">{{ p.name }}</span>
-                    <span class="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
-                      {{ p.faceCount | plural: 'photo' }}
-                    </span>
-                  </button>
-                } @empty {
-                  <p class="text-muted-foreground px-2 py-2 text-sm">No matching people.</p>
-                }
-              </div>
-            </div>
-          } @else if (selectedTarget(); as t) {
-            <div class="flex w-full max-w-md flex-wrap items-center gap-2">
-              <span class="bg-muted relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
-                @if (t.coverFaceId) {
-                  <img
-                    class="h-full w-full object-cover"
-                    [src]="apiUrl + '/face/' + t.coverFaceId"
-                    [alt]="faceAlt(t.name)"
-                    loading="lazy"
+        @if (mergeOpen()) {
+          <div class="bg-muted/40 mb-3 flex flex-wrap items-center gap-2 rounded-lg border p-2">
+            @if (!selectedTarget()) {
+              <!-- Pick a person to merge into. Clicking a row goes to the confirm step. -->
+              <div class="flex w-full max-w-sm flex-col gap-2">
+                <div class="flex items-center gap-2">
+                  <input
+                    hlmInput
+                    type="search"
+                    class="h-11 flex-1 text-sm sm:h-9"
+                    [ngModel]="mergeSearch()"
+                    (ngModelChange)="mergeSearch.set($event)"
+                    placeholder="Merge into... type to search people"
+                    aria-label="Search people to merge into"
+                    autofocus
                   />
-                }
-              </span>
-              <span class="text-sm">
-                Merge into <strong>{{ t.name }}</strong>?
-                <span class="text-muted-foreground">You can undo this for 10 minutes.</span>
-              </span>
-              <div class="ml-auto flex gap-2">
-                <button
-                  hlmBtn
-                  class="h-11 active:scale-[0.96] sm:h-8"
-                  (click)="mergeInto(t)"
-                  [disabled]="busy()"
-                >
-                  {{ busy() ? 'Merging' : 'Merge' }}
-                </button>
-                <button
-                  hlmBtn
-                  variant="ghost"
-                  class="h-11 sm:h-8"
-                  [disabled]="busy()"
-                  (click)="mergeTargetId.set('')"
-                >
-                  Back
-                </button>
+                  <button hlmBtn variant="ghost" class="h-11 sm:h-9" (click)="closeMerge()">
+                    Cancel
+                  </button>
+                </div>
+                <div class="bg-background max-h-56 divide-y overflow-y-auto rounded-md border">
+                  @for (p of mergeTargets(); track p.id) {
+                    <button
+                      type="button"
+                      class="hover:bg-muted focus-visible:bg-muted flex min-h-11 w-full items-center gap-2 px-2 py-1.5 text-left text-sm outline-none"
+                      (click)="mergeTargetId.set(p.id)"
+                    >
+                      <span class="bg-muted relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
+                        @if (p.coverFaceId) {
+                          <img
+                            class="h-full w-full object-cover"
+                            [src]="apiUrl + '/face/' + p.coverFaceId"
+                            alt=""
+                            loading="lazy"
+                          />
+                        } @else {
+                          <span class="text-muted-foreground grid h-full w-full place-items-center">
+                            <ng-icon hlm size="sm" name="lucideUser" />
+                          </span>
+                        }
+                      </span>
+                      <span class="truncate">{{ p.name }}</span>
+                      <span class="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
+                        {{ p.faceCount | plural: 'photo' }}
+                      </span>
+                    </button>
+                  } @empty {
+                    <p class="text-muted-foreground px-2 py-2 text-sm">No matching people.</p>
+                  }
+                </div>
               </div>
-            </div>
-          }
-
-          <div class="ml-auto flex flex-wrap gap-2">
-            <button
-              hlmBtn
-              variant="outline"
-              class="h-11 active:scale-[0.96] sm:h-8"
-              title="Choose who cannot see photos with this person"
-              (click)="openHideFrom()"
-            >
-              <ng-icon hlm size="sm" name="lucideEyeOff" />
-              Hide from...
-            </button>
-            <button
-              hlmBtn
-              variant="outline"
-              class="h-11 active:scale-[0.96] sm:h-8"
-              [title]="
-                person.data()?.hidden
-                  ? 'Show this person and their photos again'
-                  : 'Hide this person and their photos for everyone, you included'
-              "
-              (click)="toggleHidden()"
-              [disabled]="busy()"
-            >
-              <ng-icon hlm size="sm" [name]="person.data()?.hidden ? 'lucideEye' : 'lucideEyeOff'" />
-              {{ person.data()?.hidden ? 'Unhide person' : 'Hide person' }}
-            </button>
+            } @else if (selectedTarget(); as t) {
+              <div class="flex w-full max-w-md flex-wrap items-center gap-2">
+                <span class="bg-muted relative h-8 w-8 shrink-0 overflow-hidden rounded-full">
+                  @if (t.coverFaceId) {
+                    <img
+                      class="h-full w-full object-cover"
+                      [src]="apiUrl + '/face/' + t.coverFaceId"
+                      [alt]="faceAlt(t.name)"
+                      loading="lazy"
+                    />
+                  }
+                </span>
+                <span class="text-sm">
+                  Merge into <strong>{{ t.name }}</strong
+                  >?
+                  <span class="text-muted-foreground">You can undo this for 10 minutes.</span>
+                </span>
+                <div class="ml-auto flex gap-2">
+                  <button
+                    hlmBtn
+                    class="h-11 active:scale-[0.96] sm:h-8"
+                    (click)="mergeInto(t)"
+                    [disabled]="busy()"
+                  >
+                    {{ busy() ? 'Merging' : 'Merge' }}
+                  </button>
+                  <button
+                    hlmBtn
+                    variant="ghost"
+                    class="h-11 sm:h-8"
+                    [disabled]="busy()"
+                    (click)="mergeTargetId.set('')"
+                  >
+                    Back
+                  </button>
+                </div>
+              </div>
+            }
           </div>
-        </div>
+        }
 
         @if (reviewCount() > 0) {
           <div
@@ -315,7 +359,7 @@ type Tab = 'photos' | 'faces';
             [attr.aria-selected]="tab() === t.id"
             [attr.aria-controls]="'person-panel-' + t.id"
             [attr.tabindex]="tab() === t.id ? 0 : -1"
-            class="focus-visible:ring-ring min-h-11 rounded-md px-4 text-sm font-medium outline-none transition-[background-color,color] duration-150 focus-visible:ring-2 sm:min-h-8"
+            class="focus-visible:ring-ring min-h-11 rounded-md px-4 text-sm font-medium transition-[background-color,color] duration-150 outline-none focus-visible:ring-2 sm:min-h-8"
             [class]="
               tab() === t.id
                 ? 'bg-background text-foreground shadow-sm'
@@ -404,6 +448,17 @@ export class FaceDetail {
   // Merge controls stay collapsed behind a "Merge..." button until the admin
   // opens them, so the toolbar stays calm for the common view/rename case.
   protected readonly mergeOpen = signal(false);
+  protected readonly menuOpen = signal(false);
+  protected readonly menuItemClass =
+    'hover:bg-glass-tint focus-visible:bg-glass-tint flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm outline-none transition-[background-color,scale] duration-100 active:scale-[0.98] disabled:opacity-50 sm:min-h-9';
+
+  protected menuAction(action: 'rename' | 'merge' | 'hideFrom' | 'toggleHidden'): void {
+    this.menuOpen.set(false);
+    if (action === 'rename') this.editing.set(true);
+    else if (action === 'merge') this.mergeOpen.set(true);
+    else if (action === 'hideFrom') this.openHideFrom();
+    else this.toggleHidden();
+  }
   protected readonly mergeTargetId = signal<string>('');
   protected readonly mergeSearch = signal('');
 
@@ -434,9 +489,7 @@ export class FaceDetail {
       (p: PersonSummary) =>
         // Only named people are offered: merging into an unnamed person is
         // rarely the intent (merge the unnamed one into this person instead).
-        p.id !== this.id() &&
-        !!p.name &&
-        (query === '' || p.name.toLowerCase().includes(query)),
+        p.id !== this.id() && !!p.name && (query === '' || p.name.toLowerCase().includes(query)),
     );
   });
 
@@ -509,9 +562,7 @@ export class FaceDetail {
         {
           queryKey: [CacheKey.FacesAll],
           update: (old) =>
-            (old as PersonSummary[] | undefined)?.map((p) =>
-              p.id === id ? { ...p, name } : p,
-            ),
+            (old as PersonSummary[] | undefined)?.map((p) => (p.id === id ? { ...p, name } : p)),
         },
       ]);
     },
