@@ -44,8 +44,9 @@ function formatBytes(bytes: number): string {
     }),
   ],
   imports: [Loading, ErrorAlert, NgIcon, HlmIcon, HlmButton, HlmInput, ReactiveFormsModule],
+  // The settings shell clips overflow, so each page scrolls itself.
   host: {
-    class: 'w-full',
+    class: 'block w-full h-full min-h-0 overflow-y-auto',
   },
   template: `
     @if (stats.isPending() || settings.isPending() || sources.isPending()) {

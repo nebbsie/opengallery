@@ -13,8 +13,9 @@ import { Loading } from '@core/components/loading/loading';
   selector: 'app-settings-profile',
   providers: [provideIcons({ lucideLogOut, lucideCrown })],
   imports: [NgOptimizedImage, HlmButton, NgIcon, HlmIcon, Loading],
+  // The settings shell clips overflow, so each page scrolls itself.
   host: {
-    class: 'w-full',
+    class: 'block w-full h-full min-h-0 overflow-y-auto',
   },
   template: `
     @if (auth.ready() === false) {

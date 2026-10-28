@@ -13,6 +13,10 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
   selector: 'app-settings-ui',
   providers: [provideIcons({ lucideMoon, lucideSun, lucideMonitor })],
   imports: [NgIcon, HlmIcon, HlmSwitch],
+  // The settings shell clips overflow, so each page scrolls itself.
+  host: {
+    class: 'block w-full h-full min-h-0 overflow-y-auto',
+  },
   template: `
     <div>
       <h1 class="text-foreground mb-2 block text-lg font-bold">Display</h1>

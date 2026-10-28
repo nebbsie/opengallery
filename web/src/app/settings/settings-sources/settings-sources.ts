@@ -37,8 +37,9 @@ type MediaSourceSettings = RouterOutputs['mediaSourcesSettings']['get'];
     ErrorAlert,
     Loading,
   ],
+  // The settings shell clips overflow, so each page scrolls itself.
   host: {
-    class: 'w-full',
+    class: 'block w-full h-full min-h-0 overflow-y-auto',
   },
   template: `
     @if (settings.isPending()) {
