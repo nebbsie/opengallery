@@ -150,7 +150,7 @@ type Target = 'default' | 'album' | 'new';
                 placeholder="Album name"
                 maxlength="100"
                 [ngModel]="newName()"
-                (ngModelChange)="newName.set($event); target.set('new')"
+                (ngModelChange)="newName.set($event); nameTyped.set(true); target.set('new')"
               />
             </span>
           </label>
@@ -200,6 +200,8 @@ export class UploadDialog {
   });
   protected readonly albumId = signal<string | null>(this.context?.albumId ?? null);
   protected readonly newName = signal('');
+  // True once the user types a name. A picked folder then does not replace it.
+  protected readonly nameTyped = signal(false);
 
   protected readonly maxBytes = computed(() => this.config.data()?.maxBytes ?? Infinity);
   protected readonly maxSize = computed(() => formatBytes(this.maxBytes()));
@@ -227,13 +229,12 @@ export class UploadDialog {
     input.value = '';
     if (!list.length) return;
     this.picked.set(list);
-    // A folder becomes an album with the folder's name.
+    // A folder becomes a new album. Its name is the folder's name, unless the
+    // user already typed one.
     if (isFolder) {
       const folder = (list[0] as File & { webkitRelativePath?: string }).webkitRelativePath?.split('/')[0];
-      if (folder) {
-        this.newName.set(folder);
-        this.target.set('new');
-      }
+      if (folder && !(this.nameTyped() && this.newName().trim())) this.newName.set(folder);
+      if (this.newName().trim()) this.target.set('new');
     }
   }
 
