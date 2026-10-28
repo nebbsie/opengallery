@@ -238,7 +238,7 @@ import type { RouterOutputs } from '@core/services/trpc';
           [items]="allItems()"
           [scrollKey]="'album-' + data.album.id"
           [dateAccessor]="dateAccessor"
-          [dayHeaders]="false"
+          [dateHeaders]="false"
           [leading]="data.children.length ? subAlbums : null"
         >
           <ng-template let-item>
