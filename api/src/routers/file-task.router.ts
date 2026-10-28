@@ -240,7 +240,31 @@ export const fileTaskRouter = router({
               : undefined,
           ),
         )
-        .returning({ id: FileTaskTable.id });
+        .returning({ id: FileTaskTable.id, fileId: FileTaskTable.fileId });
+      // Face detection waits on the optimised encode and is skipped when that
+      // encode is dead, so a retried encode brings its face task back too.
+      if (taskType === "encode_optimised" && res.length > 0) {
+        const fileIds = res.map((r) => r.fileId);
+        for (let i = 0; i < fileIds.length; i += 500) {
+          await db
+            .update(FileTaskTable)
+            .set({
+              status: "pending",
+              attempts: 0,
+              startedAt: null,
+              finishedAt: null,
+              lastError: null,
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(FileTaskTable.type, "detect_faces"),
+                eq(FileTaskTable.status, "skipped"),
+                inArray(FileTaskTable.fileId, fileIds.slice(i, i + 500)),
+              ),
+            );
+        }
+      }
       return { requeued: res.length };
     }),
 
@@ -637,6 +661,25 @@ export const fileTaskRouter = router({
           eq(FileTaskTable.status, "in_progress"),
           sql`${FileTaskTable.startedAt} IS NOT NULL`,
           sql`${FileTaskTable.startedAt} < ${fiveMinutesAgo}`,
+        ),
+      );
+
+    // Step 1b: A file whose optimised encode is skipped or dead (failed at the
+    // cap) never gets an image to detect on. Skip its face task, or it waits
+    // forever and the queue never reaches zero. Retrying the encode requeues it.
+    await db
+      .update(FileTaskTable)
+      .set({ status: "skipped", finishedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(FileTaskTable.type, "detect_faces"),
+          taskQueued,
+          sql`EXISTS (
+            SELECT 1 FROM ${FileTaskTable} opt
+            WHERE opt.file_id = ${FileTaskTable.fileId}
+            AND opt.type = 'encode_optimised'
+            AND (opt.status = 'skipped' OR (opt.status = 'failed' AND opt.attempts >= 3))
+          )`,
         ),
       );
 

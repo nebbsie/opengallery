@@ -71,8 +71,9 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
         continue;
       }
 
-      // If not a file, skip
-      if (!entry.isFile()) {
+      // If not a file, skip. Dotfiles too, as the watcher does: macOS writes
+      // "._name.MP4" AppleDouble files that look like media but are not.
+      if (!entry.isFile() || entry.name.startsWith('.')) {
         continue;
       }
 
