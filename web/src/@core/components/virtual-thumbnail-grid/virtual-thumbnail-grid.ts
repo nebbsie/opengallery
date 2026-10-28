@@ -509,6 +509,9 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   layout = input<'auto' | 'squares'>('auto');
   /** Group by day under each month (each day gets a selectable header). */
   dayHeaders = input(true);
+  // Off for items with no dates (e.g. albums): no year/month/day headers, so
+  // no lone "No Date" header above the grid.
+  dateHeaders = input(true);
 
   @Output() loadMore = new EventEmitter<void>();
   @Output() seekTo = new EventEmitter<{ year: number; month: number }>();
@@ -656,7 +659,7 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
       chunkStart = end;
     };
 
-    for (let i = 0; i < items.length; i++) {
+    for (let i = 0; this.dateHeaders() && i < items.length; i++) {
       const d = this.parseTimelineDate(da(items[i]));
       const y = d?.getFullYear() ?? 0;
       const m = d ? d.getMonth() + 1 : 0;
