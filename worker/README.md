@@ -17,7 +17,6 @@ npm run dev
 | --------------- | ---------------------- |
 | `npm run dev`   | Start with hot reload  |
 | `npm run build` | Build for production   |
-| `npm start`     | Start production build |
 
 ## Environment Variables
 

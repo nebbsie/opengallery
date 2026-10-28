@@ -1,8 +1,11 @@
 /.idea
 *.env
 /node_modules
-node_modules
+# Only the root lockfile is tracked
 package-lock.json
+!/package-lock.json
+__pycache__/
+node_modules
 dev.db
 dev.db-shm
 dev.db-wal

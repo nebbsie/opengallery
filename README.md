@@ -52,14 +52,15 @@ OpenGallery is an npm monorepo with four packages managed via workspaces:
 
 ```
 api/        Fastify + tRPC backend (SQLite via Drizzle ORM)
-web/        Angular 19 SSR frontend
+web/        Angular 20 SSR frontend
 worker/     File-system watcher and media processor
 packages/
   logger/   Shared structured logger
   types/    Shared TypeScript types
+face-service/  Python (InsightFace) face detection service
 ```
 
-In the Docker container, all four processes run inside a single image managed by **supervisord**, with **nginx** on port 4321 routing `/api/` to the API (port 3219) and everything else to the Angular SSR server (port 4200).
+In the Docker container, the API, web, worker, face-service and nginx processes run inside a single image managed by **supervisord**, with **nginx** on port 4321 routing `/api/` to the API (port 3219) and everything else to the Angular SSR server (port 4200).
 
 ### API (`api/`)
 
@@ -70,7 +71,6 @@ In the Docker container, all four processes run inside a single image managed by
 | Drizzle ORM | SQLite ORM + migrations |
 | better-sqlite3 | SQLite driver |
 | BetterAuth | Session-based auth |
-| BullMQ | Background job queue |
 | Zod | Input validation |
 | prom-client | Prometheus metrics endpoint |
 
@@ -78,7 +78,7 @@ In the Docker container, all four processes run inside a single image managed by
 
 | Technology | Role |
 |---|---|
-| Angular 19 | Framework (with SSR via Angular Universal) |
+| Angular 20 | Framework (with SSR via Angular Universal) |
 | TanStack Query | Server-state and infinite-scroll pagination |
 | Spartan UI (Helm) | Component library (Tailwind-based) |
 | tRPC client | Communicates with API |
@@ -91,7 +91,7 @@ In the Docker container, all four processes run inside a single image managed by
 | sharp | Image thumbnail + optimised variant generation |
 | ffmpeg / ffprobe | Video transcoding and poster frames |
 | exifr | EXIF metadata extraction |
-| BullMQ | Picks up encoding jobs from the API queue |
+| tRPC client | Claims encode, geo and face tasks from the API |
 
 ---
 
