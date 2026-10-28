@@ -19,7 +19,13 @@ import {
   UploadSessionTable,
 } from "../db/schema.js";
 import { logger } from "../logger.js";
-import { demoteRawFiles, fileTaskRows } from "../utils/file-operations.js";
+import { withFaceLock } from "../faces/face-index.js";
+import {
+  demoteRawFilesSync,
+  emptyRawEffects,
+  fileTaskRows,
+  finishRawMoves,
+} from "../utils/file-operations.js";
 import { linkRawPairs, primaryOfRaw } from "../utils/raw-pairing.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
@@ -522,7 +528,10 @@ async function insertFileRows(opts: {
   libraryId: string;
   albumId: string;
 }): Promise<string> {
-  const { fileId, pairs } = db.transaction((tx) => {
+  // Insert, link and demote commit together, under the face lock because a
+  // demoted RAW's faces move to the JPEG; disk cleanup follows the commit.
+  const fx = emptyRawEffects();
+  const { fileId, pairs } = await withFaceLock(async () => db.transaction((tx) => {
     const [file] = tx
       .insert(FileTable)
       .values({
@@ -543,10 +552,11 @@ async function insertFileRows(opts: {
       tx.insert(LibraryFileTable).values({ fileId, libraryId: opts.libraryId }).run();
       tx.insert(AlbumFileTable).values({ fileId, albumId: opts.albumId }).run();
     }
+    // The upload is a JPEG and its RAW was already here as a photo of its own.
+    demoteRawFilesSync(pairs.primaryOf, pairs.demoted, fx);
     return { fileId, pairs };
-  });
-  // The upload is a JPEG and its RAW was already here as a photo of its own.
-  await demoteRawFiles(pairs.primaryOf, pairs.demoted);
+  }));
+  await finishRawMoves(fx);
   return pairs.primaryOf.get(fileId) ?? fileId;
 }
 

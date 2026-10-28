@@ -14,14 +14,15 @@ import {
   GeoLocationTable,
   ImageMetadataTable,
   LibraryFileTable,
+  SharedItemTable,
   VideoMetadataTable,
   ViewerHiddenFileTable,
   ViewerHiddenPersonTable,
 } from '../db/schema.js';
 import { clearScopeCache } from '../authz/shared-access.js';
 import { resolveAssetPath } from './media-path.js';
-import { removeFromIndexes, withFaceLock } from '../faces/face-index.js';
-import { removeFromClipIndex } from '../clip/clip-index.js';
+import { invalidateFaceIndex, removeFromIndexes, withFaceLock } from '../faces/face-index.js';
+import { addToClipIndex, removeFromClipIndex } from '../clip/clip-index.js';
 import { refreshPeople } from '../faces/people.js';
 import { getCachedSystemSettings } from './settings-cache.js';
 import { isRawName, rawPreviewCachePath } from './raw-pairing.js';
@@ -252,103 +253,269 @@ export async function deleteRawPreviews(fileIds: string[]): Promise<void> {
   }
 }
 
-// Add (file, album) / (file, library) links that do not exist yet.
-async function copyLinks(fromFileId: string, toFileId: string): Promise<void> {
-  const albums = await db
+// ---------- Camera RAW+JPEG pairs (utils/raw-pairing.ts) ----------
+//
+// When a pair forms or splits, the photo-level data moves from one file row to
+// the other instead of being deleted: faces (with their names, user answers and
+// rejections, which are keyed by face id), GPS, metadata, the search embedding,
+// albums, libraries, shares and per-viewer hide rules. Boxes are normalized and
+// it is the same frame, so a moved face still fits; the next detection keeps it
+// by box overlap. The database part runs in one synchronous transaction under
+// the face lock; disk cleanup and the in-memory indexes are updated after the
+// commit (RawMoveEffects).
+
+export type RawMoveEffects = {
+  // Variant and preview files to unlink once the rows are gone.
+  unlink: string[];
+  // Files whose RAW preview cache can go.
+  previewFileIds: string[];
+  // Source files that kept faces because the target already had some.
+  leftoverFaceFiles: string[];
+  facesMoved: boolean;
+  clipRemove: string[];
+  clipAdd: Array<{ fileId: string; model: string; b64: string }>;
+};
+
+export function emptyRawEffects(): RawMoveEffects {
+  return {
+    unlink: [],
+    previewFileIds: [],
+    leftoverFaceFiles: [],
+    facesMoved: false,
+    clipRemove: [],
+    clipAdd: [],
+  };
+}
+
+// Tasks that decode a RAW through its cached preview.
+const PREVIEW_TASKS = ['encode_thumbnail', 'encode_optimised', 'detect_faces', 'embed_clip'] as const;
+
+/**
+ * Drop the cached RAW preview (5-10 MB) of RAW files whose decode tasks are
+ * all done (succeeded or skipped). The worker makes it again on demand, for
+ * example for a re-encode. Called when a task finishes.
+ */
+export async function dropRawPreviewsIfDone(fileIds: string[]): Promise<void> {
+  const done: string[] = [];
+  for (const fileId of new Set(fileIds)) {
+    const file = db
+      .select({ name: FileTable.name })
+      .from(FileTable)
+      .where(eq(FileTable.id, fileId))
+      .get();
+    if (!file || !isRawName(file.name)) continue;
+    const open = db
+      .select({ one: sql`1` })
+      .from(FileTaskTable)
+      .where(
+        and(
+          eq(FileTaskTable.fileId, fileId),
+          inArray(FileTaskTable.type, [...PREVIEW_TASKS]),
+          sql`${FileTaskTable.status} NOT IN ('succeeded', 'skipped')`,
+        ),
+      )
+      .get();
+    if (!open) done.push(fileId);
+  }
+  await deleteRawPreviews(done);
+}
+
+// Add (file, album), (file, library), share and hide-rule links of one file
+// to another, skipping the ones it already has. Synchronous.
+function copyLinksSync(fromFileId: string, toFileId: string): void {
+  const haveAlbums = new Set(
+    db
+      .select({ albumId: AlbumFileTable.albumId })
+      .from(AlbumFileTable)
+      .where(eq(AlbumFileTable.fileId, toFileId))
+      .all()
+      .map((r) => r.albumId),
+  );
+  const albums = db
     .select({ albumId: AlbumFileTable.albumId })
     .from(AlbumFileTable)
-    .where(eq(AlbumFileTable.fileId, fromFileId));
-  const haveAlbums = new Set(
-    (
-      await db
-        .select({ albumId: AlbumFileTable.albumId })
-        .from(AlbumFileTable)
-        .where(eq(AlbumFileTable.fileId, toFileId))
-    ).map((r) => r.albumId),
-  );
-  const newAlbums = [...new Set(albums.map((a) => a.albumId))].filter((a) => !haveAlbums.has(a));
-  if (newAlbums.length) {
-    await db
-      .insert(AlbumFileTable)
-      .values(newAlbums.map((albumId) => ({ albumId, fileId: toFileId })));
+    .where(eq(AlbumFileTable.fileId, fromFileId))
+    .all();
+  for (const albumId of new Set(albums.map((a) => a.albumId))) {
+    if (haveAlbums.has(albumId)) continue;
+    db.insert(AlbumFileTable).values({ albumId, fileId: toFileId }).run();
   }
 
-  const libs = await db
+  const haveLibs = new Set(
+    db
+      .select({ libraryId: LibraryFileTable.libraryId })
+      .from(LibraryFileTable)
+      .where(eq(LibraryFileTable.fileId, toFileId))
+      .all()
+      .map((r) => r.libraryId),
+  );
+  const libs = db
     .select({ libraryId: LibraryFileTable.libraryId })
     .from(LibraryFileTable)
-    .where(and(eq(LibraryFileTable.fileId, fromFileId), isNull(LibraryFileTable.deletedAt)));
-  const haveLibs = new Set(
-    (
-      await db
-        .select({ libraryId: LibraryFileTable.libraryId })
-        .from(LibraryFileTable)
-        .where(eq(LibraryFileTable.fileId, toFileId))
-    ).map((r) => r.libraryId),
-  );
-  const newLibs = [...new Set(libs.map((l) => l.libraryId))].filter((l) => !haveLibs.has(l));
-  if (newLibs.length) {
-    await db
-      .insert(LibraryFileTable)
-      .values(newLibs.map((libraryId) => ({ libraryId, fileId: toFileId })));
+    .where(and(eq(LibraryFileTable.fileId, fromFileId), isNull(LibraryFileTable.deletedAt)))
+    .all();
+  for (const libraryId of new Set(libs.map((l) => l.libraryId))) {
+    if (haveLibs.has(libraryId)) continue;
+    db.insert(LibraryFileTable).values({ libraryId, fileId: toFileId }).run();
   }
 
   // Per-viewer hide rules follow the photo.
-  const rules = await db
+  const rules = db
     .select({ viewerUserId: ViewerHiddenFileTable.viewerUserId })
     .from(ViewerHiddenFileTable)
-    .where(eq(ViewerHiddenFileTable.fileId, fromFileId));
-  if (rules.length) {
-    await insertViewerHiddenFiles(
-      rules.map((r) => ({ viewerUserId: r.viewerUserId, fileId: toFileId })),
-    );
+    .where(eq(ViewerHiddenFileTable.fileId, fromFileId))
+    .all();
+  for (const r of rules) {
+    db.insert(ViewerHiddenFileTable)
+      .values({ viewerUserId: r.viewerUserId, fileId: toFileId })
+      .onConflictDoNothing()
+      .run();
   }
+
+  // Direct shares of the file move; one the target already has is dropped.
+  const shares = db
+    .select()
+    .from(SharedItemTable)
+    .where(and(eq(SharedItemTable.sourceType, 'file'), eq(SharedItemTable.sourceId, fromFileId)))
+    .all();
+  if (shares.length) {
+    const have = db
+      .select()
+      .from(SharedItemTable)
+      .where(and(eq(SharedItemTable.sourceType, 'file'), eq(SharedItemTable.sourceId, toFileId)))
+      .all();
+    for (const s of shares) {
+      const dupe = have.some(
+        (h) => h.shareType === s.shareType && h.sharedToUserId === s.sharedToUserId,
+      );
+      if (dupe) db.delete(SharedItemTable).where(eq(SharedItemTable.id, s.id)).run();
+      else
+        db.update(SharedItemTable)
+          .set({ sourceId: toFileId, updatedAt: new Date().toISOString() })
+          .where(eq(SharedItemTable.id, s.id))
+          .run();
+    }
+  }
+
+  db.update(AlbumTable).set({ cover: toFileId }).where(eq(AlbumTable.cover, fromFileId)).run();
+}
+
+// Move the derived photo data of one file to another that has none of that
+// kind yet. Synchronous; the caller holds the face lock and a transaction.
+function moveFileDataSync(fromId: string, toId: string, fx: RawMoveEffects): void {
+  const has = (table: typeof FaceTable | typeof GeoLocationTable | typeof ImageMetadataTable, id: string) =>
+    !!db.select({ one: sql`1` }).from(table).where(eq(table.fileId, id)).limit(1).get();
+
+  if (has(FaceTable, fromId)) {
+    if (!has(FaceTable, toId)) {
+      db.update(FaceTable)
+        .set({ fileId: toId, updatedAt: new Date().toISOString() })
+        .where(eq(FaceTable.fileId, fromId))
+        .run();
+      fx.facesMoved = true;
+    } else {
+      fx.leftoverFaceFiles.push(fromId);
+    }
+  }
+  if (!has(GeoLocationTable, toId)) {
+    db.update(GeoLocationTable).set({ fileId: toId }).where(eq(GeoLocationTable.fileId, fromId)).run();
+  }
+  if (!has(ImageMetadataTable, toId)) {
+    const moved = db
+      .update(ImageMetadataTable)
+      .set({ fileId: toId })
+      .where(eq(ImageMetadataTable.fileId, fromId))
+      .returning({ takenAt: ImageMetadataTable.takenAt })
+      .all();
+    if (moved[0]) {
+      db.update(FileTable).set({ takenAt: moved[0].takenAt }).where(eq(FileTable.id, toId)).run();
+    }
+  }
+  const emb = db.select().from(FileEmbeddingTable).where(eq(FileEmbeddingTable.fileId, fromId)).get();
+  const toEmb = db
+    .select({ one: sql`1` })
+    .from(FileEmbeddingTable)
+    .where(eq(FileEmbeddingTable.fileId, toId))
+    .get();
+  if (emb && !toEmb) {
+    db.update(FileEmbeddingTable)
+      .set({ fileId: toId })
+      .where(eq(FileEmbeddingTable.fileId, fromId))
+      .run();
+    fx.clipRemove.push(fromId);
+    fx.clipAdd.push({ fileId: toId, model: emb.model, b64: emb.vec.toString('base64') });
+  }
+  copyLinksSync(fromId, toId);
 }
 
 /**
- * A RAW-only photo got a JPEG partner (files.create / uploads linked them).
- * Keep the RAW row as the hidden companion and drop everything that made it a
- * photo of its own: variants, metadata, GPS, faces, embedding, tasks, library
- * and album links. Its manual album links and hide rules move to the photo.
+ * A RAW-only photo got a JPEG partner. Synchronous, inside the caller's
+ * transaction: move its photo data to the JPEG (moveFileDataSync), then drop
+ * what made it a photo of its own (variants, tasks, links, rules). Also used by
+ * the reconcile pass for a companion that still holds such rows.
  */
-export async function demoteRawFiles(primaryOf: Map<string, string>, rawIds: string[]): Promise<void> {
-  if (!rawIds.length) return;
+export function demoteRawFilesSync(
+  primaryOf: Map<string, string>,
+  rawIds: string[],
+  fx: RawMoveEffects,
+): void {
   for (const rawId of rawIds) {
     const photoId = primaryOf.get(rawId);
     if (!photoId) continue;
-    await copyLinks(rawId, photoId);
-    await db.update(AlbumTable).set({ cover: photoId }).where(eq(AlbumTable.cover, rawId));
-  }
+    moveFileDataSync(rawId, photoId, fx);
 
-  const variantRows = await db
-    .select({ fileId: FileVariantTable.fileId })
-    .from(FileVariantTable)
-    .where(inArray(FileVariantTable.originalFileId, rawIds));
-  const variantFileIds = variantRows.map((r) => r.fileId);
-  await deleteVariantFilesFromDisk(rawIds);
-  await deleteRawPreviews(rawIds);
-  await db.delete(VideoMetadataTable).where(inArray(VideoMetadataTable.fileId, rawIds));
-  await db.delete(ImageMetadataTable).where(inArray(ImageMetadataTable.fileId, rawIds));
-  await db.delete(GeoLocationTable).where(inArray(GeoLocationTable.fileId, rawIds));
-  await removeFacesForFiles(rawIds, false);
-  await db.delete(FileEmbeddingTable).where(inArray(FileEmbeddingTable.fileId, rawIds));
-  removeFromClipIndex(rawIds);
-  await db.delete(AlbumFileTable).where(inArray(AlbumFileTable.fileId, rawIds));
-  await db.delete(LibraryFileTable).where(inArray(LibraryFileTable.fileId, rawIds));
-  await db.delete(FileTaskTable).where(inArray(FileTaskTable.fileId, rawIds));
-  await db.delete(FileVariantTable).where(inArray(FileVariantTable.originalFileId, rawIds));
-  if (variantFileIds.length) {
-    await db.delete(FileTable).where(inArray(FileTable.id, variantFileIds));
+    const variants = db
+      .select({ fileId: FileVariantTable.fileId, dir: FileTable.dir, name: FileTable.name })
+      .from(FileVariantTable)
+      .innerJoin(FileTable, eq(FileTable.id, FileVariantTable.fileId))
+      .where(eq(FileVariantTable.originalFileId, rawId))
+      .all();
+    fx.unlink.push(...variants.map((v) => path.resolve(path.join(v.dir, v.name))));
+    db.delete(FileVariantTable).where(eq(FileVariantTable.originalFileId, rawId)).run();
+    if (variants.length) {
+      db.delete(FileTable).where(inArray(FileTable.id, variants.map((v) => v.fileId))).run();
+    }
+    // What is left had a counterpart on the photo already.
+    db.delete(ImageMetadataTable).where(eq(ImageMetadataTable.fileId, rawId)).run();
+    db.delete(VideoMetadataTable).where(eq(VideoMetadataTable.fileId, rawId)).run();
+    db.delete(GeoLocationTable).where(eq(GeoLocationTable.fileId, rawId)).run();
+    if (db.select({ one: sql`1` }).from(FileEmbeddingTable).where(eq(FileEmbeddingTable.fileId, rawId)).get()) {
+      db.delete(FileEmbeddingTable).where(eq(FileEmbeddingTable.fileId, rawId)).run();
+      fx.clipRemove.push(rawId);
+    }
+    db.delete(AlbumFileTable).where(eq(AlbumFileTable.fileId, rawId)).run();
+    db.delete(LibraryFileTable).where(eq(LibraryFileTable.fileId, rawId)).run();
+    db.delete(FileTaskTable).where(eq(FileTaskTable.fileId, rawId)).run();
+    db.delete(ViewerHiddenFileTable).where(eq(ViewerHiddenFileTable.fileId, rawId)).run();
+    // Takes the RAW out of the denormalized sort column too.
+    db.update(FileTable).set({ takenAt: null }).where(eq(FileTable.id, rawId)).run();
+    fx.previewFileIds.push(rawId);
   }
-  // Takes the RAW out of the denormalized sort column too.
-  await db.update(FileTable).set({ takenAt: null }).where(inArray(FileTable.id, rawIds));
-  await deleteViewerRulesForFiles(rawIds);
+}
+
+/** After the commit: disk cleanup and the in-memory indexes. */
+export async function finishRawMoves(fx: RawMoveEffects): Promise<void> {
+  if (fx.facesMoved) invalidateFaceIndex();
+  removeFromClipIndex(fx.clipRemove);
+  for (const a of fx.clipAdd) addToClipIndex(a.fileId, a.model, a.b64);
+  if (fx.leftoverFaceFiles.length) await removeFacesForFiles(fx.leftoverFaceFiles, false);
+  await deleteRawPreviews(fx.previewFileIds);
+  for (const p of fx.unlink) {
+    try {
+      await fs.promises.unlink(await resolveAssetPath(p));
+    } catch {
+      // Best-effort: already gone.
+    }
+  }
   clearScopeCache();
 }
 
 /**
  * Photos in `deletedIds` whose RAW companion stays: the RAW becomes a photo of
- * its own (library and album links of the photo, new tasks). A RAW that is
- * gone from disk too is returned, for the caller to delete with the photo.
+ * its own and takes over the photo's faces, GPS, metadata, embedding, albums,
+ * libraries, shares and hide rules (so a viewer who has a person hidden never
+ * sees it), plus new tasks. A RAW that is gone from disk too is returned, for
+ * the caller to delete with the photo.
  */
 async function promoteRawCompanions(deletedIds: string[]): Promise<string[]> {
   const deleting = new Set(deletedIds);
@@ -367,6 +534,7 @@ async function promoteRawCompanions(deletedIds: string[]): Promise<string[]> {
     );
   }
   const gone: string[] = [];
+  const keep: Array<{ photoId: string; rawId: string }> = [];
   for (const p of pairs) {
     const rawId = p.rawFileId!;
     if (deleting.has(rawId)) continue;
@@ -386,11 +554,108 @@ async function promoteRawCompanions(deletedIds: string[]): Promise<string[]> {
         continue;
       }
     }
-    await db.update(FileTable).set({ rawFileId: null }).where(eq(FileTable.id, p.id));
-    await copyLinks(p.id, rawId);
-    await db.insert(FileTaskTable).values(fileTaskRows(rawId, 'image')).onConflictDoNothing();
+    keep.push({ photoId: p.id, rawId });
+  }
+  if (keep.length) {
+    const fx = emptyRawEffects();
+    await withFaceLock(async () =>
+      db.transaction(() => {
+        for (const { photoId, rawId } of keep) {
+          db.update(FileTable).set({ rawFileId: null }).where(eq(FileTable.id, photoId)).run();
+          moveFileDataSync(photoId, rawId, fx);
+          db.insert(FileTaskTable).values(fileTaskRows(rawId, 'image')).onConflictDoNothing().run();
+        }
+      }),
+    );
+    await finishRawMoves(fx);
   }
   return gone;
+}
+
+/**
+ * Repair RAW pairs left half-done (a crash, or a worker write that raced a
+ * demotion): a companion that still holds library, album, task, variant,
+ * metadata, GPS, face, embedding, share or hide-rule rows is demoted again,
+ * and a photo of a pair with no library link gets the link of a file in the
+ * same folder, its folder album and its tasks. Idempotent; the worker calls it
+ * on boot.
+ */
+export async function reconcileRawPairs(): Promise<{ demoted: number; relinked: number }> {
+  const pairs = await db
+    .select({ photoId: FileTable.id, rawId: FileTable.rawFileId, dir: FileTable.dir })
+    .from(FileTable)
+    .where(isNotNull(FileTable.rawFileId));
+  if (pairs.length === 0) return { demoted: 0, relinked: 0 };
+
+  const rawIds = pairs.map((p) => p.rawId!);
+  const dirty = new Set<string>();
+  const probes: Array<(ids: string[]) => Array<{ id: string }>> = [
+    (ids) => db.selectDistinct({ id: LibraryFileTable.fileId }).from(LibraryFileTable).where(inArray(LibraryFileTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: AlbumFileTable.fileId }).from(AlbumFileTable).where(inArray(AlbumFileTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: FileTaskTable.fileId }).from(FileTaskTable).where(inArray(FileTaskTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: FileVariantTable.originalFileId }).from(FileVariantTable).where(inArray(FileVariantTable.originalFileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: ImageMetadataTable.fileId }).from(ImageMetadataTable).where(inArray(ImageMetadataTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: GeoLocationTable.fileId }).from(GeoLocationTable).where(inArray(GeoLocationTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: FaceTable.fileId }).from(FaceTable).where(inArray(FaceTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: FileEmbeddingTable.fileId }).from(FileEmbeddingTable).where(inArray(FileEmbeddingTable.fileId, ids)).all(),
+    (ids) => db.selectDistinct({ id: ViewerHiddenFileTable.fileId }).from(ViewerHiddenFileTable).where(inArray(ViewerHiddenFileTable.fileId, ids)).all(),
+    (ids) =>
+      db
+        .selectDistinct({ id: SharedItemTable.sourceId })
+        .from(SharedItemTable)
+        .where(and(eq(SharedItemTable.sourceType, 'file'), inArray(SharedItemTable.sourceId, ids)))
+        .all(),
+  ];
+  for (const probe of probes) {
+    for (let i = 0; i < rawIds.length; i += 500) {
+      for (const r of probe(rawIds.slice(i, i + 500))) dirty.add(r.id);
+    }
+  }
+
+  const fx = emptyRawEffects();
+  const primaryOf = new Map(pairs.map((p) => [p.rawId!, p.photoId]));
+  let relinked = 0;
+  await withFaceLock(async () =>
+    db.transaction(() => {
+      demoteRawFilesSync(primaryOf, [...dirty], fx);
+      for (const p of pairs) {
+        const linked = db
+          .select({ one: sql`1` })
+          .from(LibraryFileTable)
+          .where(eq(LibraryFileTable.fileId, p.photoId))
+          .get();
+        if (linked) continue;
+        const sibling = db
+          .select({ libraryId: LibraryFileTable.libraryId })
+          .from(LibraryFileTable)
+          .innerJoin(FileTable, eq(FileTable.id, LibraryFileTable.fileId))
+          .where(and(eq(FileTable.dir, p.dir), isNull(LibraryFileTable.deletedAt)))
+          .limit(1)
+          .get();
+        if (!sibling) continue;
+        db.insert(LibraryFileTable).values({ libraryId: sibling.libraryId, fileId: p.photoId }).run();
+        const album = db
+          .select({ id: AlbumTable.id })
+          .from(AlbumTable)
+          .where(and(eq(AlbumTable.libraryId, sibling.libraryId), eq(AlbumTable.dir, p.dir)))
+          .get();
+        if (
+          album &&
+          !db
+            .select({ one: sql`1` })
+            .from(AlbumFileTable)
+            .where(and(eq(AlbumFileTable.albumId, album.id), eq(AlbumFileTable.fileId, p.photoId)))
+            .get()
+        ) {
+          db.insert(AlbumFileTable).values({ albumId: album.id, fileId: p.photoId }).run();
+        }
+        db.insert(FileTaskTable).values(fileTaskRows(p.photoId, 'image')).onConflictDoNothing().run();
+        relinked++;
+      }
+    }),
+  );
+  await finishRawMoves(fx);
+  return { demoted: dirty.size, relinked };
 }
 
 export async function deleteFilesWithCascade(fileIds: string[]) {

@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import path from 'node:path';
 import { TRPCError } from '@trpc/server';
 import { type SQL, and, eq, inArray, isNotNull, isNull, ne, notInArray, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
 import {
   type SessionLike,
@@ -63,6 +64,7 @@ export const duplicatesRouter = router({
       .groupBy(FileTable.contentHash)
       .having(sql`COUNT(*) > 1`);
 
+    const rawFile = alias(FileTable, 'raw_file');
     const files = await db
       .select({
         id: FileTable.id,
@@ -73,12 +75,15 @@ export const duplicatesRouter = router({
         contentHash: FileTable.contentHash,
         takenAt: FileTable.takenAt,
         createdAt: FileTable.createdAt,
+        // A RAW companion stays on disk and becomes its own photo on delete.
+        rawName: rawFile.name,
         // Resolution, for the side-by-side compare in Settings > Duplicates.
         width: ImageMetadataTable.width,
         height: ImageMetadataTable.height,
       })
       .from(FileTable)
       .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+      .leftJoin(rawFile, eq(rawFile.id, FileTable.rawFileId))
       .where(and(inArray(FileTable.contentHash, dupeHashSubquery), filter))
       .orderBy(FileTable.contentHash, FileTable.createdAt);
 
@@ -104,7 +109,12 @@ export const duplicatesRouter = router({
         const scope = await ownedScope(userId, session);
 
         const [file] = await db
-          .select({ dir: FileTable.dir, name: FileTable.name, contentHash: FileTable.contentHash })
+          .select({
+            dir: FileTable.dir,
+            name: FileTable.name,
+            contentHash: FileTable.contentHash,
+            rawFileId: FileTable.rawFileId,
+          })
           .from(FileTable)
           .where(and(sql`${FileTable.id} = ${input.fileId}`, scope.filter))
           .limit(1);
@@ -159,7 +169,11 @@ export const duplicatesRouter = router({
           // Best-effort: already deleted or path unresolvable
         }
 
-        await deleteFilesWithCascade([input.fileId]);
+        // A RAW+JPEG pair: never delete the RAW, it can be the only copy of
+        // that file. deleteFilesWithCascade promotes it to a photo of its own,
+        // so the user sees it and decides (the confirm text says so).
+        const ids = [input.fileId];
+        await deleteFilesWithCascade(ids);
         return { ok: true } as const;
       });
       deleteChain = run.catch(() => {});

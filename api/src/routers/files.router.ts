@@ -11,7 +11,9 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { basename, extname } from "node:path";
+import * as fs from "node:fs";
+import path, { basename, extname } from "node:path";
+import { resolveAssetPath } from "../utils/media-path.js";
 import { z } from "zod";
 import {
   buildFileAccessFilter,
@@ -55,13 +57,17 @@ import {
   router,
 } from "../trpc.js";
 import { createDownloadTicket } from "../utils/zip-download.js";
+import { withFaceLock } from "../faces/face-index.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 import {
   deleteFilesWithCascade,
   deleteRawPreviews,
   deleteVariantFilesFromDisk,
-  demoteRawFiles,
+  demoteRawFilesSync,
+  emptyRawEffects,
   fileTaskRows,
+  finishRawMoves,
+  reconcileRawPairs,
   removeFacesForFiles,
 } from "../utils/file-operations.js";
 import {
@@ -95,32 +101,43 @@ export const filesRouter = router({
       ),
     )
     .mutation(async ({ input }) => {
-      const inserted = await db.insert(FileTable).values(input).returning();
-
       // Camera RAW+JPEG pairs (utils/raw-pairing.ts). A new RAW next to its
       // JPEG becomes the JPEG's hidden companion: no tasks, and the
       // libraryFile/albumFile links the scanner makes next are skipped for it.
-      const pairs = linkRawPairs(inserted.map((f) => f.id));
-      const rawOfPhoto = new Map([...pairs.primaryOf].map(([raw, photo]) => [photo, raw]));
-      const addedFiles = inserted.map((f) => ({
-        ...f,
-        rawFileId: rawOfPhoto.get(f.id) ?? f.rawFileId,
-        rawCompanion: pairs.companions.has(f.id),
-      }));
+      // A new JPEG next to a RAW-only photo takes over its data (demotion).
+      // Insert, link and demote commit together, under the face lock because
+      // faces can move; disk cleanup follows the commit.
+      const fx = emptyRawEffects();
+      const addedFiles = await withFaceLock(async () =>
+        db.transaction(() => {
+          const inserted = db.insert(FileTable).values(input).returning().all();
+          const pairs = linkRawPairs(inserted.map((f) => f.id));
+          const rawOfPhoto = new Map([...pairs.primaryOf].map(([raw, photo]) => [photo, raw]));
+          const added = inserted.map((f) => ({
+            ...f,
+            rawFileId: rawOfPhoto.get(f.id) ?? f.rawFileId,
+            rawCompanion: pairs.companions.has(f.id),
+          }));
 
-      // Seed file tasks for downstream processing
-      const taskRows = addedFiles
-        .filter((f) => !f.rawCompanion)
-        .flatMap((f) => fileTaskRows(f.id, f.type));
-      for (let i = 0; i < taskRows.length; i += 500) {
-        await db.insert(FileTaskTable).values(taskRows.slice(i, i + 500));
-      }
+          // Seed file tasks for downstream processing
+          const taskRows = added
+            .filter((f) => !f.rawCompanion)
+            .flatMap((f) => fileTaskRows(f.id, f.type));
+          for (let i = 0; i < taskRows.length; i += 500) {
+            db.insert(FileTaskTable).values(taskRows.slice(i, i + 500)).run();
+          }
 
-      // A new photo took over a RAW that was a photo of its own.
-      await demoteRawFiles(pairs.primaryOf, pairs.demoted);
-
+          demoteRawFilesSync(pairs.primaryOf, pairs.demoted, fx);
+          return added;
+        }),
+      );
+      await finishRawMoves(fx);
       return addedFiles;
     }),
+
+  // Repair half-done RAW pairs (utils/file-operations.ts reconcileRawPairs).
+  // Idempotent; the worker calls it on boot.
+  reconcileRawPairs: internalProcedure.mutation(() => reconcileRawPairs()),
 
   getFilesInDir: internalProcedure
     .input(z.string())
@@ -701,8 +718,19 @@ export const filesRouter = router({
       } = { originalFileId, thumbnail: null, optimised: null, thumbnail_lg: null };
 
       // The file became a RAW companion while the worker encoded it: a
-      // companion has no variants, so it can never show on its own.
-      if (isRawCompanion(originalFileId)) return result;
+      // companion has no variants, so it can never show on its own. Remove
+      // what the worker just wrote, and the RAW preview it may have cached.
+      if (isRawCompanion(originalFileId)) {
+        for (const v of variants) {
+          try {
+            await fs.promises.unlink(await resolveAssetPath(path.resolve(path.join(v.dir, v.name))));
+          } catch {
+            // Best-effort: already gone.
+          }
+        }
+        await deleteRawPreviews([originalFileId]);
+        return result;
+      }
 
       for (const v of variants) {
         const [res] = await db

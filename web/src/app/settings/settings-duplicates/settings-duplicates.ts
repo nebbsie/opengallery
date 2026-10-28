@@ -30,6 +30,8 @@ type DupeFile = {
   createdAt: string;
   width?: number | null;
   height?: number | null;
+  // RAW companion of a RAW+JPEG pair; kept on disk, shown as its own photo.
+  rawName?: string | null;
 };
 
 type DupeGroup = {
@@ -174,11 +176,15 @@ export class SettingsDuplicates {
     const others = group.files.filter((f) => f.id !== keep.id);
     if (others.length === 0) return;
     const what = others.length === 1 ? 'the other copy' : `the other ${others.length} copies`;
+    const raws = others.map((f) => f.rawName).filter((n): n is string => !!n);
+    const rawNote = raws.length
+      ? ` ${raws.length === 1 ? 'Its RAW file' : 'Their RAW files'} (${raws.join(', ')}) ${raws.length === 1 ? 'is' : 'are'} kept and will show as ${raws.length === 1 ? 'a photo' : 'photos'} of ${raws.length === 1 ? 'its' : 'their'} own.`
+      : '';
     this.dialog
       .open(Confirm, {
         context: {
           type: 'danger',
-          message: `Keep ${keep.dir}/${keep.name} and permanently delete ${what} from disk? You cannot undo this.`,
+          message: `Keep ${keep.dir}/${keep.name} and permanently delete ${what} from disk?${rawNote} You cannot undo this.`,
         },
       })
       .closed$.subscribe((confirmed: boolean) => {

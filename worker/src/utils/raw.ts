@@ -21,8 +21,9 @@ const EXIFTOOL_TIMEOUT_MS = 2 * 60 * 1000;
 const EXIFTOOL_MAX_BYTES = 256 * 1024 * 1024;
 const PREVIEW_QUALITY = 92;
 
-// Thrown when a RAW has no embedded preview (or exiftool is missing). The
-// callers mark the task skipped: retrying cannot help.
+// Thrown only when exiftool read the RAW without an error and found tags but
+// no embedded preview. The callers mark the task skipped: retrying cannot
+// help. Read errors are plain Errors, so the task is retried.
 export class NoRawPreviewError extends Error {
   constructor(message: string) {
     super(message);
@@ -52,6 +53,8 @@ export type RawTags = {
 };
 
 const TAG_ARGS = [
+  // The first warning, to tell a short read from a RAW without a preview.
+  '-Warning',
   // The RAW's own IFD0. A RAW can hold more than one Orientation tag (the
   // embedded JPEG has its own); the main IFD0 is the camera's answer.
   '-IFD0:Orientation',
@@ -72,10 +75,15 @@ const TAG_ARGS = [
   '-Composite:ImageSize',
 ];
 
+// Any failure here (exit code, an "Error:" line, no tags at all) is a plain,
+// retryable Error: the media drive sits on a flaky USB bridge, and a read error
+// must never be taken for "this RAW has no preview" (which skips the photo for
+// good). Minor warnings are ignored (-m).
 function runExiftool(args: string[]): Promise<RawTags> {
   return new Promise((resolve, reject) => {
-    const child = spawn('exiftool', args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn('exiftool', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
+    let stderr = '';
     let bytes = 0;
     let settled = false;
     const finish = (err: Error | null, tags?: RawTags) => {
@@ -98,17 +106,45 @@ function runExiftool(args: string[]): Promise<RawTags> {
       }
       chunks.push(d);
     });
+    child.stderr.on('data', (d: Buffer) => {
+      // Keep only the tail for the error message.
+      stderr = (stderr + d.toString('utf8')).slice(-2000);
+    });
     child.on('error', (e) => {
       const missing = (e as NodeJS.ErrnoException).code === 'ENOENT';
-      finish(missing ? new NoRawPreviewError('exiftool is not installed') : e);
+      finish(missing ? new Error('exiftool is not installed') : e);
     });
-    child.on('close', () => {
-      // exiftool exits non-zero when it cannot read the file; the JSON is then
-      // empty and we report no tags.
+    child.on('close', (code) => {
+      const detail = stderr.trim().split('\n').slice(-3).join(' | ');
+      if (code !== 0) {
+        finish(new Error(`exiftool exited with code ${code}${detail ? `: ${detail}` : ''}`));
+        return;
+      }
+      if (/^Error/m.test(stderr)) {
+        finish(new Error(`exiftool: ${detail}`));
+        return;
+      }
       try {
         const text = Buffer.concat(chunks).toString('utf8').trim();
-        const parsed = text ? (JSON.parse(text) as RawTags[]) : [];
-        finish(null, parsed[0] ?? {});
+        const parsed = text
+          ? (JSON.parse(text) as Array<RawTags & { SourceFile?: string; Warning?: string }>)
+          : [];
+        const first = parsed[0];
+        // A short read shows up as a warning ("Error reading value for ...
+        // JpgFromRaw"), not as an exit code.
+        const warning = typeof first?.Warning === 'string' ? first.Warning : '';
+        if (/error reading|truncated|unexpected end|read error/i.test(warning)) {
+          finish(new Error(`exiftool: ${warning}`));
+          return;
+        }
+        // A readable RAW always has the camera make or model.
+        if (!first || (!first.Make && !first.Model)) {
+          finish(new Error(`exiftool returned no camera tags${warning ? `: ${warning}` : ''}`));
+          return;
+        }
+        delete first.SourceFile;
+        delete first.Warning;
+        finish(null, first);
       } catch (e) {
         finish(e as Error);
       }

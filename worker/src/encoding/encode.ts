@@ -203,6 +203,13 @@ async function encodeImage(
     }
   }
 
+  // Tags first, before any variant is saved: for a RAW a read error (flaky USB
+  // drive) throws here, so the task fails and is retried. Once the variants
+  // exist the encode is not run again, and the photo would keep no date.
+  const exif = await getExifInfo(originalPath);
+  timings['exif'] = Date.now() - stepStart;
+  stepStart = Date.now();
+
   // Extract metadata (width/height) early using sharp. Tolerant: a corrupt
   // header shouldn't hard-fail here before the thumbnail step gets a chance to
   // recover the image via ffmpeg, so fall back to unknown dimensions.
@@ -403,8 +410,7 @@ async function encodeImage(
     fNumber,
     width: rawWidth,
     height: rawHeight,
-  } = await getExifInfo(originalPath);
-  timings['exif'] = Date.now() - stepStart;
+  } = exif;
   // A RAW's preview can be smaller than the sensor: store the real size.
   if (isRaw && rawWidth && rawHeight) {
     width = rawWidth;

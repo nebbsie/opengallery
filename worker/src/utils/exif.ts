@@ -103,12 +103,9 @@ function rawExifInfo(tags: RawTags): ExifInfo {
 export async function getExifInfo(path: string): Promise<ExifInfo> {
   if (isRawName(path)) {
     // exifr cannot read most RAW formats (RW2, CR3); exiftool reads them all.
-    try {
-      return rawExifInfo(await readRawTags(path));
-    } catch (error) {
-      logger.debug('RAW EXIF read failed', { path, error });
-      return { lat: undefined, lon: undefined, takenAt: undefined };
-    }
+    // A read error is thrown, not swallowed: the callers (encode, GPS) retry
+    // instead of saving the photo without its date or place.
+    return rawExifInfo(await readRawTags(path));
   }
   try {
     let takenAt: Date | undefined;

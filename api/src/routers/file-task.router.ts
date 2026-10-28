@@ -6,6 +6,7 @@ import { db } from "../db/index.js";
 import { FileTable, FileTaskTable, FileVariantTable } from "../db/schema.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { resolveAssetPath } from "../utils/media-path.js";
+import { dropRawPreviewsIfDone } from "../utils/file-operations.js";
 import {
   adminProcedure,
   internalProcedure,
@@ -340,6 +341,9 @@ export const fileTaskRouter = router({
         });
       }
 
+      if (row && (input.status === "succeeded" || input.status === "skipped")) {
+        void dropRawPreviewsIfDone([input.fileId]).catch(() => undefined);
+      }
       return row ?? null;
     }),
 
@@ -486,6 +490,11 @@ export const fileTaskRouter = router({
         });
       }
 
+      // RAW previews are cached only while a decode task still needs them.
+      const finished = input
+        .filter((i) => i.status === "succeeded" || i.status === "skipped")
+        .map((i) => i.fileId);
+      if (finished.length) void dropRawPreviewsIfDone(finished).catch(() => undefined);
       return results;
     }),
 

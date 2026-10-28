@@ -4,7 +4,14 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
 import { logger } from '../utils/logger.js';
-import { ALLOWED_EXTENSIONS, type MediaType, getMediaType, rawMime } from '../utils/media-types.js';
+import {
+  ALLOWED_EXTENSIONS,
+  type MediaType,
+  getMediaType,
+  photoStems,
+  rawHasPhotoPartner,
+  rawMime,
+} from '../utils/media-types.js';
 import { getFullPath, toHostPath } from '../utils/paths.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
 import { throttleIo } from '../utils/io-throttle.js';
@@ -231,13 +238,17 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
     logger.info(`Adding ${newFiles.length} new files for folder: ${folder}`);
 
-    // Compute content hashes for new files (for deduplication)
+    // Compute content hashes for new files (for deduplication). A RAW with a
+    // photo of the same name in this folder is not hashed (photoStems).
+    const stems = photoStems(files.map((f) => f.name));
     const filesToAdd: CreateFilesInput = await Promise.all(
       newFiles.map(async (f) => {
         const filePath = join(folder, f.name);
         let contentHash: string | undefined;
         try {
-          contentHash = await throttleIo(() => computeFileHash(filePath));
+          if (!rawHasPhotoPartner(f.name, stems)) {
+            contentHash = await throttleIo(() => computeFileHash(filePath));
+          }
         } catch (err) {
           logger.warn(`Failed to compute hash for ${filePath}: ${err}`);
         }

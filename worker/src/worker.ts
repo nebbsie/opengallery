@@ -49,6 +49,14 @@ export function runWorker(): void {
       logger.warn('[worker] revive dead encode tasks failed', e as Error);
     }
 
+    // Repair camera RAW pairs left half-done by a crash (API files.reconcileRawPairs).
+    try {
+      const { demoted, relinked } = await trpc.files.reconcileRawPairs.mutate();
+      if (demoted || relinked) logger.info(`[worker] RAW pairs: demoted=${demoted} relinked=${relinked}`);
+    } catch (e) {
+      logger.warn('[worker] RAW pair reconcile failed', e as Error);
+    }
+
     while (!stopFlag) {
       try {
         const files = await trpc.fileTask.leaseFilesForEncode.mutate();

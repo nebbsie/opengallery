@@ -5,7 +5,15 @@ import { existsSync, statSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, extname } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
-import { getMediaType, isSupportedFile, rawMime, type MediaType } from '../utils/media-types.js';
+import {
+  getMediaType,
+  isRawName,
+  isSupportedFile,
+  photoStems,
+  rawHasPhotoPartner,
+  rawMime,
+  type MediaType,
+} from '../utils/media-types.js';
 import { toContainerPath, toHostPath } from '../utils/paths.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
@@ -242,10 +250,14 @@ export class FileWatcherService {
       const fileExists = existingFiles.some((f) => f.name === name);
 
       if (!fileExists) {
-        // Compute content hash for deduplication
+        // Compute content hash for deduplication. A RAW with a photo of the
+        // same name next to it is not hashed (media-types.ts photoStems).
         let contentHash: string | undefined;
         try {
-          contentHash = await computeFileHash(filePath);
+          const partner =
+            isRawName(name) &&
+            rawHasPhotoPartner(name, photoStems(await readdir(dirname(filePath)).catch(() => [])));
+          if (!partner) contentHash = await computeFileHash(filePath);
         } catch (err) {
           this.logger.warn(`Failed to compute hash for ${filePath}: ${err}`);
         }

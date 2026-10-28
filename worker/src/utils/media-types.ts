@@ -48,3 +48,22 @@ export function isSupportedFile(name: string): boolean {
   const ext = extname(name).slice(1).toLowerCase();
   return ALLOWED_EXTENSIONS.has(ext);
 }
+
+// Base names (lowercase, no extension) of the non-RAW photos in a folder
+// listing. A RAW whose base name is in it pairs with that photo and becomes a
+// hidden companion (API utils/raw-pairing.ts), so it is never hashed: its hash
+// is not used, and hashing every RAW reads gigabytes off the media drive.
+export function photoStems(names: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const n of names) {
+    const ext = extname(n).slice(1).toLowerCase();
+    if (IMAGE_EXTENSIONS.has(ext)) out.add(n.slice(0, n.length - ext.length - 1).toLowerCase());
+  }
+  return out;
+}
+
+export function rawHasPhotoPartner(name: string, stems: Set<string>): boolean {
+  if (!isRawName(name)) return false;
+  const ext = extname(name);
+  return stems.has(name.slice(0, name.length - ext.length).toLowerCase());
+}
