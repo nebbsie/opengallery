@@ -44,7 +44,11 @@ function extractLatLonFromTags(tags: Record<string, unknown> | undefined): {
 } {
   if (!tags) return {};
 
-  const iso = (tags['com.apple.quicktime.location.ISO6709'] || tags['location']) as unknown;
+  // Apple writes com.apple.quicktime.location.ISO6709; Android writes
+  // location, and Samsung often location-eng (a language-tagged copy).
+  const iso = (tags['com.apple.quicktime.location.ISO6709'] ||
+    tags['location'] ||
+    tags['location-eng']) as unknown;
   if (typeof iso === 'string') {
     const r = parseIso6709(iso);
     if (r.lat != null && r.lon != null) return r;

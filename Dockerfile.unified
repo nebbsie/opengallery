@@ -109,9 +109,12 @@ FROM node:22-slim AS runner
 
 # Install runtime dependencies (Debian/glibc). python3 runs the face-service venv;
 # libgomp1 (onnxruntime) + libglib2.0-0 (opencv-headless) are its shared-lib deps.
+# libva + mesa-va-drivers let ffmpeg use AMD/Intel GPUs through VAAPI
+# (/dev/dri); without them h264_vaapi aborts on a missing libva-drm.so.2.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       supervisor nginx wget xz-utils ca-certificates \
       python3 libgomp1 libglib2.0-0 \
+      libva2 libva-drm2 mesa-va-drivers vainfo \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FFmpeg with NVENC/AMD support using the BtbN glibc static build.

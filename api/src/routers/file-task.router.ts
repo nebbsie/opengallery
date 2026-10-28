@@ -83,6 +83,24 @@ export const fileTaskRouter = router({
     const remainingByType = new Map<string, number>();
     for (const r of remainingRows) remainingByType.set(r.type, Number(r.count));
 
+    // Throughput per type over the last ETA_WINDOW_MIN minutes (any finished
+    // task: succeeded, failed or skipped), for the time-remaining estimate.
+    const ETA_WINDOW_MIN = 15;
+    const since = new Date(Date.now() - ETA_WINDOW_MIN * 60_000).toISOString();
+    const recentRows = await db
+      .select({ type: displayType, count: sql<number>`COUNT(*)` })
+      .from(FileTaskTable)
+      .innerJoin(FileTable, eq(FileTable.id, FileTaskTable.fileId))
+      .where(
+        and(
+          inArray(FileTaskTable.status, ["succeeded", "failed", "skipped"]),
+          sql`${FileTaskTable.finishedAt} >= ${since}`,
+        ),
+      )
+      .groupBy(displayType);
+    const perMinuteByType = new Map<string, number>();
+    for (const r of recentRows) perMinuteByType.set(r.type, Number(r.count) / ETA_WINDOW_MIN);
+
     type Row = {
       type: string;
       total: number;
@@ -92,6 +110,10 @@ export const fileTaskRouter = router({
       failed: number;
       skipped: number;
       remaining: number;
+      // Tasks finished per minute recently, and the time left at that rate
+      // (null when nothing finished recently, so no honest estimate exists).
+      perMinute: number;
+      etaSeconds: number | null;
     };
     const byType = new Map<string, Row>();
     const empty = (type: string): Row => ({
@@ -103,6 +125,8 @@ export const fileTaskRouter = router({
       failed: 0,
       skipped: 0,
       remaining: remainingByType.get(type) ?? 0,
+      perMinute: perMinuteByType.get(type) ?? 0,
+      etaSeconds: null,
     });
 
     for (const r of byStatus) {
@@ -117,6 +141,11 @@ export const fileTaskRouter = router({
       byType.set(r.type, row);
     }
 
+    for (const row of byType.values()) {
+      if (row.remaining > 0 && row.perMinute > 0) {
+        row.etaSeconds = Math.round((row.remaining / row.perMinute) * 60);
+      }
+    }
     const types = [...byType.values()].sort((a, b) =>
       a.type.localeCompare(b.type),
     );
@@ -129,8 +158,52 @@ export const fileTaskRouter = router({
       { total: 0, succeeded: 0, remaining: 0 },
     );
 
-    return { types, totals };
+    // Task types share the worker, so the whole queue ends when the slowest
+    // type ends.
+    const etas = types.filter((t) => t.remaining > 0).map((t) => t.etaSeconds);
+    const etaSeconds = etas.length > 0 && etas.every((e) => e !== null)
+      ? Math.max(...(etas as number[]))
+      : null;
+    return { types, totals: { ...totals, etaSeconds } };
   }),
+
+  // Admin: run failed (including dead, past the retry cap) or skipped tasks of
+  // one type again. Skipped tasks are terminal by design (e.g. no GPS in the
+  // file), but a fix to the extractor can make them worth another pass.
+  retry: adminProcedure
+    .input(
+      z.object({
+        type: z.string().min(1).max(64),
+        status: z.enum(["failed", "skipped"]),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      // encode_video is a display-only split of encode_optimised on videos.
+      const isVideoSplit = input.type === "encode_video";
+      const taskType = (isVideoSplit ? "encode_optimised" : input.type) as typeof FileTaskTable.$inferSelect.type;
+      const now = new Date().toISOString();
+      const res = await db
+        .update(FileTaskTable)
+        .set({
+          status: "pending",
+          attempts: 0,
+          startedAt: null,
+          finishedAt: null,
+          lastError: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(FileTaskTable.type, taskType),
+            eq(FileTaskTable.status, input.status),
+            input.type === "encode_optimised" || isVideoSplit
+              ? sql`${FileTaskTable.fileId} IN (SELECT ${FileTable.id} FROM ${FileTable} WHERE ${FileTable.type} = ${isVideoSplit ? "video" : "image"})`
+              : undefined,
+          ),
+        )
+        .returning({ id: FileTaskTable.id });
+      return { requeued: res.length };
+    }),
 
   setStatus: internalProcedure
     .input(
