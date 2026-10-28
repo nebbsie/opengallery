@@ -85,6 +85,33 @@ function recursiveItemCount(
   return seen.size;
 }
 
+// Totals over the distinct viewable files of an album's subtree, for the album
+// list sort: bytes, newest import (file created_at) and newest taken date.
+type FileFacts = { size: number; createdAt: string; takenAt: string | null };
+function subtreeStats(
+  albumId: string,
+  directFilesByAlbum: Map<string, Set<string>>,
+  childrenByParent: Map<string, string[]>,
+  facts: Map<string, FileFacts>,
+): { size: number; lastAddedAt: string | null; lastTakenAt: string | null } {
+  const seen = new Set<string>();
+  let size = 0;
+  let lastAddedAt: string | null = null;
+  let lastTakenAt: string | null = null;
+  for (const id of collectSubtree(albumId, childrenByParent)) {
+    for (const f of directFilesByAlbum.get(id) ?? []) {
+      if (seen.has(f)) continue;
+      seen.add(f);
+      const fact = facts.get(f);
+      if (!fact) continue;
+      size += fact.size;
+      if (!lastAddedAt || fact.createdAt > lastAddedAt) lastAddedAt = fact.createdAt;
+      if (fact.takenAt && (!lastTakenAt || fact.takenAt > lastTakenAt)) lastTakenAt = fact.takenAt;
+    }
+  }
+  return { size, lastAddedAt, lastTakenAt };
+}
+
 // Cover for an album: its own first direct image, else the first image found by
 // walking descendants breadth-first (the album's own photos win, then the nearest
 // sub-album's), else null.
@@ -288,6 +315,9 @@ export const albumRouter = router({
         return [] as Array<
           typeof AlbumTable.$inferSelect & {
             items: number;
+            size: number;
+            lastAddedAt: string | null;
+            lastTakenAt: string | null;
             cover: string | null;
             pendingTasks: number;
             canManageShares: boolean;
@@ -314,6 +344,9 @@ export const albumRouter = router({
         return [] as Array<
           (typeof rows)[number]["album"] & {
             items: number;
+            size: number;
+            lastAddedAt: string | null;
+            lastTakenAt: string | null;
             cover: string | null;
             pendingTasks: number;
             canManageShares: boolean;
@@ -344,6 +377,9 @@ export const albumRouter = router({
         .select({
           albumId: AlbumFileTable.albumId,
           fileId: AlbumFileTable.fileId,
+          size: FileTable.size,
+          createdAt: FileTable.createdAt,
+          takenAt: FileTable.takenAt,
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
@@ -362,7 +398,11 @@ export const albumRouter = router({
           ),
         );
       const directFilesByAlbum = new Map<string, Set<string>>();
+      const facts = new Map<string, FileFacts>();
       for (const r of itemRows) {
+        if (!facts.has(r.fileId)) {
+          facts.set(r.fileId, { size: r.size ?? 0, createdAt: r.createdAt, takenAt: r.takenAt });
+        }
         let set = directFilesByAlbum.get(r.albumId);
         if (!set) {
           set = new Set();
@@ -371,12 +411,14 @@ export const albumRouter = router({
         set.add(r.fileId);
       }
       const itemsByAlbum: Record<string, number> = {};
+      const statsByAlbum: Record<string, ReturnType<typeof subtreeStats>> = {};
       for (const rootId of albumIds) {
         itemsByAlbum[rootId] = recursiveItemCount(
           rootId,
           directFilesByAlbum,
           childrenByParent,
         );
+        statsByAlbum[rootId] = subtreeStats(rootId, directFilesByAlbum, childrenByParent, facts);
       }
 
       // First direct image per album, for the cover fallback that walks the
@@ -456,6 +498,10 @@ export const albumRouter = router({
       return rootRows.map((r) => ({
         ...r.album,
         items: itemsByAlbum[r.album.id] ?? 0,
+        size: statsByAlbum[r.album.id]?.size ?? 0,
+        // Newest import into the album, else when the album was made.
+        lastAddedAt: statsByAlbum[r.album.id]?.lastAddedAt ?? r.album.createdAt,
+        lastTakenAt: statsByAlbum[r.album.id]?.lastTakenAt ?? null,
         cover:
           (r.album.cover && coversOk.has(r.album.cover) ? r.album.cover : null) ??
           resolveRecursiveCover(r.album.id, firstImageByAlbum, childrenByParent),
