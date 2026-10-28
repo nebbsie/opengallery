@@ -13,6 +13,7 @@ import { internalProcedure, router } from "../trpc.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { staleRequeueSet } from "./file-task.router.js";
 import { isRawCompanion, notRawCompanion } from "../utils/raw-pairing.js";
+import { taskQueued } from "../utils/task-queue.js";
 
 // Worker side of object search: seed and lease `embed_clip` tasks, and store
 // each photo's image-text embedding.
@@ -36,17 +37,32 @@ export const clipRouter = router({
               .where(eq(LibraryFileTable.fileId, FileTable.id)),
           ),
           notRawCompanion(FileTable.id),
+          // Only files with no embed_clip task yet. Without this, every boot
+          // re-inserted (and conflicted on) a task for every original.
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(FileTaskTable)
+              .where(
+                and(
+                  eq(FileTaskTable.fileId, FileTable.id),
+                  eq(FileTaskTable.type, "embed_clip"),
+                ),
+              ),
+          ),
         ),
       );
     let seeded = 0;
-    for (let i = 0; i < originals.length; i += 500) {
-      const res = await db
-        .insert(FileTaskTable)
-        .values(originals.slice(i, i + 500).map((f) => ({ fileId: f.id, type: "embed_clip" as const })))
-        .onConflictDoNothing()
-        .returning({ id: FileTaskTable.id });
-      seeded += res.length;
-    }
+    db.transaction(() => {
+      for (let i = 0; i < originals.length; i += 500) {
+        seeded += db
+          .insert(FileTaskTable)
+          .values(originals.slice(i, i + 500).map((f) => ({ fileId: f.id, type: "embed_clip" as const })))
+          .onConflictDoNothing()
+          .returning({ id: FileTaskTable.id })
+          .all().length;
+      }
+    });
     const now = new Date().toISOString();
     const revived = await db
       .update(FileTaskTable)
@@ -84,11 +100,7 @@ export const clipRouter = router({
       .select({ fileId: FileTaskTable.fileId })
       .from(FileTaskTable)
       .where(
-        and(
-          eq(FileTaskTable.type, "embed_clip"),
-          inArray(FileTaskTable.status, ["pending", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`,
-        ),
+        and(eq(FileTaskTable.type, "embed_clip"), taskQueued),
       )
       .orderBy(sql`${FileTaskTable.updatedAt} ASC`)
       .limit(desired * 4);
@@ -102,6 +114,7 @@ export const clipRouter = router({
           eq(FileTaskTable.type, "embed_clip"),
           inArray(FileTaskTable.fileId, ids),
           inArray(FileTaskTable.status, ["pending", "failed"]),
+          sql`${FileTaskTable.attempts} < 3`,
         ),
       );
     return ids;

@@ -7,6 +7,7 @@ import { FileTable, FileTaskTable, FileVariantTable } from "../db/schema.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { resolveAssetPath } from "../utils/media-path.js";
 import { dropRawPreviewsIfDone } from "../utils/file-operations.js";
+import { taskQueued, taskRunning } from "../utils/task-queue.js";
 import {
   adminProcedure,
   internalProcedure,
@@ -52,37 +53,72 @@ export const fileTaskRouter = router({
     // `encode_video` row.
     const displayType = sql<string>`CASE WHEN ${FileTaskTable.type} = 'encode_optimised' AND ${FileTable.type} = 'video' THEN 'encode_video' ELSE ${FileTaskTable.type} END`;
 
-    // Counts of every (type, status) pair.
-    const byStatus = await db
+    // Counts of every (type, status) pair. Index-only (file_task_type_status_idx):
+    // no file join, which used to cost a lookup in `file` per task row.
+    const typeStatusRows = await db
       .select({
-        type: displayType,
+        type: FileTaskTable.type,
         status: FileTaskTable.status,
         count: sql<number>`COUNT(*)`,
       })
       .from(FileTaskTable)
-      .innerJoin(FileTable, eq(FileTable.id, FileTaskTable.fileId))
-      .groupBy(displayType, FileTaskTable.status);
+      .groupBy(FileTaskTable.type, FileTaskTable.status);
 
-    // "Remaining" = work the worker will actually still pick up: not succeeded,
-    // and under the 3-attempt retry cap (failed-with-attempts>=3 is dead, not
-    // outstanding).
-    const remainingRows = await db
+    // The encode_optimised rows of videos, to move into the encode_video row.
+    // Only this query needs the file join.
+    const videoRows = await db
       .select({
-        type: displayType,
+        status: FileTaskTable.status,
         count: sql<number>`COUNT(*)`,
+        remaining: sql<number>`SUM(CASE WHEN ${FileTaskTable.status} IN ('pending', 'in_progress', 'failed') AND ${FileTaskTable.attempts} < 3 THEN 1 ELSE 0 END)`,
       })
       .from(FileTaskTable)
       .innerJoin(FileTable, eq(FileTable.id, FileTaskTable.fileId))
       .where(
         and(
-          inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`,
+          eq(FileTaskTable.type, "encode_optimised"),
+          eq(FileTable.type, "video"),
         ),
       )
-      .groupBy(displayType);
+      .groupBy(FileTaskTable.status);
+
+    const byStatus: Array<{ type: string; status: string; count: number }> =
+      typeStatusRows.map((r) => ({ ...r, count: Number(r.count) }));
+    for (const v of videoRows) {
+      const opt = byStatus.find(
+        (r) => r.type === "encode_optimised" && r.status === v.status,
+      );
+      if (opt) opt.count -= Number(v.count);
+      byStatus.push({ type: "encode_video", status: v.status, count: Number(v.count) });
+    }
+
+    // "Remaining" = work the worker will actually still pick up: not succeeded,
+    // and under the 3-attempt retry cap (failed-with-attempts>=3 is dead, not
+    // outstanding). Queued rows come off file_task_queue_idx, running rows off
+    // file_task_type_status_idx.
+    const queuedRows = await db
+      .select({ type: FileTaskTable.type, count: sql<number>`COUNT(*)` })
+      .from(FileTaskTable)
+      .where(taskQueued)
+      .groupBy(FileTaskTable.type);
+    const runningRows = await db
+      .select({ type: FileTaskTable.type, count: sql<number>`COUNT(*)` })
+      .from(FileTaskTable)
+      .where(taskRunning)
+      .groupBy(FileTaskTable.type);
 
     const remainingByType = new Map<string, number>();
-    for (const r of remainingRows) remainingByType.set(r.type, Number(r.count));
+    for (const r of [...queuedRows, ...runningRows]) {
+      remainingByType.set(r.type, (remainingByType.get(r.type) ?? 0) + Number(r.count));
+    }
+    const videoRemaining = videoRows.reduce((n, v) => n + Number(v.remaining ?? 0), 0);
+    if (videoRemaining > 0) {
+      remainingByType.set("encode_video", videoRemaining);
+      remainingByType.set(
+        "encode_optimised",
+        (remainingByType.get("encode_optimised") ?? 0) - videoRemaining,
+      );
+    }
 
     // Throughput per type over the last ETA_WINDOW_MIN minutes (any finished
     // task: succeeded, failed or skipped), for the time-remaining estimate.
@@ -133,6 +169,8 @@ export const fileTaskRouter = router({
     for (const r of byStatus) {
       const row = byType.get(r.type) ?? empty(r.type);
       const c = Number(r.count);
+      // An encode_optimised status whose rows are all videos is now 0.
+      if (c === 0) continue;
       row.total += c;
       if (r.status === "pending") row.pending += c;
       else if (r.status === "in_progress") row.inProgress += c;
@@ -407,7 +445,7 @@ export const fileTaskRouter = router({
         );
         const batchResults = await db
           .update(FileTaskTable)
-          .set({ status: "succeeded", finishedAt: now, updatedAt: now })
+          .set({ status: "succeeded", finishedAt: now, updatedAt: now, progress: null })
           .where(sql`${sql.join(conditions, sql` OR `)}`)
           .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
         results.push(...batchResults);
@@ -424,7 +462,7 @@ export const fileTaskRouter = router({
         );
         const batchResults = await db
           .update(FileTaskTable)
-          .set({ status: "failed", finishedAt: now, updatedAt: now })
+          .set({ status: "failed", finishedAt: now, updatedAt: now, progress: null })
           .where(sql`${sql.join(conditions, sql` OR `)}`)
           .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
         results.push(...batchResults);
@@ -438,7 +476,7 @@ export const fileTaskRouter = router({
         );
         const batchResults = await db
           .update(FileTaskTable)
-          .set({ status: "skipped", finishedAt: now, updatedAt: now })
+          .set({ status: "skipped", finishedAt: now, updatedAt: now, progress: null })
           .where(sql`${sql.join(conditions, sql` OR `)}`)
           .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
         results.push(...batchResults);
@@ -527,27 +565,35 @@ export const fileTaskRouter = router({
         )
       );
 
-    // Step 2: Find candidate file_ids (pending/failed, attempts < 3)
-    const candidates = await db
-      .select({
-        fileId: FileTaskTable.fileId,
-        minUpdated: sql<string>`MIN(${FileTaskTable.updatedAt})`,
-      })
-      .from(FileTaskTable)
-      .where(
-        and(
-          inArray(FileTaskTable.type, [...encodeTypes]),
-          inArray(FileTaskTable.status, ["pending", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`
-        )
+    // Step 2: Find candidate file_ids (pending/failed, attempts < 3), oldest
+    // first by each file's oldest task. One ordered read of
+    // file_task_queue_idx per type, merged here: a GROUP BY file_id over all
+    // three types read and sorted every queued encode row on each lease. A
+    // file has at most 3 encode tasks, so the oldest desired*3 rows of each
+    // type hold the oldest `desired` files.
+    const rows = (
+      await Promise.all(
+        encodeTypes.map((type) =>
+          db
+            .select({
+              fileId: FileTaskTable.fileId,
+              updatedAt: FileTaskTable.updatedAt,
+            })
+            .from(FileTaskTable)
+            .where(and(eq(FileTaskTable.type, type), taskQueued))
+            .orderBy(FileTaskTable.updatedAt)
+            .limit(desired * 3),
+        ),
       )
-      .groupBy(FileTaskTable.fileId)
-      .orderBy(sql`MIN(${FileTaskTable.updatedAt}) ASC`)
-      .limit(desired);
+    ).flat();
+    rows.sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : a.updatedAt > b.updatedAt ? 1 : 0));
+    const candidateFileIds: string[] = [];
+    for (const r of rows) {
+      if (candidateFileIds.length === desired) break;
+      if (!candidateFileIds.includes(r.fileId)) candidateFileIds.push(r.fileId);
+    }
 
-    if (candidates.length === 0) return [];
-
-    const candidateFileIds = candidates.map((c) => c.fileId);
+    if (candidateFileIds.length === 0) return [];
 
     // Step 3: Update tasks for those file_ids to in_progress
     await db
@@ -602,8 +648,7 @@ export const fileTaskRouter = router({
       .where(
         and(
           eq(FileTaskTable.type, "detect_faces"),
-          inArray(FileTaskTable.status, ["pending", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`,
+          taskQueued,
           sql`EXISTS (
             SELECT 1 FROM ${FileTaskTable} opt
             WHERE opt.file_id = ${FileTaskTable.fileId}
@@ -662,13 +707,7 @@ export const fileTaskRouter = router({
     const candidates = await db
       .select({ fileId: FileTaskTable.fileId })
       .from(FileTaskTable)
-      .where(
-        and(
-          eq(FileTaskTable.type, "extract_geolocation"),
-          inArray(FileTaskTable.status, ["pending", "failed"]),
-          sql`${FileTaskTable.attempts} < 3`,
-        ),
-      )
+      .where(and(eq(FileTaskTable.type, "extract_geolocation"), taskQueued))
       .orderBy(sql`${FileTaskTable.updatedAt} ASC`)
       .limit(desired);
 

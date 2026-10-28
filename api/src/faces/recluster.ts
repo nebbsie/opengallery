@@ -14,7 +14,7 @@ import {
   getCachedSystemSettings,
   invalidateSystemSettings,
 } from "../utils/settings-cache.js";
-import { invalidateFaceIndex, resolveCurrentModel, withFaceLock } from "./face-index.js";
+import { resolveCurrentModel, setPersonInIndexes, withFaceLock } from "./face-index.js";
 import { getVoteThreshold } from "./ingest.js";
 import { anchoredPeople, refreshPeople, rejectedPeopleFor } from "./people.js";
 import {
@@ -107,39 +107,50 @@ export async function reclusterAll(): Promise<ReclusterResult> {
   running = true;
   const t0 = Date.now();
   try {
-    return await withFaceLock(async () => {
-      const model = await resolveCurrentModel();
-      const threshold = await getVoteThreshold();
-      const libs = await db
-        .selectDistinct({ libraryId: LibraryFileTable.libraryId })
-        .from(FaceTable)
-        .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FaceTable.fileId))
-        .where(isNull(LibraryFileTable.deletedAt));
-      const total: ReclusterResult = { libraries: 0, faces: 0, groups: 0, unclustered: 0, changed: 0, ms: 0 };
-      for (const { libraryId } of libs) {
-        const r = await reclusterLibrary(libraryId, model, threshold);
-        total.libraries++;
-        total.faces += r.faces;
-        total.groups += r.groups;
-        total.unclustered += r.unclustered;
-        total.changed += r.changed;
-      }
-      await db
-        .update(SystemSettingsTable)
-        .set({ faceLastReclusterAt: new Date().toISOString() });
-      invalidateSystemSettings();
-      invalidateFaceIndex();
-      clearScopeCache();
-      total.ms = Date.now() - t0;
-      logger.info(`[faces] regroup done: ${JSON.stringify(total)}`);
-      return total;
-    });
+    // Plan without the face lock: the reads, the kNN call and label
+    // propagation take seconds, and every ingest, merge, rename and face edit
+    // waits on the lock. Only the apply step takes the lock, and it checks
+    // that the faces it changes are still as the plan saw them.
+    const model = await resolveCurrentModel();
+    const threshold = await getVoteThreshold();
+    const libs = await db
+      .selectDistinct({ libraryId: LibraryFileTable.libraryId })
+      .from(FaceTable)
+      .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FaceTable.fileId))
+      .where(isNull(LibraryFileTable.deletedAt));
+    const total: ReclusterResult = { libraries: 0, faces: 0, groups: 0, unclustered: 0, changed: 0, ms: 0 };
+    for (const { libraryId } of libs) {
+      const plan = await planLibrary(libraryId, model, threshold);
+      const r = await withFaceLock(() => applyPlan(libraryId, plan));
+      total.libraries++;
+      total.faces += r.faces;
+      total.groups += r.groups;
+      total.unclustered += r.unclustered;
+      total.changed += r.changed;
+    }
+    await db
+      .update(SystemSettingsTable)
+      .set({ faceLastReclusterAt: new Date().toISOString() });
+    invalidateSystemSettings();
+    clearScopeCache();
+    total.ms = Date.now() - t0;
+    logger.info(`[faces] regroup done: ${JSON.stringify(total)}`);
+    return total;
   } finally {
     running = false;
   }
 }
 
-async function reclusterLibrary(libraryId: string, model: string, threshold: number) {
+type Plan = {
+  faces: { id: string; fileId: string; personId: string | null; confirmed: boolean }[];
+  // Per face: an existing person id, a fresh group number (new person), or null.
+  target: (string | number | null)[];
+  freshSizes: number[];
+  pinned: Set<string>;
+  groups: number;
+};
+
+async function planLibrary(libraryId: string, model: string, threshold: number): Promise<Plan> {
   const rows = await db
     .select({
       id: FaceTable.id,
@@ -159,7 +170,7 @@ async function reclusterLibrary(libraryId: string, model: string, threshold: num
     .where(and(eq(LibraryFileTable.libraryId, libraryId), eq(FaceTable.manual, false)));
   const faces = rows.filter((r) => (r.model ?? "buffalo_l") === model);
   const n = faces.length;
-  if (n < 2) return { faces: n, groups: 0, unclustered: 0, changed: 0 };
+  if (n < 2) return { faces: [], target: [], freshSizes: [], pinned: new Set(), groups: 0 };
 
   const people = await db
     .select({ id: PersonTable.id })
@@ -273,12 +284,12 @@ async function reclusterLibrary(libraryId: string, model: string, threshold: num
     list.push(i);
     members.set(label[i]!, list);
   }
-  const target = new Array<string | null>(n).fill(null);
+  const labelTarget = new Array<string | number | null>(n).fill(null);
   type Fresh = { faces: number[]; overlap: Map<string, number> };
   const fresh: Fresh[] = [];
   for (const [l, list] of members) {
     if (l < P) {
-      for (const i of list) target[i] = labelPerson[l]!;
+      for (const i of list) labelTarget[i] = labelPerson[l]!;
       continue;
     }
     const good = list.filter((i) => quality[i]! >= LOW_QUALITY).length;
@@ -302,47 +313,121 @@ async function reclusterLibrary(libraryId: string, model: string, threshold: num
     groupPerson.set(c.gi, c.p);
     takenPeople.add(c.p);
   }
+  const target: (string | number | null)[] = labelTarget;
+  const freshSizes: number[] = [];
   for (let gi = 0; gi < fresh.length; gi++) {
-    let personId = groupPerson.get(gi);
-    if (!personId) {
-      const [row] = await db
-        .insert(PersonTable)
-        .values({ libraryId, faceCount: fresh[gi]!.faces.length })
-        .returning({ id: PersonTable.id });
-      personId = row!.id;
-    }
-    for (const i of fresh[gi]!.faces) target[i] = personId;
+    // A new group becomes a new person when it is applied (number = its slot).
+    const t = groupPerson.get(gi) ?? freshSizes.push(fresh[gi]!.faces.length) - 1;
+    for (const i of fresh[gi]!.faces) target[i] = t;
   }
 
   // A face never lands on a person the user said it is not (a reused person
   // id can bring one back even though its label was free).
   faces.forEach((f, i) => {
-    if (target[i] && rejected.get(f.id)?.has(target[i]!)) target[i] = null;
+    const t = target[i];
+    if (typeof t === "string" && rejected.get(f.id)?.has(t)) target[i] = null;
   });
 
-  // Apply.
-  const changed: number[] = [];
-  for (let i = 0; i < n; i++) if ((faces[i]!.personId ?? null) !== target[i]) changed.push(i);
+  return {
+    faces: faces.map((f) => ({ id: f.id, fileId: f.fileId, personId: f.personId, confirmed: f.confirmed })),
+    target,
+    freshSizes,
+    pinned,
+    groups: fresh.length,
+  };
+}
+
+// Apply a plan under the face lock. A face is changed only when it is still on
+// the person the plan saw, is not confirmed, has no new answer against the
+// target, and the target and its old person are not curated since the plan
+// was made. Everything else waits for the next regroup.
+async function applyPlan(libraryId: string, plan: Plan) {
+  const { faces, target, freshSizes } = plan;
+  const n = faces.length;
+  if (n === 0) return { faces: n, groups: 0, unclustered: 0, changed: 0 };
+  let changed: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = target[i];
+    if (typeof t === "number" || (faces[i]!.personId ?? null) !== t) changed.push(i);
+  }
+
+  if (changed.length > 0) {
+    const ids = changed.map((i) => faces[i]!.id);
+    const now = new Map<string, { personId: string | null; confirmed: boolean }>();
+    const rejectedNow = new Map<string, Set<string>>();
+    for (let c = 0; c < ids.length; c += 400) {
+      const chunk = ids.slice(c, c + 400);
+      for (const r of await db
+        .select({ id: FaceTable.id, personId: FaceTable.personId, confirmed: FaceTable.confirmed })
+        .from(FaceTable)
+        .where(inArray(FaceTable.id, chunk)))
+        now.set(r.id, r);
+      for (const [k, v] of await rejectedPeopleFor(chunk)) rejectedNow.set(k, v);
+    }
+    const existing = [...new Set(changed.map((i) => target[i]).filter((t): t is string => typeof t === "string"))];
+    const olds = [...new Set(changed.map((i) => faces[i]!.personId).filter((p): p is string => !!p))];
+    const anchoredNow = await anchoredPeople([...new Set([...existing, ...olds])]);
+    const alive = new Set<string>();
+    for (let c = 0; c < existing.length; c += 400) {
+      for (const r of await db
+        .select({ id: PersonTable.id })
+        .from(PersonTable)
+        .where(inArray(PersonTable.id, existing.slice(c, c + 400))))
+        alive.add(r.id);
+    }
+    changed = changed.filter((i) => {
+      const f = faces[i]!;
+      const cur = now.get(f.id);
+      if (!cur || cur.confirmed || cur.personId !== f.personId) return false;
+      const t = target[i];
+      if (f.personId && anchoredNow.has(f.personId) && !plan.pinned.has(f.personId)) return false;
+      if (typeof t === "string") {
+        if (!alive.has(t) || rejectedNow.get(f.id)?.has(t)) return false;
+        if (anchoredNow.has(t) && !plan.pinned.has(t)) return false;
+      }
+      return true;
+    });
+  }
+
+  const created = new Map<number, string>();
+  const personOf = (t: string | number | null | undefined) =>
+    typeof t === "number" ? created.get(t)! : (t ?? null);
   if (changed.length > 0) {
     const files = [...new Set(changed.filter((i) => faces[i]!.personId).map((i) => faces[i]!.fileId))];
     for (let c = 0; c < files.length; c += 400) await pinViewerHiddenFaces(files.slice(c, c + 400));
-    const now = new Date().toISOString();
+    const stamp = new Date().toISOString();
     db.transaction((tx) => {
       for (const i of changed) {
+        const t = target[i];
+        if (typeof t === "number" && !created.has(t)) {
+          const row = tx
+            .insert(PersonTable)
+            .values({ libraryId, faceCount: freshSizes[t]! })
+            .returning({ id: PersonTable.id })
+            .get();
+          created.set(t, row.id);
+        }
         tx.update(FaceTable)
-          .set({ personId: target[i], updatedAt: now })
+          .set({ personId: personOf(t), updatedAt: stamp })
           .where(eq(FaceTable.id, faces[i]!.id))
           .run();
       }
     });
+    for (const i of changed) setPersonInIndexes([faces[i]!.id], personOf(target[i]!));
   }
-  const affected = new Set<string>(people.map((p) => p.id));
-  for (const t of target) if (t) affected.add(t);
+
+  // Only the people whose faces changed need new counts, centroids and covers.
+  const affected = new Set<string>();
+  for (const i of changed) {
+    if (faces[i]!.personId) affected.add(faces[i]!.personId!);
+    const p = personOf(target[i]!);
+    if (p) affected.add(p);
+  }
   await refreshPeople(affected);
 
   return {
     faces: n,
-    groups: fresh.length,
+    groups: plan.groups,
     unclustered: target.filter((t) => t === null).length,
     changed: changed.length,
   };

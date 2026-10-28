@@ -24,6 +24,8 @@ import {
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
+  cameraIdCol,
+  cameraOrderBy,
   cameraSortExpr,
   fileSortExpr,
   galleryOrderBy,
@@ -511,10 +513,10 @@ export const filesRouter = router({
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
-              keysetAfter(cameraSortExpr, currentSortValue, currentId),
+              keysetAfter(cameraSortExpr, currentSortValue, currentId, cameraIdCol),
             ),
           )
-          .orderBy(sql`${cameraSortExpr} ASC`, FileTable.id)
+          .orderBy(sql`${cameraSortExpr} ASC`, cameraIdCol)
           .limit(1);
 
         const [next] = await db
@@ -531,10 +533,10 @@ export const filesRouter = router({
               eq(ImageMetadataTable.cameraMake, cameraMake),
               eq(ImageMetadataTable.cameraModel, cameraModel),
               isNotNull(ImageMetadataTable.takenAt),
-              keysetBefore(cameraSortExpr, currentSortValue, currentId),
+              keysetBefore(cameraSortExpr, currentSortValue, currentId, cameraIdCol),
             ),
           )
-          .orderBy(...galleryOrderBy(cameraSortExpr))
+          .orderBy(...cameraOrderBy)
           .limit(1);
 
         prevId = prev?.id ?? null;
@@ -875,25 +877,24 @@ export const filesRouter = router({
       // The timeline is a date scrubber: it only buckets dated media. Undated
       // items have no month and render as a block at the bottom of the grid, so
       // they are always excluded here regardless of the show-undated setting.
-      // Reads the denormalized file.taken_at so it can lean on file_taken_at_idx.
-      const sortExpr = sql`${FileTable.takenAt}`;
+      // Reads only the denormalized file.taken_at (no image_metadata join), so
+      // the scan is a covering range on file_taken_at_idx. taken_at is always
+      // a toISOString() value, so substr(taken_at, 1, 7) is the 'YYYY-MM'
+      // bucket: one cheap group key instead of two strftime() calls per row.
+      const bucket = sql`substr(${FileTable.takenAt}, 1, 7)`;
 
       const months = await db
         .select({
-          year: sql<number>`cast(strftime('%Y', ${sortExpr}) as integer)`,
-          month: sql<number>`cast(strftime('%m', ${sortExpr}) as integer)`,
+          year: sql<number>`cast(substr(${FileTable.takenAt}, 1, 4) as integer)`,
+          month: sql<number>`cast(substr(${FileTable.takenAt}, 6, 2) as integer)`,
           count: sql<number>`count(*)`,
         })
         .from(FileTable)
-        .innerJoin(
-          ImageMetadataTable,
-          eq(ImageMetadataTable.fileId, FileTable.id),
-        )
         .where(
           and(
             buildFileAccessFilter(accessScope, FileTable.id),
             ...(input.kind === "all" ? [] : [eq(FileTable.type, input.kind)]),
-            isNotNull(ImageMetadataTable.takenAt),
+            isNotNull(FileTable.takenAt),
             ...(hiddenFilter ? [hiddenFilter] : []),
             exists(
               db
@@ -919,14 +920,8 @@ export const filesRouter = router({
             ),
           ),
         )
-        .groupBy(
-          sql`strftime('%Y', ${sortExpr})`,
-          sql`strftime('%m', ${sortExpr})`,
-        )
-        .orderBy(
-          desc(sql`cast(strftime('%Y', ${sortExpr}) as integer)`),
-          desc(sql`cast(strftime('%m', ${sortExpr}) as integer)`),
-        );
+        .groupBy(bucket)
+        .orderBy(desc(bucket));
 
       const total = months.reduce((sum, m) => sum + m.count, 0);
       return { months, total };
@@ -1234,10 +1229,16 @@ const getUsersFiles = async (
       height: ImageMetadataTable.height,
       sortAt: sortExpr,
     })
+    // CROSS JOIN (join condition in WHERE) pins file as the outer loop, so the
+    // page is a walk down file_gallery_sort_idx that stops after limit+1 rows.
+    // With an INNER JOIN the plan depends on sqlite_stat1, and with the stats
+    // prod has the planner scans all of image_metadata and sorts it instead
+    // (30-45 ms vs 0.5 ms for page 1 on a 21k-photo library).
     .from(FileTable)
-    .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+    .crossJoin(ImageMetadataTable)
     .where(
       and(
+        eq(ImageMetadataTable.fileId, FileTable.id),
         buildFileAccessFilter(accessScope, FileTable.id),
         ...(kind === "all" ? [] : [eq(FileTable.type, kind)]),
         // When hideUndated is on, only show files with a takenAt date

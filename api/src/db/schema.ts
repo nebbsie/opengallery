@@ -245,7 +245,16 @@ export const ImageMetadataTable = sqliteTable(
   (t) => [
     uniqueIndex("image_metadata_file_id_idx").on(t.fileId),
     index("image_metadata_taken_at_idx").on(t.takenAt),
-    index("image_metadata_camera_idx").on(t.cameraMake, t.cameraModel),
+    // Camera list, camera grid and camera prev/next: (make, model) groups in
+    // index order, and (taken_at, file_id) is the camera sort order, so a
+    // page or a neighbour is an index seek. Replaces image_metadata_camera_idx
+    // (its prefix).
+    index("image_metadata_camera_taken_idx").on(
+      t.cameraMake,
+      t.cameraModel,
+      t.takenAt,
+      t.fileId,
+    ),
   ],
 );
 
@@ -313,6 +322,10 @@ export const PersonTable = sqliteTable(
     // Supports the anyHiddenPeople() short-circuit and the hidden-person photo
     // exclusion filter applied across the browse queries.
     index("person_hidden_idx").on(t.hidden),
+    // Covers listPeople / listPeoplePage. The row itself holds the ~10 KB JSON
+    // centroid in overflow pages before face_count, so a table read costs
+    // about 3 pages per person.
+    index("person_list_idx").on(t.libraryId, t.hidden, t.faceCount, t.name, t.coverFaceId, t.id),
   ],
 );
 
@@ -355,7 +368,17 @@ export const FaceTable = sqliteTable(
   },
   (t) => [
     index("face_file_id_idx").on(t.fileId),
-    index("face_person_id_idx").on(t.personId),
+    // Covers "faces of a person" reads that need no vector (merge, delete,
+    // getPersonFiles, clashes, newest-first lists): a face row is about one
+    // 4 KB page because of the vec blob.
+    index("face_person_idx").on(t.personId, t.createdAt, t.id, t.fileId),
+    // Faces with no avatar crop: the worker's crop backfill reads this
+    // instead of every face row.
+    index("face_missing_crop_idx").on(t.id).where(sql`${t.cropName} IS NULL`),
+    // Unclustered detected faces: faces.status and the auto-regroup timer.
+    index("face_unclustered_idx")
+      .on(t.personId, t.manual, t.updatedAt)
+      .where(sql`${t.personId} IS NULL AND ${t.manual} = 0`),
   ],
 );
 
@@ -612,9 +635,15 @@ export const FileTaskTable = sqliteTable(
     updatedAt: updatedAt(),
   },
   (t) => [
+    // Also serves file_id lookups (leading column), so no separate file_id index.
     uniqueIndex("file_task_unique").on(t.fileId, t.type, t.version),
-    index("file_task_status_idx").on(t.status),
-    index("file_task_file_id_idx").on(t.fileId),
+    // (type, status) counts, stale-lease requeue, backfills, retries.
+    index("file_task_type_status_idx").on(t.type, t.status),
+    // Leasable rows only, in lease order per type (migration 0014). The WHERE
+    // must match taskQueued (utils/task-queue.ts) word for word.
+    index("file_task_queue_idx")
+      .on(t.type, t.updatedAt, t.fileId)
+      .where(sql`status IN ('pending', 'failed') AND attempts < 3`),
   ],
 );
 

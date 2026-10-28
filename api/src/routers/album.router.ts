@@ -25,6 +25,7 @@ import {
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 import { hasRawOf } from "../utils/raw-pairing.js";
+import { taskQueued, taskRunning } from "../utils/task-queue.js";
 
 const fvThumb = alias(FileVariantTable, "fv_thumb");
 const fvOpt = alias(FileVariantTable, "fv_opt");
@@ -403,21 +404,29 @@ export const albumRouter = router({
       for (const r of coverRows) if (r.fileId) firstImageByAlbum.set(r.albumId, r.fileId);
 
       // Pending encode tasks, also rolled up distinct-per-root across the subtree.
+      // Outstanding file ids come off file_task_queue_idx (queued) and
+      // file_task_type_status_idx (running); a join on file_task with a status
+      // filter has no index to use since file_task_status_idx was dropped.
+      const outstandingFileIds = db
+        .select({ fileId: FileTaskTable.fileId })
+        .from(FileTaskTable)
+        .where(taskQueued)
+        .unionAll(
+          db
+            .select({ fileId: FileTaskTable.fileId })
+            .from(FileTaskTable)
+            .where(taskRunning),
+        );
       const pendingRows = await db
         .select({
           albumId: AlbumFileTable.albumId,
           fileId: AlbumFileTable.fileId,
         })
         .from(AlbumFileTable)
-        .innerJoin(
-          FileTaskTable,
-          eq(FileTaskTable.fileId, AlbumFileTable.fileId),
-        )
         .where(
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
-            inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
-            sql`${FileTaskTable.attempts} < 3`,
+            inArray(AlbumFileTable.fileId, outstandingFileIds),
             buildFileAccessFilter(accessScope, AlbumFileTable.fileId),
           ),
         );

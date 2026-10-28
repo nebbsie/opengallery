@@ -337,15 +337,18 @@ function findPlaces(tokens: string[]): Place[] {
   ).slice(0, 8);
 }
 
-const placeCondition = (place: Place, fileId: SQLiteColumn | SQL) => {
+// IN (uncorrelated subquery) so SQLite reads the few geotagged files in the
+// box once and looks those files up, instead of scanning every file row and
+// probing geo_location for each (countPlaces: 45-70 ms -> 0.2 ms).
+const placeCondition = (place: Place, fileId: SQLiteColumn) => {
   const box = boundingBox(place.lat, place.lon, place.radiusKm);
-  return exists(
+  return inArray(
+    fileId,
     db
-      .select({ _: sql`1` })
+      .select({ fileId: GeoLocationTable.fileId })
       .from(GeoLocationTable)
       .where(
         and(
-          eq(GeoLocationTable.fileId, fileId),
           sql`${GeoLocationTable.lat} BETWEEN ${box.minLat} AND ${box.maxLat}`,
           sql`${GeoLocationTable.lon} BETWEEN ${box.minLon} AND ${box.maxLon}`,
         ),
@@ -444,19 +447,19 @@ function tokenCondition(match: TokenMatches): SQL {
     likeAny(pathText, match.token),
     likeAny(cameraText, match.token),
   ];
+  // IN (uncorrelated subquery), not a correlated EXISTS: SQLite builds the
+  // small id set once and probes it, instead of an index lookup per photo.
   if (match.people.length > 0) {
     ors.push(
-      exists(
+      inArray(
+        FileTable.id,
         db
-          .select({ _: sql`1` })
+          .select({ fileId: FaceTable.fileId })
           .from(FaceTable)
           .where(
-            and(
-              eq(FaceTable.fileId, FileTable.id),
-              inArray(
-                FaceTable.personId,
-                match.people.map((p) => p.id),
-              ),
+            inArray(
+              FaceTable.personId,
+              match.people.map((p) => p.id),
             ),
           ),
       ),
@@ -464,16 +467,12 @@ function tokenCondition(match: TokenMatches): SQL {
   }
   if (match.albumIds.length > 0) {
     ors.push(
-      exists(
+      inArray(
+        FileTable.id,
         db
-          .select({ _: sql`1` })
+          .select({ fileId: AlbumFileTable.fileId })
           .from(AlbumFileTable)
-          .where(
-            and(
-              eq(AlbumFileTable.fileId, FileTable.id),
-              inArray(AlbumFileTable.albumId, match.albumIds),
-            ),
-          ),
+          .where(inArray(AlbumFileTable.albumId, match.albumIds)),
       ),
     );
   }

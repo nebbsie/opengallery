@@ -85,16 +85,31 @@ export class LibraryFaceIndex {
     if (row !== undefined) this.personIds[row] = personId;
   }
 
-  // Cosine similarity of q against every live row.
+  // Cosine similarity of q against every live row that is on a person. Rows
+  // with no person never vote in matching, so they get -2 without the dot
+  // product. Four accumulators let V8 pipeline the multiply-adds.
   scan(q: Float32Array): Float32Array {
     const n = this.ids.length;
     const out = new Float32Array(n);
     const d = this.data;
+    const pids = this.personIds;
     for (let r = 0; r < n; r++) {
-      let s = 0;
+      if (pids[r] === null) {
+        out[r] = -2;
+        continue;
+      }
+      let s0 = 0;
+      let s1 = 0;
+      let s2 = 0;
+      let s3 = 0;
       const o = r * EMBED_DIM;
-      for (let i = 0; i < EMBED_DIM; i++) s += q[i]! * d[o + i]!;
-      out[r] = this.ids[r] ? s : -2;
+      for (let i = 0; i < EMBED_DIM; i += 4) {
+        s0 += q[i]! * d[o + i]!;
+        s1 += q[i + 1]! * d[o + i + 1]!;
+        s2 += q[i + 2]! * d[o + i + 2]!;
+        s3 += q[i + 3]! * d[o + i + 3]!;
+      }
+      out[r] = s0 + s1 + s2 + s3;
     }
     return out;
   }
@@ -120,6 +135,25 @@ export async function getLibraryIndex(
   const k = key(libraryId, model);
   const hit = cache.get(k);
   if (hit) return hit;
+  // One build at a time per key: a second caller waits for the first build.
+  let pending = building.get(k);
+  if (!pending) {
+    pending = buildLibraryIndex(libraryId, model).finally(() => building.delete(k));
+    building.set(k, pending);
+  }
+  const index = await pending;
+  // A bulk change (invalidateFaceIndex) during the build makes it stale.
+  if (cache.get(k) === undefined && builtAt.get(k) === generation) cache.set(k, index);
+  return index;
+}
+
+const building = new Map<string, Promise<LibraryFaceIndex>>();
+const builtAt = new Map<string, number>();
+let generation = 0;
+
+async function buildLibraryIndex(libraryId: string, model: string): Promise<LibraryFaceIndex> {
+  const k = key(libraryId, model);
+  builtAt.set(k, generation);
 
   const modelCond =
     model === LEGACY_MODEL
@@ -162,13 +196,13 @@ export async function getLibraryIndex(
       vec: v,
     });
   }
-  cache.set(k, index);
   return index;
 }
 
 // Drop cached indexes after bulk changes (merge, regroup, deletes); the next
 // match rebuilds from the database.
 export function invalidateFaceIndex(): void {
+  generation++;
   cache.clear();
 }
 
@@ -194,5 +228,8 @@ export async function resolveCurrentModel(): Promise<string> {
     .where(isNotNull(FaceTable.vec))
     .orderBy(sql`${FaceTable.updatedAt} DESC`)
     .limit(1);
-  return row?.model ?? LEGACY_MODEL;
+  // Cache it: this query reads the whole face table (no index on updatedAt).
+  // The next ingest replaces it with noteModel().
+  currentModel ??= row?.model ?? LEGACY_MODEL;
+  return currentModel;
 }

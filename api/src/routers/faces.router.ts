@@ -50,7 +50,9 @@ import {
   pinViewerHiddenFaces,
 } from "../utils/file-operations.js";
 import {
+  getLibraryIndex,
   invalidateFaceIndex,
+  type LibraryFaceIndex,
   resolveCurrentModel,
   setPersonInIndexes,
   withFaceLock,
@@ -379,6 +381,19 @@ export const facesRouter = router({
           ),
           // RAW companions get no tasks.
           notRawCompanion(FileTable.id),
+          // Only files with no detect_faces task yet. Without this, every
+          // boot re-inserted (and conflicted on) a task for every original.
+          notExists(
+            db
+              .select({ one: sql`1` })
+              .from(FileTaskTable)
+              .where(
+                and(
+                  eq(FileTaskTable.fileId, FileTable.id),
+                  eq(FileTaskTable.type, "detect_faces"),
+                ),
+              ),
+          ),
         ),
       );
 
@@ -387,17 +402,20 @@ export const facesRouter = router({
       type: "detect_faces" as const,
     }));
 
-    // Insert in chunks to stay well under SQLite's variable limit.
+    // Insert in chunks to stay well under SQLite's variable limit, in one
+    // transaction (one commit, not one per chunk).
     let seeded = 0;
     const CHUNK = 500;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const res = await db
-        .insert(FileTaskTable)
-        .values(rows.slice(i, i + CHUNK))
-        .onConflictDoNothing()
-        .returning({ id: FileTaskTable.id });
-      seeded += res.length;
-    }
+    db.transaction(() => {
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        seeded += db
+          .insert(FileTaskTable)
+          .values(rows.slice(i, i + CHUNK))
+          .onConflictDoNothing()
+          .returning({ id: FileTaskTable.id })
+          .all().length;
+      }
+    });
 
     // 3. Revive dead tasks so a deploy that fixes the underlying cause re-drives
     //    them. Genuinely-bad files simply re-exhaust their (bounded) attempts.
@@ -1223,17 +1241,23 @@ export const facesRouter = router({
           ),
         );
       if (people.length === 0) return [];
-      // Only compare embeddings of one model (mid-rescan two are in use).
+      // Only compare embeddings of one model (mid-rescan two are in use). The
+      // vectors come from the in-memory match index of that model, so no
+      // face.vec blob is read or decoded here.
       const model = await resolveCurrentModel();
-      const sameModel = (m: string | null) => (m ?? "buffalo_l") === model;
+      const indexes = new Map<string, LibraryFaceIndex>();
+      for (const l of new Set(people.map((p) => p.libraryId))) indexes.set(l, await getLibraryIndex(l, model));
+      const vecOf = (libraryId: string, faceId: string): Float32Array | null => {
+        const idx = indexes.get(libraryId);
+        const row = idx?.rowFor(faceId);
+        return idx && row !== undefined ? idx.vectorAt(row) : null;
+      };
+      const libOfPerson = new Map(people.map((p) => [p.id, p.libraryId]));
       const all = await db
         .select({
           id: FaceTable.id,
           fileId: FaceTable.fileId,
           personId: FaceTable.personId,
-          vec: FaceTable.vec,
-          embedding: FaceTable.embedding,
-          model: FaceTable.model,
           confirmed: FaceTable.confirmed,
           cropName: FaceTable.cropName,
         })
@@ -1243,8 +1267,7 @@ export const facesRouter = router({
       {
         const byPerson = new Map<string, Float32Array[]>();
         for (const f of all) {
-          if (!sameModel(f.model)) continue;
-          const v = faceVec(f);
+          const v = vecOf(libOfPerson.get(f.personId!)!, f.id);
           if (!v) continue;
           const list = byPerson.get(f.personId!) ?? [];
           list.push(v);
@@ -1267,10 +1290,10 @@ export const facesRouter = router({
       const out: Cand[] = [];
 
       // a) Unconfirmed members, weakest first.
-      const members = all.filter((f) => !f.confirmed && f.cropName && sameModel(f.model));
+      const members = all.filter((f) => !f.confirmed && f.cropName);
       for (const m of members) {
         const c = centroids.get(m.personId!);
-        const v = faceVec(m);
+        const v = vecOf(libOfPerson.get(m.personId!)!, m.id);
         if (!c || !v || v.length !== c.length) continue;
         const s = dot(v, c);
         // Clearly-matching faces are not worth a question.
@@ -1283,9 +1306,6 @@ export const facesRouter = router({
         .select({
           id: FaceTable.id,
           fileId: FaceTable.fileId,
-          vec: FaceTable.vec,
-          embedding: FaceTable.embedding,
-          model: FaceTable.model,
           libraryId: LibraryFileTable.libraryId,
         })
         .from(FaceTable)
@@ -1303,8 +1323,7 @@ export const facesRouter = router({
           ),
         );
       for (const f of loose) {
-        if (!sameModel(f.model)) continue;
-        const v = faceVec(f);
+        const v = vecOf(f.libraryId, f.id);
         if (!v) continue;
         let best: { id: string; s: number } | null = null;
         for (const p of people) {
@@ -1535,9 +1554,9 @@ export const facesRouter = router({
 
       // Phase 1: centroid pre-filter, bounded to the top-faceCount slice so a
       // long singleton tail can't blow up the O(n²) scan.
-      type Cand = { a: P; b: P; sim: number };
+      type Cand = { a: P; b: P; sim: number; lib: string };
       const candidates: Cand[] = [];
-      for (const list of byLibrary.values()) {
+      for (const [lib, list] of byLibrary) {
         const pool = list
           .sort((x, y) => y.faceCount - x.faceCount)
           .slice(0, SUGGEST_MAX_PEOPLE_PER_LIBRARY);
@@ -1554,7 +1573,7 @@ export const facesRouter = router({
             if (dismissed.has(`${low}|${high}`)) continue;
             if (a.centroid.length !== b.centroid.length) continue;
             const sim = dot(a.centroid, b.centroid);
-            if (sim >= centroidFloor) candidates.push({ a, b, sim });
+            if (sim >= centroidFloor) candidates.push({ a, b, sim, lib });
           }
         }
       }
@@ -1569,37 +1588,35 @@ export const facesRouter = router({
         ...new Set(top.flatMap((c) => [c.a.id, c.b.id])),
       ];
       // Window function caps MAX_CONFIRM_MEMBERS per person in SQL so we don't
-      // pull the entire face table for popular clusters.
+      // pull the entire face table for popular clusters. Only ids: the
+      // (person_id, created_at, id) index covers it, and the vectors come from
+      // the in-memory match index of the current model.
       const placeholders = candidatePersonIds.map(() => "?").join(", ");
-      const rawFaceRows = db.$client
+      const rawFaceRows = candidatePersonIds.length === 0 ? [] : (db.$client
         .prepare(
-          `SELECT person_id AS personId, embedding, vec, model
+          `SELECT person_id AS personId, id
            FROM (
-             SELECT person_id, embedding, vec, model,
+             SELECT person_id, id,
                     ROW_NUMBER() OVER (PARTITION BY person_id ORDER BY created_at DESC) AS rn
              FROM face
              WHERE person_id IN (${placeholders})
            )
            WHERE rn <= ?`,
         )
-        .all(...candidatePersonIds, MAX_CONFIRM_MEMBERS) as Array<{
-        personId: string;
-        embedding: string | null;
-        vec: Buffer | null;
-        model: string | null;
-      }>;
-      // Mid-rescan two models are in use: compare only current-model faces.
+        .all(...candidatePersonIds, MAX_CONFIRM_MEMBERS) as Array<{ personId: string; id: string }>);
       const currentModel = await resolveCurrentModel();
+      const libOf = new Map(top.flatMap((c) => [[c.a.id, c.lib], [c.b.id, c.lib]] as const));
+      const indexes = new Map<string, LibraryFaceIndex>();
+      for (const l of new Set(libOf.values())) indexes.set(l, await getLibraryIndex(l, currentModel));
 
       const facesByPerson = new Map<string, Float32Array[]>();
       for (const row of rawFaceRows) {
+        const idx = indexes.get(libOf.get(row.personId)!)!;
+        const r = idx.rowFor(row.id);
+        if (r === undefined) continue; // Another model, or a drawn face.
         const arr = facesByPerson.get(row.personId) ?? [];
-        if ((row.model ?? "buffalo_l") !== currentModel) continue;
-        const e = faceVec(row);
-        if (e) {
-          arr.push(e);
-          facesByPerson.set(row.personId, arr);
-        }
+        arr.push(idx.vectorAt(r));
+        facesByPerson.set(row.personId, arr);
       }
 
       const confirmed: Cand[] = [];

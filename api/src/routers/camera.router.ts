@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, exists, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   buildFileAccessFilter,
@@ -7,8 +7,9 @@ import {
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
+  cameraIdCol,
+  cameraOrderBy,
   cameraSortExpr,
-  galleryOrderBy,
   keysetBefore,
 } from "../db/file-sort.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
@@ -31,34 +32,42 @@ export const cameraRouter = router({
 
       const [accessScope, hiddenFilter] = await Promise.all([
         getAccessScope(userId, session),
-        hiddenPeopleFilter(FileTable.id),
+        hiddenPeopleFilter(ImageMetadataTable.fileId),
       ]);
 
-      // Get all unique camera make/model combinations with file counts
+      // Get all unique camera make/model combinations with file counts.
+      // Reads image_metadata alone (one row per file, so count(*) is a file
+      // count) in image_metadata_camera_taken_idx order; library membership is
+      // an EXISTS. Joining file + library_file + library made the planner
+      // start from library (capped stats) and sort the whole library.
       const cameras = await db
         .select({
           cameraMake: ImageMetadataTable.cameraMake,
           cameraModel: ImageMetadataTable.cameraModel,
-          count: sql<number>`count(distinct ${FileTable.id})`,
+          count: sql<number>`count(*)`,
         })
         .from(ImageMetadataTable)
-        .innerJoin(FileTable, eq(FileTable.id, ImageMetadataTable.fileId))
-        .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
-        .innerJoin(
-          LibraryTable,
-          eq(LibraryTable.id, LibraryFileTable.libraryId),
-        )
         .where(
           and(
-            buildFileAccessFilter(accessScope, FileTable.id),
-            isNull(LibraryFileTable.deletedAt),
+            buildFileAccessFilter(accessScope, ImageMetadataTable.fileId),
+            exists(
+              db
+                .select({ _: sql`1` })
+                .from(LibraryFileTable)
+                .where(
+                  and(
+                    eq(LibraryFileTable.fileId, ImageMetadataTable.fileId),
+                    isNull(LibraryFileTable.deletedAt),
+                  ),
+                ),
+            ),
             hiddenFilter,
             sql`${ImageMetadataTable.cameraMake} IS NOT NULL`,
             sql`${ImageMetadataTable.cameraModel} IS NOT NULL`,
           ),
         )
         .groupBy(ImageMetadataTable.cameraMake, ImageMetadataTable.cameraModel)
-        .orderBy(desc(sql`count(distinct ${FileTable.id})`));
+        .orderBy(desc(sql`count(*)`));
 
       return cameras.map((c) => ({
         make: c.cameraMake!,
@@ -107,6 +116,7 @@ export const cameraRouter = router({
             cameraSortExpr,
             cursorRecord.sortTs,
             cursorRecord.id,
+            cameraIdCol,
           );
         }
       }
@@ -151,7 +161,7 @@ export const cameraRouter = router({
             ...(cursorCondition ? [cursorCondition] : []),
           ),
         )
-        .orderBy(...galleryOrderBy(cameraSortExpr))
+        .orderBy(...cameraOrderBy)
         .limit(limit + 1);
 
       const data = rows.map((r) => ({

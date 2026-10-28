@@ -14,16 +14,16 @@ export function normalize(v: Float32Array): Float32Array {
   return v;
 }
 
+// Float32Array uses the platform byte order. Every supported target (x64,
+// arm64) is little-endian, so a byte copy is the same as read/writeFloatLE.
 export function vecToBuffer(v: Float32Array): Buffer {
-  const out = Buffer.alloc(v.length * 4);
-  for (let i = 0; i < v.length; i++) out.writeFloatLE(v[i]!, i * 4);
-  return out;
+  return Buffer.from(v.buffer.slice(v.byteOffset, v.byteOffset + v.length * 4));
 }
 
 export function bufferToVec(buf: Buffer | Uint8Array): Float32Array {
-  const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
-  const v = new Float32Array(b.length / 4);
-  for (let i = 0; i < v.length; i++) v[i] = b.readFloatLE(i * 4);
+  // Copy: a Buffer from SQLite may not be 4-byte aligned.
+  const v = new Float32Array(buf.length >> 2);
+  new Uint8Array(v.buffer).set(buf.subarray(0, v.length * 4));
   return v;
 }
 

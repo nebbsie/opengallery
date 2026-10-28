@@ -1,6 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { alias } from "drizzle-orm/sqlite-core";
-import { and, desc, exists, isNull, isNotNull, sql } from "drizzle-orm";
+import { and, desc, exists, gte, isNull, isNotNull, lt, sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 import { z } from "zod";
@@ -24,41 +23,38 @@ import { hasRawOf } from "../utils/raw-pairing.js";
 // rather than being bucketed into their import year.
 const yearExpr = sql<number | null>`CAST(strftime('%Y', ${FileTable.takenAt}) AS INTEGER)`;
 
-// Inner alias for the per-year cover subquery so it can be scoped with the same
-// access and hidden-person filters as the outer query.
-const coverFile = alias(FileTable, "f2");
+// A year as a [from, to) range on an ISO timestamp column. taken_at is always
+// a toISOString() value, so a plain string range matches the same rows as
+// CAST(strftime('%Y', taken_at) AS INTEGER) = year, but can use an index.
+const yearRange = (year: number) => ({
+  from: `${year}-01-01`,
+  to: `${year + 1}-01-01`,
+});
 
 export const yearsRouter = router({
   getYears: privateProcedure.query(async ({ ctx: { userId, session } }) => {
     if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-    const [accessScope, hiddenFilter, coverHiddenFilter] = await Promise.all([
+    const [accessScope, hiddenFilter] = await Promise.all([
       getAccessScope(userId, session),
       hiddenPeopleFilter(FileTable.id),
-      hiddenPeopleFilter(coverFile.id),
     ]);
 
-    const years = await db
+    const hasThumbnail = sql`exists (select 1 from ${FileVariantTable} where ${FileVariantTable.originalFileId} = ${FileTable.id} and ${FileVariantTable.type} = 'thumbnail')`;
+
+    // One pass over the library. The cover is the newest file of the year
+    // (or of the null "No Date" group) that has a thumbnail: with exactly one
+    // max() aggregate in the select, SQLite takes the bare column file.id
+    // from the row that holds that max. Rows without a thumbnail give NULL to
+    // max(); when no row of a group has one, coverSort is NULL and so is the
+    // cover. This replaces a correlated subquery that re-scanned the whole
+    // library once per year (21 scans for 21 years).
+    const rows = await db
       .select({
         year: yearExpr,
         count: sql<number>`count(distinct ${FileTable.id})`,
-        // Cover: first file in this year bucket (or null-bucket) that has a thumbnail.
-        // The CASE handles the null group: correlated on IS NULL rather than = NULL.
-        cover: sql<string | null>`(
-          SELECT f2.id
-          FROM file f2
-          INNER JOIN library_file lf2 ON lf2.file_id = f2.id
-          WHERE lf2.deleted_at IS NULL
-            AND ${buildFileAccessFilter(accessScope, coverFile.id)}
-            ${coverHiddenFilter ? sql`AND ${coverHiddenFilter}` : sql``}
-            AND (
-              (file.taken_at IS NULL AND f2.taken_at IS NULL)
-              OR (file.taken_at IS NOT NULL AND CAST(strftime('%Y', f2.taken_at) AS INTEGER) = CAST(strftime('%Y', file.taken_at) AS INTEGER))
-            )
-            AND EXISTS (SELECT 1 FROM file_variant fv WHERE fv.original_file_id = f2.id AND fv.type = 'thumbnail')
-          ORDER BY COALESCE(f2.taken_at, f2.created_at) DESC
-          LIMIT 1
-        )`,
+        coverId: FileTable.id,
+        coverSort: sql<string | null>`max(case when ${hasThumbnail} then ${fileSortExpr} end)`,
       })
       .from(FileTable)
       .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
@@ -74,7 +70,11 @@ export const yearsRouter = router({
       // DESC: largest year first, NULL (no takenAt) sorts last in SQLite DESC
       .orderBy(desc(yearExpr));
 
-    return years;
+    return rows.map((r) => ({
+      year: r.year,
+      count: r.count,
+      cover: r.coverSort === null ? null : r.coverId,
+    }));
   }),
 
   getTimelineByYear: privateProcedure
@@ -93,12 +93,14 @@ export const yearsRouter = router({
         hiddenPeopleFilter(FileTable.id),
       ]);
 
-      const sortExpr = sql`${FileTable.takenAt}`;
+      const { from, to } = yearRange(input.year);
+      // 'YYYY-MM' bucket (see getTimeline in files.router.ts).
+      const bucket = sql`substr(${FileTable.takenAt}, 1, 7)`;
 
       const months = await db
         .select({
-          year: sql<number>`cast(strftime('%Y', ${sortExpr}) as integer)`,
-          month: sql<number>`cast(strftime('%m', ${sortExpr}) as integer)`,
+          year: sql<number>`cast(substr(${FileTable.takenAt}, 1, 4) as integer)`,
+          month: sql<number>`cast(substr(${FileTable.takenAt}, 6, 2) as integer)`,
           count: sql<number>`count(*)`,
         })
         .from(FileTable)
@@ -107,8 +109,9 @@ export const yearsRouter = router({
           and(
             buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
-            isNotNull(FileTable.takenAt),
-            sql`CAST(strftime('%Y', ${FileTable.takenAt}) AS INTEGER) = ${input.year}`,
+            // Range on file_taken_at_idx instead of strftime() on every row.
+            gte(FileTable.takenAt, from),
+            lt(FileTable.takenAt, to),
             ...(hiddenFilter ? [hiddenFilter] : []),
             exists(
               db.select().from(FileVariantTable).where(
@@ -122,11 +125,8 @@ export const yearsRouter = router({
             ),
           ),
         )
-        .groupBy(sql`strftime('%Y', ${sortExpr})`, sql`strftime('%m', ${sortExpr})`)
-        .orderBy(
-          desc(sql`cast(strftime('%Y', ${sortExpr}) as integer)`),
-          desc(sql`cast(strftime('%m', ${sortExpr}) as integer)`),
-        );
+        .groupBy(bucket)
+        .orderBy(desc(bucket));
 
       const total = months.reduce((sum, m) => sum + m.count, 0);
       return { months, total };
@@ -165,10 +165,17 @@ export const yearsRouter = router({
         cursorCondition = sql`${fileSortExpr} < ${seekCursor}`;
       }
 
+      // A dated year is a range on the ORDER BY expression itself (taken_at is
+      // set, so fileSortExpr = taken_at), so the page is a seek on
+      // file_taken_created_sort_idx that stops after limit+1 rows.
       const yearFilter =
         year === null
           ? isNull(FileTable.takenAt)
-          : sql`CAST(strftime('%Y', ${FileTable.takenAt}) AS INTEGER) = ${year}`;
+          : and(
+              isNotNull(FileTable.takenAt),
+              gte(fileSortExpr, yearRange(year).from),
+              lt(fileSortExpr, yearRange(year).to),
+            );
 
       const rows = await db
         .select({
@@ -179,12 +186,16 @@ export const yearsRouter = router({
           width: ImageMetadataTable.width,
           height: ImageMetadataTable.height,
         })
+        // CROSS JOIN keeps file as the outer loop. With an INNER JOIN the
+        // planner starts from library_file (the capped prod stats claim a
+        // library has ~400 rows) and sorts the whole library.
         .from(FileTable)
-        .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, FileTable.id))
+        .crossJoin(LibraryFileTable)
         .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
         .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
         .where(
           and(
+            eq(LibraryFileTable.fileId, FileTable.id),
             buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
             yearFilter,
