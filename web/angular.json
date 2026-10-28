@@ -40,13 +40,19 @@
               },
               {
                 "glob": "**/*",
-                "input": "node_modules/leaflet/dist/images",
+                "input": "../node_modules/leaflet/dist/images",
                 "output": "assets/leaflet"
+              },
+              {
+                "glob": "maplibre-gl-worker.mjs",
+                "input": "../node_modules/maplibre-gl/dist",
+                "output": "assets/maplibre"
               }
             ],
             "styles": [
               "src/styles.css",
               "leaflet/dist/leaflet.css",
+              "maplibre-gl/dist/maplibre-gl.css",
               "leaflet.markercluster/dist/MarkerCluster.css",
               "leaflet.markercluster/dist/MarkerCluster.Default.css"
             ],
@@ -116,6 +122,7 @@
             "styles": [
               "src/styles.css",
               "leaflet/dist/leaflet.css",
+              "maplibre-gl/dist/maplibre-gl.css",
               "leaflet.markercluster/dist/MarkerCluster.css",
               "leaflet.markercluster/dist/MarkerCluster.Default.css"
             ]

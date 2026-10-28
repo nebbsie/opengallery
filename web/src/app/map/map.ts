@@ -156,14 +156,30 @@ export class Map implements OnDestroy {
     this.map = leaflet.map(container.nativeElement, {
       center: [20, 0],
       zoom: 2,
+      // The marker clusters need a max zoom; vector tiles stay sharp to here.
+      maxZoom: 19,
       zoomControl: true,
       attributionControl: true,
     });
 
-    leaflet.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-      maxZoom: 20,
-      subdomains: 'abcd',
+    // Base map: OpenFreeMap vector tiles (free and open source, no API key, no
+    // usage limits), drawn by MapLibre GL inside Leaflet. CARTO's free raster
+    // tiles now need an API key. The style follows the app theme.
+    // MapLibre finds its web worker next to its own module by default, which
+    // breaks once the app is bundled; serve the worker as an asset instead
+    // (copied in angular.json).
+    const maplibre = await import('maplibre-gl');
+    maplibre.setWorkerUrl(new URL('assets/maplibre/maplibre-gl-worker.mjs', document.baseURI).href);
+    const { maplibreGL } = await import('@maplibre/maplibre-gl-leaflet');
+    if (this.destroyed || !this.map) {
+      this.initializing = false;
+      return;
+    }
+    const dark = document.documentElement.classList.contains('dark');
+    maplibreGL({
+      style: `https://tiles.openfreemap.org/styles/${dark ? 'dark' : 'liberty'}`,
+      // The style's sources carry the OpenFreeMap / OpenStreetMap credit, and
+      // the layer adds it to Leaflet's attribution control.
     }).addTo(this.map);
 
     // Cluster radius scales with zoom: large radius at world-view collapses continents,
