@@ -4,8 +4,11 @@ import {
   computed,
   effect,
   inject,
+  input,
   signal,
 } from '@angular/core';
+import { Confirm } from '@core/dialogs/confirm/confirm';
+import { QueryClient } from '@tanstack/angular-query-experimental';
 import { PluralPipe } from '@core/pipes/plural.pipe';
 import { Auth } from '@core/services/auth/auth';
 import { GridSelection } from '@core/services/selection/grid-selection';
@@ -13,7 +16,14 @@ import { ToastService } from '@core/services/toast/toast';
 import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideDownload, lucideEyeOff, lucideShare2, lucideX } from '@ng-icons/lucide';
+import {
+  lucideDownload,
+  lucideEyeOff,
+  lucideImage,
+  lucideShare2,
+  lucideTrash2,
+  lucideX,
+} from '@ng-icons/lucide';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
@@ -27,7 +37,16 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
 @Component({
   selector: 'app-selection-bar',
   imports: [NgIcon, HlmIcon, HlmSpinner, PluralPipe],
-  providers: [provideIcons({ lucideDownload, lucideEyeOff, lucideShare2, lucideX })],
+  providers: [
+    provideIcons({
+      lucideDownload,
+      lucideEyeOff,
+      lucideImage,
+      lucideShare2,
+      lucideTrash2,
+      lucideX,
+    }),
+  ],
   host: { class: 'contents' },
   template: `
     <div
@@ -91,6 +110,31 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
           <span class="hidden sm:inline">Hide from</span>
           <span class="sr-only sm:hidden">Hide from</span>
         </button>
+        @if (albumId() && selection.count() === 1) {
+          <button
+            type="button"
+            class="hover:bg-glass-tint-strong flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
+            (click)="setCover()"
+          >
+            <ng-icon hlm size="sm" name="lucideImage" />
+            <span class="hidden sm:inline">Set as cover</span>
+            <span class="sr-only sm:hidden">Set as cover</span>
+          </button>
+        }
+        <button
+          type="button"
+          class="flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium text-red-700 transition-[background-color,scale] duration-150 hover:bg-red-500/15 active:scale-[0.96] disabled:opacity-50 dark:text-red-400"
+          [disabled]="deleting()"
+          (click)="confirmDelete()"
+        >
+          @if (deleting()) {
+            <hlm-spinner class="size-4" />
+          } @else {
+            <ng-icon hlm size="sm" name="lucideTrash2" />
+          }
+          <span class="hidden sm:inline">Delete</span>
+          <span class="sr-only sm:hidden">Delete</span>
+        </button>
       }
     </div>
   `,
@@ -104,8 +148,13 @@ export class SelectionBar {
   protected readonly isAdmin = inject(Auth).isAdmin;
   private readonly apiUrl = environment.api.url;
 
+  private readonly queryClient = inject(QueryClient);
+  // Set on an album page: enables "Set as cover" for one selected item.
+  readonly albumId = input<string | null>(null);
+
   protected readonly visible = computed(() => this.selection.active());
   protected readonly downloading = signal(false);
+  protected readonly deleting = signal(false);
 
   // Keep the last count while the bar slides away, so it never reads "0 items".
   private readonly lastCount = signal(0);
@@ -163,5 +212,69 @@ export class SelectionBar {
     ref.closed$.subscribe((done) => {
       if (done) this.selection.clear();
     });
+  }
+
+  protected async setCover(): Promise<void> {
+    const albumId = this.albumId();
+    const [fileId] = [...this.selection.ids()];
+    if (!albumId || !fileId) return;
+    try {
+      await this.trpc.edit.setAlbumCover.mutate({ albumId, fileId });
+      this.toast.success('Album cover set');
+      this.selection.clear();
+      await this.queryClient.invalidateQueries();
+    } catch (err) {
+      this.toast.error((err as Error)?.message || 'Could not set the cover. Try again.');
+    }
+  }
+
+  // Move the selected originals to the trash (admin). They leave every view.
+  protected confirmDelete(): void {
+    const fileIds = [...this.selection.ids()];
+    if (!fileIds.length) return;
+    const what =
+      fileIds.length === 1 ? 'this item' : `these ${fileIds.length.toLocaleString()} items`;
+    this.dialog
+      .open(Confirm, {
+        context: {
+          type: 'danger',
+          message:
+            `Delete ${what}? The files move to the trash on the drive, with their RAW files, ` +
+            'and you can restore them from Settings, Trash.',
+        },
+      })
+      .closed$.subscribe(async (confirmed: boolean) => {
+        if (!confirmed) return;
+        this.deleting.set(true);
+        try {
+          let deleted = 0;
+          const failed: { name: string; reason: string }[] = [];
+          for (let i = 0; i < fileIds.length; i += 1000) {
+            const res = await this.trpc.edit.deleteFiles.mutate({
+              fileIds: fileIds.slice(i, i + 1000),
+            });
+            deleted += res.deleted;
+            failed.push(...res.failed);
+          }
+          if (deleted)
+            this.toast.success(
+              `Moved ${deleted.toLocaleString()} ${deleted === 1 ? 'item' : 'items'} to the trash`,
+            );
+          if (failed.length) {
+            this.toast.error(
+              failed.length === 1
+                ? `Could not delete ${failed[0]!.name}: ${failed[0]!.reason}`
+                : `Could not delete ${failed.length} items: ${failed[0]!.reason}`,
+              { duration: 12000 },
+            );
+          }
+          this.selection.clear();
+          await this.queryClient.invalidateQueries();
+        } catch (err) {
+          this.toast.error((err as Error)?.message || 'Could not delete. Try again.');
+        } finally {
+          this.deleting.set(false);
+        }
+      });
   }
 }

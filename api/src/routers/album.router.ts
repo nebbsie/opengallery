@@ -112,26 +112,42 @@ function subtreeStats(
   return { size, lastAddedAt, lastTakenAt };
 }
 
-// Cover for an album: its own first direct image, else the first image found by
+// First photo and first video (both with a thumbnail) of each album, keyed by
+// album id. A video's thumbnail is its poster frame.
+type CoverCandidates = Map<string, { image: string | null; video: string | null }>;
+
+// Cover for an album: its own first direct photo, else the first photo found by
 // walking descendants breadth-first (the album's own photos win, then the nearest
-// sub-album's), else null.
+// sub-album's). An album tree with no photos at all (a videos folder) uses the
+// first video poster the same way. Else null.
 function resolveRecursiveCover(
   albumId: string,
-  firstImageByAlbum: Map<string, string>,
+  candidates: CoverCandidates,
   childrenByParent: Map<string, string[]>,
 ): string | null {
-  const seen = new Set<string>();
-  const queue = [albumId];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const img = firstImageByAlbum.get(id);
-    if (img) return img;
-    queue.push(...(childrenByParent.get(id) ?? []));
+  for (const kind of ["image", "video"] as const) {
+    const seen = new Set<string>();
+    const queue = [albumId];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const hit = candidates.get(id)?.[kind];
+      if (hit) return hit;
+      queue.push(...(childrenByParent.get(id) ?? []));
+    }
   }
   return null;
 }
+
+// The select for coverCandidates: per album, the first photo and first video.
+const coverSelect = {
+  albumId: AlbumFileTable.albumId,
+  image: sql<string | null>`MIN(CASE WHEN ${FileTable.type} = 'image' THEN ${FileTable.id} END)`,
+  video: sql<string | null>`MIN(CASE WHEN ${FileTable.type} = 'video' THEN ${FileTable.id} END)`,
+};
+const coverCandidates = (rows: { albumId: string; image: string | null; video: string | null }[]) =>
+  new Map(rows.map((r) => [r.albumId, { image: r.image, video: r.video }])) as CoverCandidates;
 
 // The explicit covers (album.cover) this viewer may see. An admin sees all; a
 // viewer must never get a cover that is hidden from them or outside their
@@ -421,13 +437,10 @@ export const albumRouter = router({
         statsByAlbum[rootId] = subtreeStats(rootId, directFilesByAlbum, childrenByParent, facts);
       }
 
-      // First direct image per album, for the cover fallback that walks the
+      // First direct photo and video per album, for the cover fallback that walks the
       // subtree when an album has no explicit cover and no direct photo.
       const coverRows = await db
-        .select({
-          albumId: AlbumFileTable.albumId,
-          fileId: sql<string>`MIN(${FileTable.id})`,
-        })
+        .select(coverSelect)
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .innerJoin(
@@ -438,12 +451,10 @@ export const albumRouter = router({
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
-            eq(FileTable.type, "image"),
           ),
         )
         .groupBy(AlbumFileTable.albumId);
-      const firstImageByAlbum = new Map<string, string>();
-      for (const r of coverRows) if (r.fileId) firstImageByAlbum.set(r.albumId, r.fileId);
+      const firstImageByAlbum = coverCandidates(coverRows);
 
       // Pending encode tasks, also rolled up distinct-per-root across the subtree.
       // Outstanding file ids come off file_task_queue_idx (queued) and
@@ -745,10 +756,7 @@ export const albumRouter = router({
       }
 
       const subtreeCoverRows = await db
-        .select({
-          albumId: AlbumFileTable.albumId,
-          fileId: sql<string>`MIN(${FileTable.id})`,
-        })
+        .select(coverSelect)
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
         .innerJoin(
@@ -759,12 +767,10 @@ export const albumRouter = router({
           and(
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
-            eq(FileTable.type, "image"),
           ),
         )
         .groupBy(AlbumFileTable.albumId);
-      const firstImageByAlbum = new Map<string, string>();
-      for (const r of subtreeCoverRows) if (r.fileId) firstImageByAlbum.set(r.albumId, r.fileId);
+      const firstImageByAlbum = coverCandidates(subtreeCoverRows);
 
       // Recursive item count for this album (distinct files across its subtree).
       const recursiveAlbumItems = recursiveItemCount(
@@ -838,6 +844,8 @@ export const albumRouter = router({
           parentId: albumRow.parentId,
           libraryId: albumRow.libraryId,
           items: recursiveAlbumItems,
+          // The cover the user chose (null: automatic).
+          cover: albumRow.albumCover ?? null,
           pendingTasks,
           canManageShares:
             accessScope.isAdmin ||

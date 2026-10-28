@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { adminProcedure, router } from "../trpc.js";
-import { renameFolder, trashFiles, trashFolder } from "../utils/media-edit.js";
+import { renameFolder, setAlbumCover, trashFiles, trashFolder } from "../utils/media-edit.js";
 import { describeWriteError } from "../utils/media-trash.js";
 
 // Library edits that change the media folder too (utils/media-edit.ts).
@@ -48,4 +48,15 @@ export const editRouter = router({
         }
       }),
     ),
+
+  // null: go back to the automatic cover (first photo, then sub-albums).
+  setAlbumCover: adminProcedure
+    .input(z.object({ albumId: z.string().uuid(), fileId: z.string().uuid().nullable() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await setAlbumCover(input.albumId, input.fileId);
+      } catch (e) {
+        throw asBadRequest(e);
+      }
+    }),
 });

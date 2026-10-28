@@ -164,3 +164,22 @@ export async function renameFolder(albumId: string, newName: string) {
   clearScopeCache();
   return { dir: newDir };
 }
+
+// Set an album's cover to a photo or video in the album or its sub-albums, or
+// clear it (null) to go back to the automatic cover.
+export async function setAlbumCover(albumId: string, fileId: string | null) {
+  const album = await albumRow(albumId);
+  if (fileId) {
+    const [file] = await db
+      .select({ id: FileTable.id })
+      .from(FileTable)
+      .where(and(eq(FileTable.id, fileId), underDir(FileTable.dir, album.dir)))
+      .limit(1);
+    if (!file) throw new MediaWriteError("That photo is not in this album", undefined);
+  }
+  await db
+    .update(AlbumTable)
+    .set({ cover: fileId, updatedAt: new Date().toISOString() })
+    .where(eq(AlbumTable.id, albumId));
+  return { cover: fileId };
+}

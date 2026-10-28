@@ -1,4 +1,10 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
+import { Confirm } from '@core/dialogs/confirm/confirm';
+import { Auth } from '@core/services/auth/auth';
+import { ToastService } from '@core/services/toast/toast';
+import { HlmInput } from '@spartan-ng/helm/input';
 import { AlbumThumbnail } from '@core/components/album-thumbnail/album-thumbnail';
 import { AlbumToolbar } from '@core/components/album-toolbar/album-toolbar';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
@@ -10,7 +16,13 @@ import { BackOnEscapeDirective } from '@core/directives/back-on-escape/back-on-e
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideShare2 } from '@ng-icons/lucide';
+import {
+  lucideEllipsis,
+  lucideImage,
+  lucidePencil,
+  lucideShare2,
+  lucideTrash2,
+} from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
@@ -18,7 +30,7 @@ import { GridSkeleton } from '@core/components/loading-thumbnail/grid-skeleton';
 import { SelectionBar } from '@core/components/selection-bar/selection-bar';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { GridSelection } from '@core/services/selection/grid-selection';
-import { injectQuery } from '@tanstack/angular-query-experimental';
+import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 import type { RouterOutputs } from '@core/services/trpc';
 
 @Component({
@@ -35,9 +47,14 @@ import type { RouterOutputs } from '@core/services/trpc';
     LoadingThumbnail,
     HlmButton,
     HlmIcon,
+    HlmInput,
     NgIcon,
+    FormsModule,
   ],
-  providers: [GridSelection, provideIcons({ lucideShare2 })],
+  providers: [
+    GridSelection,
+    provideIcons({ lucideEllipsis, lucideImage, lucidePencil, lucideShare2, lucideTrash2 }),
+  ],
   hostDirectives: [BackOnEscapeDirective],
   host: { class: 'flex h-full min-h-0 flex-col' },
   template: `
@@ -49,20 +66,126 @@ import type { RouterOutputs } from '@core/services/trpc';
       @let data = response.data()!;
 
       <div class="mb-2 flex items-center justify-between gap-3">
-        <app-album-toolbar [items]="data.tree.ancestors" />
-
-        @if (data.album.canManageShares) {
-          <button
-            hlmBtn
-            variant="outline"
-            type="button"
-            class="transition-transform active:scale-[0.96]"
-            (click)="openShareDialog(data.album.id, data.album.name)"
+        @if (renaming()) {
+          <form
+            class="flex min-w-0 flex-1 items-center gap-2"
+            (submit)="$event.preventDefault(); saveName(data.album.id)"
           >
-            <ng-icon hlm size="sm" name="lucideShare2" />
-            Share
-          </button>
+            <input
+              hlmInput
+              class="h-11 min-w-0 flex-1 sm:h-9 sm:max-w-sm"
+              aria-label="Album name"
+              maxlength="200"
+              [ngModel]="newName()"
+              (ngModelChange)="newName.set($event)"
+              [ngModelOptions]="{ standalone: true }"
+              (keydown.escape)="renaming.set(false)"
+              autofocus
+            />
+            <button
+              hlmBtn
+              type="submit"
+              class="h-11 sm:h-9"
+              [disabled]="busy() || !newName().trim()"
+            >
+              {{ busy() ? 'Saving' : 'Save' }}
+            </button>
+            <button
+              hlmBtn
+              variant="ghost"
+              type="button"
+              class="h-11 sm:h-9"
+              (click)="renaming.set(false)"
+            >
+              Cancel
+            </button>
+          </form>
+        } @else {
+          <app-album-toolbar [items]="data.tree.ancestors" />
         }
+
+        <div class="flex shrink-0 items-center gap-1">
+          @if (data.album.canManageShares && !renaming()) {
+            <button
+              hlmBtn
+              variant="outline"
+              type="button"
+              class="transition-transform active:scale-[0.96]"
+              (click)="openShareDialog(data.album.id, data.album.name)"
+            >
+              <ng-icon hlm size="sm" name="lucideShare2" />
+              Share
+            </button>
+          }
+          @if (isAdmin() && !renaming()) {
+            <!-- Admin edits change the folder on the drive too. -->
+            <div class="relative">
+              <button
+                type="button"
+                class="text-muted-foreground hover:text-foreground hover:bg-muted focus-visible:ring-ring grid size-11 place-items-center rounded-full transition-[background-color,color,scale] duration-150 outline-none focus-visible:ring-2 active:scale-[0.96] sm:size-9"
+                aria-label="Album actions"
+                aria-haspopup="menu"
+                [attr.aria-expanded]="menuOpen()"
+                (click)="menuOpen.set(!menuOpen())"
+              >
+                <ng-icon hlm size="base" name="lucideEllipsis" />
+              </button>
+              @if (menuOpen()) {
+                <div
+                  class="fixed inset-0 z-40"
+                  aria-hidden="true"
+                  (click)="menuOpen.set(false)"
+                ></div>
+                <div
+                  role="menu"
+                  aria-label="Album actions"
+                  class="glass-strong motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 absolute top-full right-0 z-50 mt-1 flex w-60 origin-top-right flex-col rounded-xl p-1.5"
+                  (keydown.escape)="menuOpen.set(false)"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [class]="menuItemClass"
+                    (click)="startRename(data.album.name)"
+                  >
+                    <ng-icon hlm size="sm" name="lucidePencil" class="text-muted-foreground" />
+                    Rename folder
+                  </button>
+                  @if (data.album.cover) {
+                    <button
+                      type="button"
+                      role="menuitem"
+                      [class]="menuItemClass"
+                      (click)="useAutoCover(data.album.id)"
+                    >
+                      <ng-icon hlm size="sm" name="lucideImage" class="text-muted-foreground" />
+                      Use automatic cover
+                    </button>
+                  }
+                  <p class="text-muted-foreground px-3 py-1.5 text-xs text-pretty">
+                    To choose the cover, select one photo and pick Set as cover.
+                  </p>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [class]="menuItemClass + ' text-red-700 dark:text-red-400'"
+                    (click)="
+                      confirmDelete(
+                        data.album.id,
+                        data.album.name,
+                        data.album.items,
+                        data.album.parentId
+                      )
+                    "
+                  >
+                    <ng-icon hlm size="sm" name="lucideTrash2" />
+                    Delete folder
+                  </button>
+                </div>
+              }
+            </div>
+          }
+        </div>
       </div>
 
       @if (allItems().length === 0 && data.children.length === 0) {
@@ -106,7 +229,7 @@ import type { RouterOutputs } from '@core/services/trpc';
             }
           </ng-template>
         </app-virtual-thumbnail-grid>
-        <app-selection-bar />
+        <app-selection-bar [albumId]="data.album.id" />
       }
     }
   `,
@@ -115,7 +238,80 @@ import type { RouterOutputs } from '@core/services/trpc';
 export class AlbumDetail {
   private readonly trpc = injectTrpc();
   private readonly dialog = inject(HlmDialogService);
+  private readonly queryClient = inject(QueryClient);
+  private readonly toast = inject(ToastService);
+  private readonly router = inject(Router);
+  protected readonly isAdmin = inject(Auth).isAdmin;
   id = input.required<string>();
+
+  protected readonly menuOpen = signal(false);
+  protected readonly renaming = signal(false);
+  protected readonly newName = signal('');
+  protected readonly busy = signal(false);
+  protected readonly menuItemClass =
+    'hover:bg-glass-tint focus-visible:bg-glass-tint flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-left text-sm outline-none transition-[background-color,scale] duration-100 active:scale-[0.98] disabled:opacity-50 sm:min-h-9';
+
+  protected startRename(name: string): void {
+    this.menuOpen.set(false);
+    this.newName.set(name);
+    this.renaming.set(true);
+  }
+
+  protected async saveName(albumId: string): Promise<void> {
+    const name = this.newName().trim();
+    if (!name || this.busy()) return;
+    this.busy.set(true);
+    try {
+      await this.trpc.edit.renameAlbum.mutate({ albumId, name });
+      this.renaming.set(false);
+      this.toast.success(`Renamed to ${name}`);
+      await this.queryClient.invalidateQueries();
+    } catch (err) {
+      this.toast.error((err as Error)?.message || 'Could not rename the folder. Try again.');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async useAutoCover(albumId: string): Promise<void> {
+    this.menuOpen.set(false);
+    try {
+      await this.trpc.edit.setAlbumCover.mutate({ albumId, fileId: null });
+      this.toast.success('The cover is automatic again');
+      await this.queryClient.invalidateQueries();
+    } catch (err) {
+      this.toast.error((err as Error)?.message || 'Could not change the cover. Try again.');
+    }
+  }
+
+  protected confirmDelete(
+    albumId: string,
+    name: string,
+    items: number,
+    parentId: string | null,
+  ): void {
+    this.menuOpen.set(false);
+    this.dialog
+      .open(Confirm, {
+        context: {
+          type: 'danger',
+          message:
+            `Delete the folder ${name} and its ${items === 1 ? '1 item' : `${items.toLocaleString()} items`}, ` +
+            'with its sub-folders? It moves to the trash on the drive, and you can restore it from Settings, Trash.',
+        },
+      })
+      .closed$.subscribe(async (confirmed: boolean) => {
+        if (!confirmed) return;
+        try {
+          const res = await this.trpc.edit.deleteAlbum.mutate({ albumId });
+          this.toast.success(`Moved ${name} (${res.files.toLocaleString()} items) to the trash`);
+          await this.router.navigate(parentId ? ['/albums', parentId] : ['/albums']);
+          await this.queryClient.invalidateQueries();
+        } catch (err) {
+          this.toast.error((err as Error)?.message || 'Could not delete the folder. Try again.');
+        }
+      });
+  }
 
   response = injectQuery(() => ({
     queryKey: [CacheKey.AlbumSingle, this.id()],
