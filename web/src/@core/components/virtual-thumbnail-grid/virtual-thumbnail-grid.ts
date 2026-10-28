@@ -27,7 +27,7 @@ import {
 import { GridSelection } from '@core/services/selection/grid-selection';
 import { ScrollPosition } from '@core/services/scroll-position/scroll-position';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCheck, lucideLayoutGrid, lucideRows3 } from '@ng-icons/lucide';
+import { lucideLayoutGrid, lucideRows3 } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { Subject } from 'rxjs';
 import {
@@ -80,7 +80,6 @@ export type GridRow<T> =
     } & Span)
   | ({ type: 'day-header'; key: number; label: string; height: number } & Span);
 
-type HeaderRow<T> = Extract<GridRow<T>, { type: 'month-header' | 'day-header' }>;
 
 class GridVirtualScrollStrategy implements VirtualScrollStrategy {
   private readonly _scrolledIndexChange = new Subject<number>();
@@ -229,7 +228,7 @@ const RAIL_PADDING_Y = 24;
   imports: [ScrollingModule, NgClass, NgTemplateOutlet, NgIcon, HlmIcon],
   providers: [
     { provide: VIRTUAL_SCROLL_STRATEGY, useFactory: () => new GridVirtualScrollStrategy() },
-    provideIcons({ lucideCheck, lucideLayoutGrid, lucideRows3 }),
+    provideIcons({ lucideLayoutGrid, lucideRows3 }),
   ],
   host: {
     class: 'block h-full',
@@ -297,37 +296,7 @@ const RAIL_PADDING_Y = 24;
               }
             </div>
           } @else if (row.type === 'month-header' || row.type === 'day-header') {
-            @let state = headerState(row);
-            <div
-              class="group/header flex h-full items-end gap-1.5 px-1 pb-2"
-              [class.pl-0]="!!selection"
-            >
-              @if (selection) {
-                <button
-                  type="button"
-                  class="-my-1 grid size-7 shrink-0 place-items-center rounded-full transition-[opacity,scale] duration-150 ease-out focus-visible:opacity-100 active:scale-[0.96]"
-                  [class]="
-                    selection.active() || state !== 'none'
-                      ? 'opacity-100'
-                      : 'opacity-0 group-hover/header:opacity-100 pointer-coarse:hidden'
-                  "
-                  role="checkbox"
-                  [attr.aria-checked]="state === 'all' ? true : state === 'some' ? 'mixed' : false"
-                  [attr.aria-label]="'Select all from ' + headerLabel(row)"
-                  (click)="toggleHeader(row)"
-                >
-                  <span
-                    class="grid size-5 place-items-center rounded-full transition-colors duration-150"
-                    [class]="
-                      state === 'all'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-transparent ring-muted-foreground/70 ring-2 ring-inset hover:text-muted-foreground'
-                    "
-                  >
-                    <ng-icon hlm name="lucideCheck" class="size-3" />
-                  </span>
-                </button>
-              }
+            <div class="flex h-full items-end gap-1.5 px-1 pb-2">
               @if (row.type === 'month-header') {
                 <h3 class="text-foreground text-base font-semibold text-balance">
                   {{ row.monthName }} {{ row.year }}
@@ -789,33 +758,6 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
     this.itemIds().forEach((id, i) => map.set(id, i));
     return map;
   });
-
-  protected headerState(row: HeaderRow<T>): 'all' | 'some' | 'none' {
-    const sel = this.selection;
-    if (!sel) return 'none';
-    const ids = sel.ids();
-    if (!ids.size) return 'none';
-    const all = this.itemIds();
-    let hit = 0;
-    let total = 0;
-    for (let i = row.start; i < row.end; i++) {
-      if (!all[i]) continue;
-      total++;
-      if (ids.has(all[i])) hit++;
-    }
-    return hit === 0 ? 'none' : hit === total ? 'all' : 'some';
-  }
-
-  protected headerLabel(row: HeaderRow<T>): string {
-    return row.type === 'month-header' ? `${row.monthName} ${row.year}` : row.label;
-  }
-
-  protected toggleHeader(row: HeaderRow<T>): void {
-    const sel = this.selection;
-    if (!sel) return;
-    const ids = this.itemIds().slice(row.start, row.end).filter(Boolean);
-    sel.setMany(ids, this.headerState(row) !== 'all');
-  }
 
   // ---- Desktop drag-select (Google style: press on a check circle, or on
   // any tile while in select mode, then drag across tiles) ------------------

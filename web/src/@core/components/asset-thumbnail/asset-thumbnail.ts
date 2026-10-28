@@ -136,7 +136,7 @@ const altDate = new Intl.DateTimeFormat(undefined, {
         type="button"
         tabindex="-1"
         data-select-check
-        class="absolute top-0.5 left-0.5 grid size-9 place-items-center rounded-full transition-[opacity,scale] duration-150 ease-out focus-visible:opacity-100 active:scale-[0.96]"
+        class="absolute top-0.5 left-0.5 grid size-8 place-items-center rounded-full transition-[opacity,scale] duration-150 ease-out focus-visible:opacity-100 active:scale-[0.96]"
         [class]="selection.active() ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
         role="checkbox"
         [attr.aria-checked]="selected()"
@@ -144,14 +144,14 @@ const altDate = new Intl.DateTimeFormat(undefined, {
         (click)="onCheckClick($event)"
       >
         <span
-          class="grid size-[22px] place-items-center rounded-full shadow-sm transition-colors duration-150"
+          class="grid size-[18px] place-items-center rounded-full shadow-sm transition-colors duration-150"
           [class]="
             selected()
-              ? 'bg-primary text-primary-foreground ring-2 ring-white'
-              : 'bg-black/20 text-white/0 ring-2 ring-white/90 hover:text-white/90'
+              ? 'bg-primary text-primary-foreground ring-[1.5px] ring-white'
+              : 'bg-black/20 text-white/0 ring-[1.5px] ring-white/90 hover:text-white/90'
           "
         >
-          <ng-icon hlm name="lucideCheck" class="size-3.5" />
+          <ng-icon hlm size="12px" name="lucideCheck" />
         </span>
       </button>
     }
