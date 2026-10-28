@@ -78,6 +78,11 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./settings-duplicates/settings-duplicates').then((c) => c.SettingsDuplicates),
       },
+      {
+        path: 'trash',
+        canActivate: [AdminGuard],
+        loadComponent: () => import('./settings-trash/settings-trash').then((c) => c.SettingsTrash),
+      },
     ],
   },
 ];

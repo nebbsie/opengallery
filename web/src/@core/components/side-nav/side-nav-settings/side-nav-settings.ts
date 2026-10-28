@@ -12,6 +12,7 @@ import {
   lucideLogs,
   lucideMapPin,
   lucideMonitor,
+  lucideTrash2,
   lucideUser,
   lucideUsers,
 } from '@ng-icons/lucide';
@@ -44,6 +45,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
       lucideUser,
       lucideMapPin,
       lucideCopy,
+      lucideTrash2,
     }),
   ],
   host: {
@@ -288,6 +290,25 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
           <ng-icon hlm size="sm" name="lucideCopy" />
         </a>
         <span *brnTooltipContent class="flex items-center"> Duplicates </span>
+      </hlm-tooltip>
+
+      <hlm-tooltip>
+        <a
+          hlmTooltipTrigger
+          position="right"
+          hlmBtn
+          routerLink="/settings/trash"
+          aria-label="Trash"
+          routerLinkActive="active"
+          size="icon"
+          #rlaTrash="routerLinkActive"
+          [variant]="rlaTrash.isActive ? 'menu_active' : 'menu'"
+          [routerLinkActiveOptions]="{ exact: true }"
+          (click)="handleClicked()"
+        >
+          <ng-icon hlm size="sm" name="lucideTrash2" />
+        </a>
+        <span *brnTooltipContent class="flex items-center"> Trash </span>
       </hlm-tooltip>
     }
   `,
