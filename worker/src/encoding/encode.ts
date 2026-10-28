@@ -36,6 +36,15 @@ class UndecodableImageError extends Error {
   }
 }
 
+// Single-frame decode of one image. Generous for a slow USB read.
+const FFMPEG_DECODE_TIMEOUT_MS = 2 * 60 * 1000;
+// ffmpeg prints progress to stderr about twice a second. If it prints nothing
+// for this long it is hung (e.g. stuck on a dead USB read); kill it so one bad
+// file cannot stall the encode batch, and with it the whole encode loop.
+const FFMPEG_STALL_TIMEOUT_MS = 10 * 60 * 1000;
+// Keep only the tail of stderr for error messages.
+const FFMPEG_STDERR_MAX = 16 * 1024;
+
 // Last-resort decode for images libvips rejects. ffmpeg's mjpeg decoder is far
 // more tolerant of truncated / malformed JPEGs; we ask it to emit a single
 // clean PNG frame to stdout, which sharp can then re-encode normally. Returns
@@ -52,11 +61,21 @@ async function ffmpegDecodeToPng(path: string): Promise<Buffer | null> {
       '-vcodec', 'png',
       'pipe:1',
     ];
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // stderr is ignored, not piped: nothing read the pipe, so a corrupt file
+    // that logs more than the pipe buffer of errors blocked ffmpeg forever.
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] });
     const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      resolve(null);
+    }, FFMPEG_DECODE_TIMEOUT_MS);
     child.stdout.on('data', (d) => chunks.push(d as Buffer));
-    child.on('error', () => resolve(null));
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
     child.on('close', (code) => {
+      clearTimeout(timer);
       const buf = Buffer.concat(chunks);
       resolve(code === 0 && buf.length > 0 ? buf : null);
     });
@@ -111,6 +130,11 @@ async function encodeImage(
     const metadata = await openImage(path).metadata();
     width = metadata.width ?? null;
     height = metadata.height ?? null;
+    // metadata() reports stored (pre-rotation) dims, but the variants are
+    // auto-rotated. EXIF orientations 5-8 swap the axes.
+    if ((metadata.orientation ?? 1) >= 5) {
+      [width, height] = [height, width];
+    }
   } catch (e) {
     logger.warn(`[encode:image] metadata read failed for id=${fileId}`, e as Error);
   }
@@ -506,14 +530,43 @@ async function runFfmpeg(args: string[], label: string) {
     logger.debug(`[ffmpeg:${label}] spawn ${args.join(' ')}`);
     const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
-    child.stderr.on('data', (d) => (stderr += String(d)));
+    const stall = armStallTimer(child, label, reject);
+    child.stderr.on('data', (d) => {
+      stall.reset();
+      stderr = (stderr + String(d)).slice(-FFMPEG_STDERR_MAX);
+    });
     child.on('close', (code) => {
+      stall.clear();
       if (code === 0) return resolve();
       logger.error(`[ffmpeg:${label}] failed code=${code} stderr=${stderr}`);
       reject(new Error(`ffmpeg ${label} failed (code ${code}): ${stderr}`));
     });
-    child.on('error', (err) => reject(err));
+    child.on('error', (err) => {
+      stall.clear();
+      reject(err);
+    });
   });
+}
+
+// Kill ffmpeg and reject if it goes silent for FFMPEG_STALL_TIMEOUT_MS. Rejects
+// at once rather than on 'close', because a process stuck in an uninterruptible
+// read may not exit after SIGKILL until the I/O returns.
+function armStallTimer(
+  child: ReturnType<typeof spawn>,
+  label: string,
+  reject: (err: Error) => void,
+) {
+  let timer: NodeJS.Timeout | undefined;
+  const reset = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      logger.error(`[ffmpeg:${label}] no output for ${FFMPEG_STALL_TIMEOUT_MS}ms, killing`);
+      child.kill('SIGKILL');
+      reject(new Error(`ffmpeg ${label} stalled`));
+    }, FFMPEG_STALL_TIMEOUT_MS);
+  };
+  reset();
+  return { reset, clear: () => clearTimeout(timer) };
 }
 
 async function runFfmpegWithProgress(
@@ -527,13 +580,17 @@ async function runFfmpegWithProgress(
     const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     let lastReportedPercent = -1;
+    const stall = armStallTimer(child, label, reject);
 
     child.stderr.on('data', async (d) => {
+      stall.reset();
       const chunk = String(d);
-      stderr += chunk;
+      // Bounded tail: the full stderr of a long encode is megabytes, and
+      // re-scanning all of it on every chunk was quadratic.
+      stderr = (stderr + chunk).slice(-FFMPEG_STDERR_MAX);
 
       // Parse progress from FFmpeg output
-      const currentTime = parseFfmpegTime(stderr);
+      const currentTime = parseFfmpegTime(chunk);
       if (currentTime !== null && durationSeconds > 0) {
         const percent = Math.min(
           100,
@@ -552,12 +609,16 @@ async function runFfmpegWithProgress(
     });
 
     child.on('close', (code) => {
+      stall.clear();
       if (code === 0) return resolve();
       logger.error(`[ffmpeg:${label}] failed code=${code} stderr=${stderr}`);
       reject(new Error(`ffmpeg ${label} failed (code ${code}): ${stderr}`));
     });
 
-    child.on('error', (err) => reject(err));
+    child.on('error', (err) => {
+      stall.clear();
+      reject(err);
+    });
   });
 }
 
@@ -652,7 +713,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
           '-pix_fmt',
           'yuv420p',
           '-vf',
-          "scale='min(1920,iw)':'-2'",
+          "scale='trunc(min(1920,iw)/2)*2':'-2'",
           '-c:a',
           'aac',
           '-b:a',
@@ -709,7 +770,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
             '-pix_fmt',
             'yuv420p',
             '-vf',
-            "scale='min(1920,iw)':'-2'",
+            "scale='trunc(min(1920,iw)/2)*2':'-2'",
             '-c:a',
             'aac',
             '-b:a',
@@ -744,7 +805,7 @@ async function encodeVideo(file: File, existingVariants?: { thumbPath: string; o
             '-pix_fmt',
             'yuv420p',
             '-vf',
-            "scale='min(1920,iw)':'-2'",
+            "scale='trunc(min(1920,iw)/2)*2':'-2'",
             '-c:a',
             'aac',
             '-b:a',

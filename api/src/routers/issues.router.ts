@@ -1,11 +1,37 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { type SQL, and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import {
+  type SessionLike,
+  buildFileAccessFilter,
+  getAccessScope,
+} from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import { FileTaskTable } from "../db/schema.js";
-import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { privateProcedure, router } from "../trpc.js";
+
+// Restrict task rows to files in libraries the caller owns. Admins and the
+// internal worker are unrestricted. Shared (view-only) access is not enough to
+// list or reset another user's encode tasks.
+async function ownedTaskFilter(
+  userId: string | null,
+  session: SessionLike,
+): Promise<SQL> {
+  if (!userId) return sql`1 = 1`;
+  const scope = await getAccessScope(userId, session);
+  return buildFileAccessFilter(
+    {
+      ...scope,
+      accessibleLibraryIds: scope.ownedLibraryIds,
+      recursiveAlbumIds: new Set(),
+      directFileIds: new Set(),
+    },
+    FileTaskTable.fileId,
+  );
+}
 
 export const issuesRouter = router({
-  list: privateProcedure.query(async () => {
+  list: privateProcedure.query(async ({ ctx: { userId, session } }) => {
+    const owned = await ownedTaskFilter(userId, session);
     const encodeTypes = [
       "encode_thumbnail",
       "encode_optimised",
@@ -21,7 +47,8 @@ export const issuesRouter = router({
       .where(
         and(
           inArray(FileTaskTable.type, [...encodeTypes]),
-          sql`${FileTaskTable.attempts} >= 3`
+          sql`${FileTaskTable.attempts} >= 3`,
+          owned
         )
       )
       .groupBy(FileTaskTable.fileId)
@@ -35,7 +62,8 @@ export const issuesRouter = router({
 
   retry: privateProcedure
     .input(z.object({ fileId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      const owned = await ownedTaskFilter(userId, session);
       const encodeTypes = [
         "encode_thumbnail",
         "encode_optimised",
@@ -55,13 +83,15 @@ export const issuesRouter = router({
         .where(
           and(
             eq(FileTaskTable.fileId, input.fileId),
-            inArray(FileTaskTable.type, [...encodeTypes])
+            inArray(FileTaskTable.type, [...encodeTypes]),
+            owned
           )
         );
       return { ok: true } as const;
     }),
 
-  retryAll: privateProcedure.mutation(async () => {
+  retryAll: privateProcedure.mutation(async ({ ctx: { userId, session } }) => {
+    const owned = await ownedTaskFilter(userId, session);
     const encodeTypes = [
       "encode_thumbnail",
       "encode_optimised",
@@ -81,7 +111,8 @@ export const issuesRouter = router({
       .where(
         and(
           inArray(FileTaskTable.type, [...encodeTypes]),
-          sql`${FileTaskTable.attempts} >= 3`
+          sql`${FileTaskTable.attempts} >= 3`,
+          owned
         )
       )
       .returning({ fileId: FileTaskTable.fileId });

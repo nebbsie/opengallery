@@ -6,7 +6,12 @@ import {
   getAccessScope,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
-import { cameraSortExpr, galleryOrderBy } from "../db/file-sort.js";
+import {
+  cameraSortExpr,
+  galleryOrderBy,
+  keysetBefore,
+} from "../db/file-sort.js";
+import { hiddenPeopleFilter } from "../db/file-filters.js";
 import {
   FileTable,
   FileVariantTable,
@@ -23,7 +28,10 @@ export const cameraRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED" });
       }
 
-      const accessScope = await getAccessScope(userId, session);
+      const [accessScope, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
 
       // Get all unique camera make/model combinations with file counts
       const cameras = await db
@@ -43,6 +51,7 @@ export const cameraRouter = router({
           and(
             buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
+            hiddenFilter,
             sql`${ImageMetadataTable.cameraMake} IS NOT NULL`,
             sql`${ImageMetadataTable.cameraModel} IS NOT NULL`,
           ),
@@ -73,7 +82,10 @@ export const cameraRouter = router({
       }
 
       const { make, model, limit, cursor } = input;
-      const accessScope = await getAccessScope(userId, session);
+      const [accessScope, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
 
       // If cursor provided, get the sort value of that record to paginate from
       let cursorCondition: ReturnType<typeof sql> | undefined;
@@ -81,13 +93,20 @@ export const cameraRouter = router({
         const [cursorRecord] = await db
           .select({
             sortTs: FileTable.takenAt,
+            id: FileTable.id,
           })
           .from(FileTable)
           .where(eq(FileTable.id, cursor))
           .limit(1);
 
+        // Full keyset (takenAt, id) so burst shots sharing a takenAt across a
+        // page boundary are not skipped.
         if (cursorRecord?.sortTs) {
-          cursorCondition = sql`${FileTable.takenAt} < ${cursorRecord.sortTs}`;
+          cursorCondition = keysetBefore(
+            cameraSortExpr,
+            cursorRecord.sortTs,
+            cursorRecord.id,
+          );
         }
       }
 
@@ -111,6 +130,8 @@ export const cameraRouter = router({
             isNull(LibraryFileTable.deletedAt),
             eq(ImageMetadataTable.cameraMake, make),
             eq(ImageMetadataTable.cameraModel, model),
+            // Match the camera prev/next navigation in files.viewFile.
+            hiddenFilter,
             // Only include files that have an actual takenAt date
             isNotNull(ImageMetadataTable.takenAt),
             // Only include files that have BOTH thumbnail and optimised variants

@@ -9,7 +9,7 @@ import {
   type AccessScope,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
-import { fileSortExpr, galleryOrderBy } from "../db/file-sort.js";
+import { fileSortExpr, galleryOrderBy, keysetBefore } from "../db/file-sort.js";
 import {
   FaceTable,
   FileTable,
@@ -143,15 +143,21 @@ async function resolveLibraryId(fileId: string): Promise<string | null> {
 // Ensure the requesting user is allowed to act on a person cluster, returning
 // the person row. Admins can act on any cluster (their accessibleLibraryIds only
 // covers their own/shared libraries, so we must short-circuit on isAdmin here).
-// Throws NOT_FOUND/FORBIDDEN otherwise.
-async function loadAuthorizedPerson(personId: string, scope: AccessScope) {
+// Throws NOT_FOUND/FORBIDDEN otherwise. Pass write=true for mutations: a library
+// shared to the user is view-only, so only the owner may change its clusters.
+async function loadAuthorizedPerson(
+  personId: string,
+  scope: AccessScope,
+  write = false,
+) {
   const [person] = await db
     .select()
     .from(PersonTable)
     .where(eq(PersonTable.id, personId))
     .limit(1);
   if (!person) throw new TRPCError({ code: "NOT_FOUND", message: "Person not found" });
-  if (!scope.isAdmin && !scope.accessibleLibraryIds.has(person.libraryId)) {
+  const allowed = write ? scope.ownedLibraryIds : scope.accessibleLibraryIds;
+  if (!scope.isAdmin && !allowed.has(person.libraryId)) {
     throw new TRPCError({ code: "FORBIDDEN" });
   }
   return person;
@@ -626,7 +632,7 @@ export const facesRouter = router({
     .mutation(async ({ ctx: { userId, session }, input }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
-      await loadAuthorizedPerson(input.id, scope);
+      await loadAuthorizedPerson(input.id, scope, true);
       const name = input.name && input.name.length > 0 ? input.name : null;
       await db
         .update(PersonTable)
@@ -640,7 +646,7 @@ export const facesRouter = router({
     .mutation(async ({ ctx: { userId, session }, input }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
-      await loadAuthorizedPerson(input.personId, scope);
+      await loadAuthorizedPerson(input.personId, scope, true);
       const [face] = await db
         .select({ id: FaceTable.id, personId: FaceTable.personId })
         .from(FaceTable)
@@ -682,7 +688,7 @@ export const facesRouter = router({
     .mutation(async ({ ctx: { userId, session }, input }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
-      await loadAuthorizedPerson(input, scope);
+      await loadAuthorizedPerson(input, scope, true);
       await db
         .update(FaceTable)
         .set({ personId: null, updatedAt: new Date().toISOString() })
@@ -993,7 +999,9 @@ export const facesRouter = router({
           .where(eq(FileTable.id, input.cursor))
           .limit(1);
         if (cursorRecord?.sortTs) {
-          cursorCondition = sql`${fileSortExpr} < ${cursorRecord.sortTs}`;
+          // Full (sortTs, id) keyset so files sharing the cursor's timestamp
+          // (burst shots) are not skipped at a page boundary.
+          cursorCondition = keysetBefore(fileSortExpr, cursorRecord.sortTs, input.cursor);
         }
       }
 

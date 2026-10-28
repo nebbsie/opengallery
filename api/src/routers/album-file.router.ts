@@ -5,7 +5,7 @@ import { AlbumFileTable, FileTable } from "../db/schema.js";
 import { eq, inArray } from "drizzle-orm";
 
 export const albumFileRouter = router({
-  create: privateProcedure
+  create: internalProcedure
     .input(
       z.array(
         z.object({
@@ -14,11 +14,9 @@ export const albumFileRouter = router({
         }),
       ),
     )
-    .mutation(({ ctx: { userId }, input }) =>
-      db.insert(AlbumFileTable).values(input),
-    ),
+    .mutation(({ input }) => db.insert(AlbumFileTable).values(input)),
 
-  getByAlbumIds: privateProcedure
+  getByAlbumIds: internalProcedure
     .input(z.array(z.string()))
     .query(({ input: albumIds }) =>
       db

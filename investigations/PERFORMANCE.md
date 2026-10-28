@@ -38,10 +38,9 @@ width/height from the thumbnail/opt `info` instead of a separate `metadata()` pa
 - **P7 — Infinite-scroll page size still 500.** `gallery-all.ts:94`, `gallery-photos.ts`, `gallery-videos.ts`,
   and prefetch guards all request `limit: 500` (~200–500KB JSON/page for ~20–40 visible tiles). The May "reduce to 60"
   was never applied. **Fix:** drop to 60–100; background-prefetch the next page.
-- **P8 — Route-guard prefetch blocks navigation AND has a mismatched cache key.** `web/src/app/prefetch-guards.ts:11`
-  `await`s a 500-item `prefetchInfiniteQuery` before returning `true`; its `queryKey: [CacheKey.GalleryAll]` does NOT
-  match the component's `[CacheKey.GalleryAll, { seekCursor }]` (`gallery-all.ts:90`), so it pays the cost twice and
-  reuses neither. **Fix:** return `true` immediately; align the queryKey so the prefetch is consumed.
+- **P8 — Route-guard prefetch blocks navigation.** `web/src/app/prefetch-guards.ts:11`
+  `await`s a 500-item `prefetchInfiniteQuery` before returning `true`. (The cache key mismatch was fixed on
+  2026-10-28, so the prefetch is now reused.) **Fix:** return `true` immediately.
 - **P9a — No `FileTable.type` index** (`schema.ts:96`); photos/videos views (`files.router.ts:283,649`) filter unindexed.
 - **P9b — No SSR despite full SSR infra** — `web/src/app/app.routes.server.ts` is a single `RenderMode.Client` `**`
   route; the SSR server emits an empty shell. **Fix:** prerender login + SSR first gallery page, or drop the SSR server.

@@ -44,7 +44,7 @@ export class PrefetchService {
    */
   prefetchGalleryAll(): void {
     void this.queryClient.prefetchInfiniteQuery({
-      queryKey: [CacheKey.GalleryAll],
+      queryKey: [CacheKey.GalleryAll, { seekCursor: null }],
       queryFn: async ({ pageParam }) =>
         this.trpc.files.getUsersFiles.query({ kind: 'all', limit: 500, cursor: pageParam }),
       initialPageParam: null as string | null,
@@ -55,7 +55,7 @@ export class PrefetchService {
 
   prefetchGalleryPhotos(): void {
     void this.queryClient.prefetchInfiniteQuery({
-      queryKey: [CacheKey.GalleryPhotos],
+      queryKey: [CacheKey.GalleryPhotos, { seekCursor: null }],
       queryFn: async ({ pageParam }) =>
         this.trpc.files.getUsersFiles.query({ kind: 'image', limit: 500, cursor: pageParam }),
       initialPageParam: null as string | null,
@@ -66,7 +66,7 @@ export class PrefetchService {
 
   prefetchGalleryVideos(): void {
     void this.queryClient.prefetchInfiniteQuery({
-      queryKey: [CacheKey.GalleryVideos],
+      queryKey: [CacheKey.GalleryVideos, { seekCursor: null }],
       queryFn: async ({ pageParam }) =>
         this.trpc.files.getUsersFiles.query({ kind: 'video', limit: 500, cursor: pageParam }),
       initialPageParam: null as string | null,

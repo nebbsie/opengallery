@@ -14,6 +14,8 @@ import {
   UiSettingsTable,
   UserTable,
 } from "../db/schema.js";
+import { auth, runAsAdminSignup } from "../auth/auth.js";
+import { clearSessionCache } from "../auth/session-cache.js";
 import { adminProcedure, privateProcedure, publicProcedure, router } from "../trpc.js";
 
 export const usersRouter = router({
@@ -108,6 +110,10 @@ export const usersRouter = router({
         .where(eq(UserTable.id, input.id))
         .returning();
 
+      // Drop cached sessions so the deleted user loses access now, not after
+      // the session cache TTL.
+      clearSessionCache();
+
       if (!deletedUser) {
         throw new TRPCError({
           code: "NOT_FOUND",
@@ -133,29 +139,23 @@ export const usersRouter = router({
       if (session.user.type !== "admin")
         throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
 
-      // Call Better Auth server handler without forwarding client cookies, so current session remains
-      const base =
-        process.env["PUBLIC_URL"] ||
-        process.env["API_BASE_URL"] ||
-        "http://localhost:3000";
-      const url = new URL("/api/auth/sign-up/email", base).toString();
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        // DO NOT FORWARD cookies; ensure admin stays logged in
-        body: JSON.stringify({
-          email: input.email,
-          password: input.password,
-          name: input.name,
-        }),
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
+      // Call Better Auth directly without the caller's headers, so the admin's
+      // own session is left alone. runAsAdminSignup lets this through when
+      // self-registration is turned off.
+      try {
+        await runAsAdminSignup(() =>
+          auth.api.signUpEmail({
+            body: {
+              email: input.email,
+              password: input.password,
+              name: input.name,
+            },
+          }),
+        );
+      } catch (err) {
         throw new TRPCError({
           code: "BAD_REQUEST",
-          message: text || "Failed to create user",
+          message: (err as Error)?.message || "Failed to create user",
         });
       }
 

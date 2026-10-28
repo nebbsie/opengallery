@@ -47,7 +47,9 @@ import { injectMutation, QueryClient } from '@tanstack/angular-query-experimenta
         } @else {
           <div class="flex items-center gap-2">
             <span class="text-sm">Rescan GPS for your whole library?</span>
-            <button hlmBtn size="sm" (click)="rescan()">Yes, rescan</button>
+            <button hlmBtn size="sm" (click)="rescan()" [disabled]="rescanMutation.isPending()">
+              Yes, rescan
+            </button>
             <button hlmBtn variant="ghost" size="sm" (click)="confirming.set(false)">Cancel</button>
           </div>
         }

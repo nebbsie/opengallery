@@ -60,6 +60,7 @@ export class Map implements OnDestroy {
   private fetchToken = 0;
   // The first fetch (world view) decides the empty state and the initial fit.
   private firstFetch = true;
+  private destroyed = false;
 
   private readonly clientReady = signal(false);
   protected readonly loading = signal(true);
@@ -84,6 +85,7 @@ export class Map implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
     // Invalidate any in-flight fetch so its late response can't touch a torn-down map.
     this.fetchToken++;
     if (this.map) {
@@ -104,7 +106,7 @@ export class Map implements OnDestroy {
     this.leaflet = leaflet;
 
     // The component may have been destroyed while leaflet was loading.
-    if (!this.mapContainer()) {
+    if (this.destroyed || !this.mapContainer()) {
       this.initializing = false;
       return;
     }

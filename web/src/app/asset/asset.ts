@@ -741,6 +741,9 @@ export class Asset implements OnDestroy {
   }
 
   onKeydown(event: KeyboardEvent) {
+    // Leave keys to an open dialog (e.g. Share): Escape should only close it and
+    // arrows should not swap the asset underneath it.
+    if (event.defaultPrevented || document.querySelector('.cdk-overlay-pane')) return;
     // Allow quick back navigation with ESC when coming from a page
     if (this.backLink && event.key === 'Escape') {
       this.router.navigateByUrl(this.backLink);

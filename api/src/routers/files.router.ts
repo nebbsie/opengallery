@@ -92,7 +92,7 @@ export const filesRouter = router({
       return addedFiles;
     }),
 
-  getFilesInDir: privateProcedure
+  getFilesInDir: internalProcedure
     .input(z.string())
     .query(({ input }) =>
       db.select().from(FileTable).where(eq(FileTable.dir, input)),
@@ -122,9 +122,12 @@ export const filesRouter = router({
           and(
             eq(LibraryTable.userId, userId),
             isNull(LibraryFileTable.deletedAt),
+            // Exact prefix match: LIKE would treat `_`/`%` in the dir as
+            // wildcards and match case-insensitively, deleting files from
+            // unrelated sibling folders.
             or(
               eq(FileTable.dir, dir),
-              sql`${FileTable.dir} LIKE ${dir + "/%"}`,
+              sql`substr(${FileTable.dir}, 1, length(${dir + "/"})) = ${dir + "/"}`,
             ),
           ),
         );
@@ -399,12 +402,13 @@ export const filesRouter = router({
       );
 
       if (albumId) {
-        // Album context: keyset on the same total order the album grid uses.
+        // Album context: keyset on the same total order and row set the album
+        // grid (album.getAlbumInfo) uses, which left-joins image metadata.
         const [prev] = await db
           .select({ id: FileTable.id })
           .from(AlbumFileTable)
           .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+          .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),
@@ -422,7 +426,7 @@ export const filesRouter = router({
           .select({ id: FileTable.id })
           .from(AlbumFileTable)
           .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-          .innerJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
+          .leftJoin(ImageMetadataTable, eq(ImageMetadataTable.fileId, FileTable.id))
           .where(
             and(
               eq(AlbumFileTable.albumId, albumId),

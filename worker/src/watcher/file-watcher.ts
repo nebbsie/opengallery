@@ -2,10 +2,11 @@ import { Logger } from '@opengallery/logger';
 import chokidar from 'chokidar';
 import { lookup as mimeLookup } from 'mime-types';
 import { existsSync, statSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { basename, dirname, extname } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
 import { getMediaType, isSupportedFile, type MediaType } from '../utils/media-types.js';
-import { toContainerPath } from '../utils/paths.js';
+import { toContainerPath, toHostPath } from '../utils/paths.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
 
@@ -52,6 +53,69 @@ export class FileWatcherService {
     // Translate host path to container path if HOST_ROOT_PREFIX is set (Docker); else use as-is.
     const containerPath = toContainerPath(path);
 
+    // Attach the watcher before the initial scan so files created mid-scan are
+    // not missed (D6). Events are buffered until the scan finishes and then
+    // replayed; the handlers re-check the DB, so files the scan already added
+    // are skipped.
+    let buffered: Array<() => Promise<void>> | null = [];
+    const dispatch = (fn: () => Promise<void>) => {
+      if (buffered) buffered.push(fn);
+      else void fn();
+    };
+
+    // Setup watcher.
+    let watcher: chokidar.FSWatcher | undefined;
+    try {
+      watcher = chokidar.watch(containerPath, {
+        persistent: true,
+        ignoreInitial: true,
+        awaitWriteFinish: {
+          stabilityThreshold: 2000,
+          pollInterval: 100,
+        },
+        // Same storage folders the scanner skips: if the variants path sits
+        // inside a media path, encoder output (.jpg posters, .mp4 opts) must
+        // not be imported and re-encoded in a loop.
+        ignored: [
+          /(^|[\/\\])\../,
+          /\.DS_Store$/,
+          /Thumbs\.db$/,
+          /\.tmp$/,
+          /\.log$/,
+          (p: string) =>
+            p.startsWith(containerPath) &&
+            /(^|[\/\\])(uploads|variants|encodes)([\/\\]|$)/.test(p.slice(containerPath.length)),
+        ],
+      });
+
+      // Setup event listeners
+      watcher
+        .on('add', (filePath: string) => {
+          dispatch(() => this.handleFileAdded(filePath, userId, containerPath));
+        })
+        .on('change', (filePath: string) => {
+          dispatch(() => this.handleFileChanged(filePath, userId, containerPath));
+        })
+        .on('unlink', (filePath: string) => {
+          dispatch(() => this.handleFileDeleted(filePath, userId, containerPath));
+        })
+        .on('addDir', (dirPath: string) => {
+          dispatch(() => this.handleDirectoryAdded(dirPath, userId, containerPath));
+        })
+        .on('unlinkDir', (dirPath: string) => {
+          dispatch(() => this.handleDirectoryDeleted(dirPath, userId, containerPath));
+        })
+        .on('error', (error) => {
+          this.logger.error(`Watcher error for ${path}:`, error);
+        });
+
+      // Register now (not after the scan) so the 30s updateWatchers poll does
+      // not see this id as missing and start a second scan + watcher.
+      this.watchers.set(id, { id, path: containerPath, watcher });
+    } catch (error) {
+      this.logger.error(`Failed to add watcher for ${path}:`, error as Error);
+    }
+
     // Do an initial scan, but don't crash if a path is missing or unreadable.
     try {
       await scan(containerPath, userId, { skipAlbumFor: containerPath });
@@ -59,42 +123,24 @@ export class FileWatcherService {
       this.logger.error(`Initial scan failed for ${containerPath} because: ${error}`);
     }
 
-    // Setup watcher.
+    const queued = buffered;
+    buffered = null;
+    // Drop the backlog if the path was removed while the scan ran.
+    if (!watcher || this.watchers.get(id)?.watcher !== watcher) return;
+    for (const fn of queued) {
+      await fn();
+    }
+  }
+
+  // The media drive sits behind a flaky USB bridge. While it remounts, chokidar
+  // can report files and folders as unlinked. Only trust a delete when the
+  // watched root is still readable and non-empty.
+  private async isRootAvailable(rootPath: string): Promise<boolean> {
     try {
-      const watcher = chokidar.watch(containerPath, {
-        persistent: true,
-        ignoreInitial: true,
-        awaitWriteFinish: {
-          stabilityThreshold: 2000,
-          pollInterval: 100,
-        },
-        ignored: [/(^|[\/\\])\../, /\.DS_Store$/, /Thumbs\.db$/, /\.tmp$/, /\.log$/],
-      });
-
-      // Setup event listeners
-      watcher
-        .on('add', async (filePath: string) => {
-          await this.handleFileAdded(filePath, userId, containerPath);
-        })
-        .on('change', async (filePath: string) => {
-          await this.handleFileChanged(filePath, userId, containerPath);
-        })
-        .on('unlink', async (filePath: string) => {
-          await this.handleFileDeleted(filePath, userId, containerPath);
-        })
-        .on('addDir', async (dirPath: string) => {
-          await this.handleDirectoryAdded(dirPath, userId, containerPath);
-        })
-        .on('unlinkDir', async (dirPath: string) => {
-          await this.handleDirectoryDeleted(dirPath, userId, containerPath);
-        })
-        .on('error', (error) => {
-          this.logger.error(`Watcher error for ${path}:`, error);
-        });
-
-      this.watchers.set(id, { id, path: containerPath, watcher });
-    } catch (error) {
-      this.logger.error(`Failed to add watcher for ${path}:`, error as Error);
+      const entries = await readdir(rootPath);
+      return entries.length > 0;
+    } catch {
+      return false;
     }
   }
 
@@ -182,7 +228,9 @@ export class FileWatcherService {
       }
 
       const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
-      const dir = dirname(filePath);
+      // The DB stores host-style paths (the scanner does the same); the
+      // container path is only for reading the file.
+      const dir = toHostPath(dirname(filePath));
       const name = basename(filePath);
 
       // Check if file already exists in database
@@ -232,7 +280,7 @@ export class FileWatcherService {
           const albumName = basename(dir);
           const [existingAlbum] = await trpc.album.getAlbumByDir.query(dir);
 
-          if (!existingAlbum && albumName && dir !== rootPath) {
+          if (!existingAlbum && albumName && dir !== toHostPath(rootPath)) {
             // Determine parent folder path
             const parentPath = dirname(dir) !== dir ? dirname(dir) : null;
 
@@ -308,7 +356,7 @@ export class FileWatcherService {
         return;
       }
 
-      const dir = dirname(filePath);
+      const dir = toHostPath(dirname(filePath));
       const name = basename(filePath);
 
       const existingFiles = (await trpc.files.getFilesInDir.query(dir)) as Array<{
@@ -360,7 +408,12 @@ export class FileWatcherService {
     this.logger.info(`File deleted: ${filePath}`);
 
     try {
-      const dir = dirname(filePath);
+      if (!(await this.isRootAvailable(rootPath))) {
+        this.logger.warn(`Ignoring delete of ${filePath}: media root ${rootPath} is unavailable`);
+        return;
+      }
+
+      const dir = toHostPath(dirname(filePath));
       const name = basename(filePath);
 
       // Find and remove the file from database
@@ -400,13 +453,20 @@ export class FileWatcherService {
     this.logger.info(`Directory deleted: ${dirPath}`);
 
     try {
+      if (!(await this.isRootAvailable(rootPath))) {
+        this.logger.warn(`Ignoring delete of ${dirPath}: media root ${rootPath} is unavailable`);
+        return;
+      }
+
+      const dir = toHostPath(dirPath);
+
       // Remove all files under this directory (recursively) for the user
-      await trpc.files.removeFilesUnderDir.mutate({ dir: dirPath, userId });
+      await trpc.files.removeFilesUnderDir.mutate({ dir, userId });
 
       // Note: Album deletion is not implemented in the API
       // After removing files, try to remove now-empty albums below this path
       try {
-        const result = await trpc.album.removeEmptyUnderDir.mutate({ dir: dirPath, userId });
+        const result = await trpc.album.removeEmptyUnderDir.mutate({ dir, userId });
         this.logger.info(
           `Removed ${result.removed} empty album(s) under deleted directory: ${dirPath}`,
         );

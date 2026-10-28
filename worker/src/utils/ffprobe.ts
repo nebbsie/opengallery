@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { isPlausibleDate } from './exif.js';
 
 type FfprobeFormat = {
   duration?: string;
@@ -18,10 +19,11 @@ type FfprobeResult = {
 };
 
 function parseDate(value: unknown): Date | undefined {
-  if (value instanceof Date) return value;
+  // Rejects the 1904 / 1970 zero dates that muxers write when no clock was set.
+  if (value instanceof Date) return isPlausibleDate(value) ? value : undefined;
   if (typeof value === 'string') {
     const parsed = new Date(value);
-    if (!isNaN(parsed.getTime())) return parsed;
+    if (isPlausibleDate(parsed)) return parsed;
   }
   return undefined;
 }
@@ -128,7 +130,10 @@ export async function getVideoMetadata(inputPath: string): Promise<{
     (formatTags?.['com.apple.quicktime.lens-model'] as string | undefined) ||
     (streamTags?.['lens_model'] as string | undefined) ||
     (formatTags?.['lens_model'] as string | undefined);
-  const { lat, lon } = extractLatLonFromTags(streamTags) || extractLatLonFromTags(formatTags);
+  // extractLatLonFromTags returns {} (truthy) when nothing matches, so `||`
+  // never reached the format tags, where iPhone videos keep their location.
+  const streamLoc = extractLatLonFromTags(streamTags);
+  const { lat, lon } = streamLoc.lat != null ? streamLoc : extractLatLonFromTags(formatTags);
 
   // With exactOptionalPropertyTypes enabled, avoid returning properties with value `undefined`.
   const result: {

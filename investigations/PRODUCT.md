@@ -11,17 +11,14 @@
 
 ### 🟡 Medium
 
-- **D6 — Startup-scan vs live-watch race.** `addWatcher` (`file-watcher.ts:55`) `await scan(...)` completes before
-  chokidar attaches (`ignoreInitial: true`), so files created mid-scan are missed until the next restart.
-  **Fix:** attach the watcher (buffering) before the scan, or add a post-watch reconciliation pass.
 - **D7 — WS broadcasts are global, not per-owner.** `wsManager.broadcast` (`api/src/ws-manager.ts:24`) hits every
   connected user. `file:variant-saved` (`files.router.ts:542`) invalidates *every* user's gallery on *anyone's*
   encode; `file:task-completed` (`file-task.router.ts:242,387`) is emitted but **no client handles it** (dead traffic).
   No data leak (queries are server-scoped) but needless refetches. **Fix:** add `broadcastToUser(userId, …)`
   (the map is already keyed by userId); drop the unhandled `task-completed` emit or wire a handler.
 - **D8 — Non-atomic mutations.** `settings.update` (`settings.router.ts:98`) does select-then-insert/update with no
-  txn (race can duplicate-insert on a fresh DB). `updateShares` (`album.router.ts:891`) deletes-then-inserts with no
-  txn (a crash between leaves the item fully unshared). **Fix:** `onConflictDoUpdate` / wrap in `db.transaction`.
+  txn (race can duplicate-insert on a fresh DB). **Fix:** `onConflictDoUpdate` / wrap in `db.transaction`.
+  (`updateShares` was made atomic on 2026-10-28.)
 - **D-perf cross-refs:** P1 (`getAccessScope` loads whole tables) and P9a (no `FileTable.type` index) live in
   PERFORMANCE.md but touch the same correctness-adjacent code paths.
 

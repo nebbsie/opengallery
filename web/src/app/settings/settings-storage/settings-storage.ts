@@ -241,7 +241,10 @@ export class SettingsStorage {
 
       // Only proceed if we have sources but missing paths
       if (!sourcesData.paths?.length) return;
-      if (data.uploadPath && data.variantsPath) return;
+      // Only seed defaults on first setup (neither path set). If one path is set,
+      // an empty other path was cleared on purpose (variants fall back to
+      // uploads), and re-filling it here would undo the clear on every visit.
+      if (data.uploadPath || data.variantsPath) return;
 
       const firstSource = sourcesData.paths[0].path;
       const hasNoUploadPath = !data.uploadPath;

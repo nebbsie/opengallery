@@ -72,13 +72,19 @@ export class Logger {
     msg: string,
     data?: Record<string, any>,
   ) {
-    const line =
-      data && Object.keys(data).length > 0
-        ? `${msg} ${JSON.stringify(data)}`
-        : msg;
-
     if (!this.config.addToDb) return;
-    await this.config.addToDb(type, line, this.config.name);
+    // Callers never await this. A rejection (API down, unserializable data)
+    // would reach the process unhandledRejection hook, which logs an error,
+    // which calls saveToDb again: an endless loop while the API is down.
+    try {
+      const line =
+        data && Object.keys(data).length > 0
+          ? `${msg} ${JSON.stringify(data)}`
+          : msg;
+      await this.config.addToDb(type, line, this.config.name);
+    } catch {
+      // Logging to the DB is best effort.
+    }
   }
 
   info(msg: string, data?: Record<string, any>) {

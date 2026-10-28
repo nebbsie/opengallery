@@ -112,8 +112,17 @@ export class SettingsUi {
 
   async toggleShowUndated(checked: boolean) {
     this.showUndated.set(checked);
-    await this.trpc.mediaSourcesSettings.updateSettings.mutate({ hideUndated: !checked });
-    // Invalidate gallery and timeline queries so they refetch with the new filter
+    try {
+      await this.trpc.mediaSourcesSettings.updateSettings.mutate({ hideUndated: !checked });
+    } catch {
+      this.showUndated.set(!checked);
+      return;
+    }
+    // Refresh the cached flag too, or the effect above restores the old value
+    // from cache on the next visit to this page.
+    this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
+    // Invalidate gallery, timeline and viewer prev/next so they refetch with the new filter
+    this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
     this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryAll] });
     this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryPhotos] });
     this.queryClient.invalidateQueries({ queryKey: [CacheKey.GalleryVideos] });

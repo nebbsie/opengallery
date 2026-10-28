@@ -326,6 +326,8 @@ export class FaceDetail {
     onSettled: () => {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, this.id()] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
+      // The asset viewer's People chips show this name (cached with no stale time).
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
     },
   }));
 
@@ -384,6 +386,8 @@ export class FaceDetail {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSuggestions] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, targetId] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceFiles, targetId] });
+      // Asset People chips still link to the merged-away person otherwise.
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
       this.closeMerge();
       // This cluster no longer exists — go to the cluster it merged into.
       void this.router.navigate(['/faces', targetId]);

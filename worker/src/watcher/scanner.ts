@@ -24,20 +24,28 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
 
   const folders: string[] = [];
   const byFolder = new Map<string, TempFile[]>();
+  // Host paths of files that were listed but could not be stat'd. The media
+  // drive sits on a flaky USB bridge, so a transient EIO/ENOENT must never be
+  // read as "deleted from disk".
+  const unreadablePaths = new Set<string>();
+  let rootEmpty = false;
 
   const skipAlbumFor = options?.skipAlbumFor ?? rootDir;
   const skipAlbumForHostPath = toHostPath(skipAlbumFor);
 
   // Async recursive directory walk - non-blocking
   async function walk(dir: string): Promise<void> {
-    folders.push(dir);
     let entries: import('node:fs').Dirent[];
     try {
       entries = await readdir(dir, { withFileTypes: true, encoding: 'utf8' });
     } catch (error) {
+      // Not added to `folders`: an unreadable dir must not be reconciled as
+      // empty, or every file in it would be removed from the DB.
       logger.warn(`Failed to read directory during scan, skipping: ${dir}`);
       return;
     }
+    folders.push(dir);
+    if (dir === rootDir && entries.length === 0) rootEmpty = true;
 
     // Collect subdirectories to process
     const subdirs: string[] = [];
@@ -82,9 +90,11 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       })
     );
 
-    for (const result of statResults) {
+    for (const [i, result] of statResults.entries()) {
       if (result.status === 'rejected') {
-        continue; // Skip files that failed to stat
+        // Skip files that failed to stat, but keep their DB rows.
+        unreadablePaths.add(getFullPath(toHostPath(dir), filesToStat[i]!.entry.name));
+        continue;
       }
       const { entry, ext, type, stats } = result.value;
       const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
@@ -161,26 +171,16 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       continue;
     }
 
-    // If no files to add but there are files in the DB for this folder, remove them.
-    if (files.length === 0) {
-      logger.info(`Removing orphaned files for folder: ${folder}`);
-      await trpc.files.removeFilesById.mutate(alreadySavedFiles.map((f: { id: string }) => f.id));
-
-      //here we should really delete them everywhere if not found on disk
-      //albumFile, LibraryFile too due to foreign key constraints in db
-      await trpc.albumFile.removeAlbumFilesById.mutate(
-        alreadySavedFiles.map((f: { id: string }) => f.id),
-      );
-      await trpc.libraryFile.removeLibraryFilesById.mutate(
-        alreadySavedFiles.map((f: { id: string }) => f.id),
-      );
-
-      continue;
-    }
-
-    // If a file is in the DB but not on disk, remove it from the DB.
+    // If a file is in the DB but not on disk, remove it from the DB. Skipped
+    // when the root listed as empty: that is what an unmounted mountpoint looks
+    // like, and treating it as "all files deleted" would wipe the library.
     const pathsOnDisk = new Set(files.map((f) => getFullPath(f.dir, f.name)));
-    const orphanedFiles = alreadySavedFiles.filter((f) => !pathsOnDisk.has(getFullPath(f.dir, f.name)));
+    const orphanedFiles = rootEmpty
+      ? []
+      : alreadySavedFiles.filter((f) => {
+          const p = getFullPath(f.dir, f.name);
+          return !pathsOnDisk.has(p) && !unreadablePaths.has(p);
+        });
     if (orphanedFiles.length > 0) {
       logger.info(`Removing ${orphanedFiles.length} orphaned files for folder: ${folder}`);
       await trpc.files.removeFilesById.mutate(orphanedFiles.map((f: { id: string }) => f.id));

@@ -21,6 +21,7 @@ import {
   router,
 } from "../trpc.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
+import { fileSortExpr, galleryOrderBy, keysetBefore } from "../db/file-sort.js";
 
 // Below this zoom, points are snapped to a lat/lon grid and aggregated
 // server-side so the client never receives more than a handful of points per
@@ -278,14 +279,22 @@ export const geoLocationRouter = router({
       if (cursor) {
         const [cursorRecord] = await db
           .select({
-            sortTs: FileTable.takenAt,
+            sortTs: fileSortExpr,
+            id: FileTable.id,
           })
           .from(FileTable)
           .where(eq(FileTable.id, cursor))
           .limit(1);
 
+        // Keyset on the same (coalesce(takenAt, createdAt), id) order as the
+        // ORDER BY below. Comparing takenAt alone dropped undated files and
+        // ties, and an undated cursor restarted from page one.
         if (cursorRecord?.sortTs) {
-          cursorCondition = sql`${FileTable.takenAt} < ${cursorRecord.sortTs}`;
+          cursorCondition = keysetBefore(
+            fileSortExpr,
+            cursorRecord.sortTs,
+            cursorRecord.id,
+          );
         }
       }
 
@@ -316,7 +325,10 @@ export const geoLocationRouter = router({
             hiddenFilter,
             sql`${GeoLocationTable.lat} BETWEEN ${lat - radiusDegrees} AND ${lat + radiusDegrees}`,
             sql`${GeoLocationTable.lon} BETWEEN ${lon - radiusDegrees} AND ${lon + radiusDegrees}`,
-            sql`(6371 * acos(cos(radians(${lat})) * cos(radians(${GeoLocationTable.lat})) * cos(radians(${GeoLocationTable.lon}) - radians(${lon})) + sin(radians(${lat})) * sin(radians(${GeoLocationTable.lat})))) < 8.04672`,
+            // Clamp the acos argument: for a point at exactly (lat, lon) float
+            // rounding can push it just above 1, acos returns NULL and the
+            // photo at the clicked coordinate is dropped.
+            sql`(6371 * acos(min(1.0, max(-1.0, cos(radians(${lat})) * cos(radians(${GeoLocationTable.lat})) * cos(radians(${GeoLocationTable.lon}) - radians(${lon})) + sin(radians(${lat})) * sin(radians(${GeoLocationTable.lat})))))) < 8.04672`,
             // Only include files that have BOTH thumbnail and optimised variants
             exists(
               db
@@ -343,9 +355,7 @@ export const geoLocationRouter = router({
             ...(cursorCondition ? [cursorCondition] : []),
           ),
         )
-        .orderBy(
-          desc(sql`coalesce(${FileTable.takenAt}, ${FileTable.createdAt})`),
-        )
+        .orderBy(...galleryOrderBy(fileSortExpr))
         .limit(limit + 1);
 
       const data = rows.map((r) => ({

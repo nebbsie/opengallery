@@ -314,6 +314,8 @@ export class FacesList {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSuggestions] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, vars.targetId] });
+      // Asset People chips still link to the merged-away person otherwise.
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
     },
     onSettled: () => this.busyPair.set(null),
   }));
@@ -419,6 +421,8 @@ export class FacesList {
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesPage] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FacesAll] });
       this.queryClient.invalidateQueries({ queryKey: [CacheKey.FaceSingle, id] });
+      // The asset viewer's People chips show this name (cached with no stale time).
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.AssetSingle] });
     },
   }));
 

@@ -1,7 +1,9 @@
 // auth.ts
+import { AsyncLocalStorage } from "node:async_hooks";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { eq } from "drizzle-orm";
+import { APIError } from "better-auth/api";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import {
   AccountTable,
@@ -13,6 +15,18 @@ import {
   UiSettingsTable,
   UserTable,
 } from "../db/schema.js";
+import {
+  getCachedSystemSettings,
+  invalidateSystemSettings,
+} from "../utils/settings-cache.js";
+
+// Set while an admin creates a user (users.create), so the sign-up hook lets
+// the request through even when self-registration is turned off.
+const adminSignup = new AsyncLocalStorage<boolean>();
+
+export function runAsAdminSignup<T>(fn: () => Promise<T>): Promise<T> {
+  return adminSignup.run(true, fn);
+}
 
 const rawOrigins = process.env["TRUSTED_ORIGINS"];
 
@@ -51,25 +65,35 @@ export const auth = betterAuth({
           if (!existingUser && !process.env["STORAGE_PATH"]) {
             throw new Error("STORAGE_PATH is not set in environment variables");
           }
+
+          // The register page hides itself when self-registration is off, but
+          // the sign-up endpoint is public, so enforce the setting here too.
+          // The first user can always sign up (they become the admin).
+          if (existingUser && !adminSignup.getStore()) {
+            const settings = await getCachedSystemSettings();
+            if (!settings?.allowsSelfRegistration) {
+              throw new APIError("FORBIDDEN", {
+                message: "Self-registration is disabled",
+              });
+            }
+          }
         },
         after: async (u) => {
           let insertedSystemSettings = false;
 
           try {
-            // SQLite transactions are serialized, so we don't need advisory locks
-            // Check if there's already an admin, if not promote this user
-            const [existingAdmin] = await db
-              .select({ id: UserTable.id })
-              .from(UserTable)
-              .where(eq(UserTable.type, "admin"))
-              .limit(1);
-
-            if (!existingAdmin) {
-              await db
-                .update(UserTable)
-                .set({ type: "admin" })
-                .where(eq(UserTable.id, u.id));
-            }
+            // Promote this user only if there is no admin yet. One statement,
+            // so two concurrent first sign-ups cannot both become admin (a
+            // separate select + update could interleave across awaits).
+            await db
+              .update(UserTable)
+              .set({ type: "admin" })
+              .where(
+                and(
+                  eq(UserTable.id, u.id),
+                  sql`NOT EXISTS (SELECT 1 FROM "user" WHERE "type" = 'admin')`,
+                ),
+              );
 
             await db.insert(LibraryTable).values({ userId: u.id });
 
@@ -87,6 +111,8 @@ export const auth = betterAuth({
                   variantsPath: `${process.env["STORAGE_PATH"]}/variants`,
                 });
               insertedSystemSettings = true;
+              // The register page may have cached "no settings row" already.
+              invalidateSystemSettings();
             }
 
             await db.insert(MediaSettingsTable).values({
@@ -105,6 +131,7 @@ export const auth = betterAuth({
               }
               await tx.delete(UserTable).where(eq(UserTable.id, u.id));
             });
+            if (insertedSystemSettings) invalidateSystemSettings();
 
             throw error;
           }

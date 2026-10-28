@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import fp from "fastify-plugin";
+import { isInternalToken } from "./trpc.js";
 import { collectDefaultMetrics, Counter, Gauge, Histogram, Registry } from "prom-client";
 
 declare module "fastify" {
@@ -67,13 +68,23 @@ export default fp(async function metrics(app: FastifyInstance) {
 
     const u = new URL(req.url, "http://internal");
     const path = u.pathname;
-    let route =
-      (req as any).routerPath || req.routeOptions?.url || path;
+    // Unmatched URLs (404s, scanners) share one label. Using the raw path
+    // made a new histogram series per URL, so random probes grew memory
+    // without limit.
+    let route = req.routeOptions?.url ?? "unmatched";
 
     let procedure = "-";
-    if (path === "/trpc" || path.startsWith("/trpc/")) {
+    if (
+      (path === "/trpc" || path.startsWith("/trpc/")) &&
+      reply.statusCode !== 404
+    ) {
       route = "/trpc";
-      const seg = decodeURIComponent(path.slice("/trpc/".length));
+      let seg = "";
+      try {
+        seg = decodeURIComponent(path.slice("/trpc/".length));
+      } catch {
+        seg = "invalid";
+      }
       const isBatch = u.searchParams.has("batch") || seg.includes(",");
       procedure = isBatch ? `batch:${seg || ""}` : seg || "-";
     }
@@ -90,7 +101,7 @@ export default fp(async function metrics(app: FastifyInstance) {
 
   const checkInternalToken = (req: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply): boolean => {
     const token = (req.headers["authorization"] ?? "").replace(/^Bearer\s+/, "");
-    if (!process.env["INTERNAL_TOKEN"] || token !== process.env["INTERNAL_TOKEN"]) {
+    if (!isInternalToken(token)) {
       reply.status(401).send({ error: "Unauthorized" });
       return false;
     }

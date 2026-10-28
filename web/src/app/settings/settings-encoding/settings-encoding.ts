@@ -256,7 +256,7 @@ export class SettingsEncoding {
   private queryClient = inject(QueryClient);
 
   settings = injectQuery(() => ({
-    queryKey: [CacheKey.MediaSourcesSettings],
+    queryKey: [CacheKey.SystemSettings],
     queryFn: async () => this.trpc.settings.get.query(),
   }));
 
@@ -403,7 +403,7 @@ export class SettingsEncoding {
       }
       if (data?.gpuEncoding !== undefined) this.gpuEncoding.set(data.gpuEncoding);
       if (data?.selectedGpu !== undefined) this.selectedGpu.set(data.selectedGpu);
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.SystemSettings] });
       this.queryClient.invalidateQueries({ queryKey: ['encoderInfo'] });
     },
   }));

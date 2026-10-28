@@ -14,6 +14,17 @@ import {
 } from "../trpc.js";
 import { wsManager } from "../ws-manager.js";
 
+// Requeue fields for a task stuck in_progress past its lease. The worker only
+// leases again after its batch settles, so a stale lease means the worker died
+// mid-task. Count that as an attempt (and fail the task at the cap) so a file
+// that crashes the worker cannot be re-leased forever.
+const staleRequeueSet = (now: string) => ({
+  status: sql<"pending" | "failed">`CASE WHEN ${FileTaskTable.attempts} + 1 >= 3 THEN 'failed' ELSE 'pending' END`,
+  attempts: sql<number>`${FileTaskTable.attempts} + 1`,
+  startedAt: null,
+  updatedAt: now,
+});
+
 export const fileTaskRouter = router({
   getCountsByType: internalProcedure.query(async () => {
     const rows = await db
@@ -422,11 +433,7 @@ export const fileTaskRouter = router({
     // Step 1: Requeue stale in_progress tasks (started > 5 min ago)
     await db
       .update(FileTaskTable)
-      .set({
-        status: "pending",
-        startedAt: null,
-        updatedAt: now,
-      })
+      .set(staleRequeueSet(now))
       .where(
         and(
           inArray(FileTaskTable.type, [...encodeTypes]),
@@ -493,7 +500,7 @@ export const fileTaskRouter = router({
     // Step 1: Requeue stale in_progress tasks (started > 5 min ago)
     await db
       .update(FileTaskTable)
-      .set({ status: "pending", startedAt: null, updatedAt: now })
+      .set(staleRequeueSet(now))
       .where(
         and(
           eq(FileTaskTable.type, "detect_faces"),
@@ -557,7 +564,7 @@ export const fileTaskRouter = router({
     // Step 1: Requeue stale in_progress tasks (started > 5 min ago)
     await db
       .update(FileTaskTable)
-      .set({ status: "pending", startedAt: null, updatedAt: now })
+      .set(staleRequeueSet(now))
       .where(
         and(
           eq(FileTaskTable.type, "extract_geolocation"),

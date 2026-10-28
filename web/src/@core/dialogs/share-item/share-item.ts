@@ -93,7 +93,6 @@ export class ShareItem {
   }>();
 
   protected readonly saving = signal(false);
-  private readonly initialSelectedUserIds = signal<string[]>([]);
   private readonly selected = signal<Set<string>>(new Set());
 
   protected readonly sourceType = this.dialogContext.sourceType;
@@ -111,20 +110,13 @@ export class ShareItem {
   }));
 
   protected readonly users = computed(() => this.shares.data()?.users ?? []);
-  protected readonly selectedUserIds = computed(() => {
-    const current = this.selected();
-    if (current.size > 0 || this.initialSelectedUserIds().length === 0) {
-      return current;
-    }
-
-    return new Set(this.initialSelectedUserIds());
-  });
+  // Seeded from the server by the effect below; an empty set means "share with nobody".
+  protected readonly selectedUserIds = computed(() => this.selected());
 
   constructor() {
     effect(() => {
       const data = this.shares.data();
       if (!data) return;
-      this.initialSelectedUserIds.set(data.selectedUserIds);
       this.selected.set(new Set(data.selectedUserIds));
     });
   }

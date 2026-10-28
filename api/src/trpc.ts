@@ -1,4 +1,5 @@
 import { initTRPC, TRPCError } from "@trpc/server";
+import { createHash, timingSafeEqual } from "node:crypto";
 import superjson from "superjson";
 import { getCachedSession } from "./auth/session-cache.js";
 import { logger } from "./logger.js";
@@ -37,12 +38,20 @@ export function toHeaders(h: import("http").IncomingHttpHeaders): Headers {
   return headers;
 }
 
+// Constant-time check of a presented token against INTERNAL_TOKEN. Both sides
+// are hashed first so the compare does not leak the token length either.
+export function isInternalToken(token: string | undefined): boolean {
+  const expected = process.env["INTERNAL_TOKEN"];
+  if (!expected || token === undefined) return false;
+  const a = createHash("sha256").update(token).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
 const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
   const authz = ctx.req.headers.authorization;
   const bearer = authz?.startsWith("Bearer ") ? authz.slice(7) : undefined;
-  const isInternal =
-    Boolean(process.env["INTERNAL_TOKEN"]) &&
-    bearer === process.env["INTERNAL_TOKEN"];
+  const isInternal = isInternalToken(bearer);
 
   let session: any = null;
   let userId: string | null = null;
@@ -106,6 +115,14 @@ const InternalMiddleware = t.middleware(({ ctx, next }) => {
 // can interleave, so treat the per-procedure counts as approximate.
 const SLOW_TRPC_MS = Number(process.env["SLOW_TRPC_MS"] ?? 200);
 
+// Mask secrets before an input goes to the logs (users.create carries a
+// plaintext password and is always slow because of the password hash).
+function redactInput(input: unknown): string | undefined {
+  return JSON.stringify(input, (key, value) =>
+    /password|token|secret/i.test(key) ? "[redacted]" : value,
+  );
+}
+
 const TimingMiddleware = t.middleware(async ({ next, path, input }) => {
   const stats = getRequestStats();
   const startCount = stats?.queryCount ?? 0;
@@ -119,7 +136,7 @@ const TimingMiddleware = t.middleware(async ({ next, path, input }) => {
     logger.warn(`[TRPC] SLOW REQUEST ${path} took ${duration}ms`, {
       queries: (stats?.queryCount ?? 0) - startCount,
       dbMs: Number(((stats?.queryMs ?? 0) - startDbMs).toFixed(1)),
-      input: JSON.stringify(input),
+      input: redactInput(input),
     });
   }
 

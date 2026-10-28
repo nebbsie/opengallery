@@ -21,6 +21,25 @@ function safeString(val: unknown): string | null {
   return printable.trim().length > 0 ? printable.trim() : null;
 }
 
+// Placeholder dates that cameras and muxers write when no clock was set:
+// 1970-01-01 (Unix epoch) and 1904-01-01 (QuickTime epoch).
+const ZERO_EPOCHS = new Set([0, Date.UTC(1904, 0, 1)]);
+
+/**
+ * True for a capture date worth storing. Rejects invalid dates, the zero
+ * epochs above, and the 1899 date that exifr makes from "0000:00:00 00:00:00"
+ * (JS maps year 0 to 1900 and month 0 rolls back one month).
+ */
+export function isPlausibleDate(d: Date): boolean {
+  const t = d.getTime();
+  if (isNaN(t)) return false;
+  // exifr builds EXIF dates in local time, so also compare the wall clock.
+  const wallClock = t - d.getTimezoneOffset() * 60_000;
+  if (ZERO_EPOCHS.has(t) || ZERO_EPOCHS.has(wallClock)) return false;
+  if (d.getFullYear() < 1900) return false;
+  return t <= Date.now() + 24 * 60 * 60 * 1000;
+}
+
 export async function getExifInfo(path: string): Promise<{
   takenAt: Date | undefined;
   lat: number | undefined;
@@ -42,14 +61,14 @@ export async function getExifInfo(path: string): Promise<{
       | ExifData
       | undefined;
 
-    const dateVal: unknown = exif?.DateTimeOriginal || exif?.CreateDate || exif?.ModifyDate;
-
-    if (dateVal instanceof Date) {
-      takenAt = dateVal;
-    } else if (typeof dateVal === 'string') {
-      const parsed = new Date(dateVal);
-      if (!isNaN(parsed.getTime())) {
+    // Take the first plausible candidate, so a "0000:00:00 00:00:00" original
+    // date falls through to CreateDate / ModifyDate.
+    for (const dateVal of [exif?.DateTimeOriginal, exif?.CreateDate, exif?.ModifyDate] as unknown[]) {
+      const parsed =
+        dateVal instanceof Date ? dateVal : typeof dateVal === 'string' ? new Date(dateVal) : null;
+      if (parsed && isPlausibleDate(parsed)) {
         takenAt = parsed;
+        break;
       }
     }
 

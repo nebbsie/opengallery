@@ -84,7 +84,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         </div>
 
         <div hlmCardFooter class="flex-col gap-2">
-          <button [disabled]="form.invalid" hlmBtn type="submit" class="w-full" (click)="login()">
+          <button [disabled]="form.invalid || loading()" hlmBtn type="submit" class="w-full" (click)="login()">
             @if (loading()) {
               <hlm-spinner class="size-6" />
             } @else {
@@ -145,10 +145,12 @@ export class LoginForm {
     this.error.set(false);
     this.loading.set(true);
 
-    const { error, data } = await this.auth.signInEmail({
-      email: this.emailControl.value,
-      password: this.passwordControl.value,
-    });
+    const { error, data } = await this.auth
+      .signInEmail({
+        email: this.emailControl.value,
+        password: this.passwordControl.value,
+      })
+      .catch((e: unknown) => ({ error: e, data: null }));
 
     if (error) {
       this.error.set(true);

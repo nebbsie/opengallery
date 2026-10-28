@@ -1,6 +1,7 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { injectBetterAuthClient } from '@core/services/auth/better-auth-client';
+import { QueryClient } from '@tanstack/angular-query-experimental';
 
 interface UserRecord {
   id: string;
@@ -27,6 +28,7 @@ type SessionQueryState = {
 export class Auth {
   private readonly router = inject(Router);
   private readonly client = injectBetterAuthClient();
+  private readonly queryClient = inject(QueryClient);
 
   private readonly _isAuthenticated = signal(false);
   private readonly _ready = signal(false);
@@ -78,7 +80,14 @@ export class Auth {
     this._isAuthenticated.set(false);
     this._session.set(null);
     this._user.set(null);
-    this.client.signOut();
+    try {
+      await this.client.signOut();
+    } catch {
+      void 0;
+    }
+    // Drop the previous user's cached queries; most lists use a multi-minute
+    // staleTime, so the next user to sign in on this tab would otherwise see them.
+    this.queryClient.clear();
     await this.router.navigate(['/login']);
   }
 

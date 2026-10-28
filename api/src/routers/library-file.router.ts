@@ -5,7 +5,7 @@ import { FileTable, LibraryFileTable } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
 
 export const libraryFileRouter = router({
-  create: privateProcedure
+  create: internalProcedure
     .input(
       z.array(
         z.object({
@@ -26,7 +26,7 @@ export const libraryFileRouter = router({
         .returning()
     ),
 
-  getAllLibraryFiles: privateProcedure
+  getAllLibraryFiles: internalProcedure
     .input(z.string())
     .query(({ input: libraryId }) =>
       db

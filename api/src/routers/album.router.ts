@@ -104,7 +104,7 @@ function resolveRecursiveCover(
 }
 
 export const albumRouter = router({
-  createMultiAlbums: privateProcedure
+  createMultiAlbums: internalProcedure
     .input(
       z.object({
         userId: z.string(), // required top-level for both internal and external
@@ -167,7 +167,7 @@ export const albumRouter = router({
       return { created: input.albums.length };
     }),
 
-  create: privateProcedure
+  create: internalProcedure
     .input(
       z.object({
         userId: z.string(), // required top-level for both internal and external
@@ -225,15 +225,15 @@ export const albumRouter = router({
         });
     }),
 
-  get: privateProcedure.query(() => db.select().from(AlbumTable)),
+  get: internalProcedure.query(() => db.select().from(AlbumTable)),
 
-  getAlbumByDir: privateProcedure
+  getAlbumByDir: internalProcedure
     .input(z.string())
     .query(({ input: dir }) =>
       db.select().from(AlbumTable).where(eq(AlbumTable.dir, dir)).limit(1),
     ),
 
-  getAllAlbumsForLibrary: privateProcedure
+  getAllAlbumsForLibrary: internalProcedure
     .input(z.string())
     .query(({ input: libraryId }) =>
       db
@@ -865,27 +865,34 @@ export const albumRouter = router({
           ),
         );
 
-      await db
-        .delete(SharedItemTable)
-        .where(
-          and(
-            eq(SharedItemTable.sourceType, input.sourceType),
-            eq(SharedItemTable.sourceId, input.sourceId),
-            eq(SharedItemTable.shareType, "user"),
-          ),
-        );
+      // Replace the share set atomically so a failed insert or a concurrent
+      // update can't leave the item unshared or with duplicate rows.
+      // better-sqlite3 transactions must be synchronous, hence .run().
+      db.transaction((tx) => {
+        tx.delete(SharedItemTable)
+          .where(
+            and(
+              eq(SharedItemTable.sourceType, input.sourceType),
+              eq(SharedItemTable.sourceId, input.sourceId),
+              eq(SharedItemTable.shareType, "user"),
+            ),
+          )
+          .run();
 
-      if (distinctUserIds.length > 0) {
-        await db.insert(SharedItemTable).values(
-          distinctUserIds.map((sharedToUserId) => ({
-            sourceType: input.sourceType,
-            sourceId: input.sourceId,
-            shareType: "user" as const,
-            accessLevel: "view" as const,
-            sharedToUserId,
-          })),
-        );
-      }
+        if (distinctUserIds.length > 0) {
+          tx.insert(SharedItemTable)
+            .values(
+              distinctUserIds.map((sharedToUserId) => ({
+                sourceType: input.sourceType,
+                sourceId: input.sourceId,
+                shareType: "user" as const,
+                accessLevel: "view" as const,
+                sharedToUserId,
+              })),
+            )
+            .run();
+        }
+      });
 
       // Invalidate cached access scopes for every recipient whose access
       // changed — both added and removed — so share changes take effect
@@ -917,9 +924,11 @@ export const albumRouter = router({
         .where(
           and(
             eq(LibraryTable.userId, userId),
+            // Exact prefix match (LIKE treats `_`/`%` as wildcards and is
+            // case-insensitive, which would sweep in unrelated sibling dirs).
             or(
               eq(AlbumTable.dir, dir),
-              sql`${AlbumTable.dir} LIKE ${dir + "/%"}`,
+              sql`substr(${AlbumTable.dir}, 1, length(${dir + "/"})) = ${dir + "/"}`,
             ),
           ),
         )

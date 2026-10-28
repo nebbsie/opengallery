@@ -32,7 +32,7 @@ import { injectInfiniteQuery } from '@tanstack/angular-query-experimental';
 
         @if (totalCount() > 0) {
           <p class="text-muted-foreground mb-4 text-sm">
-            {{ totalCount() }} photos at this location
+            {{ totalCount() }}{{ files.hasNextPage() ? '+' : '' }} photos at this location
           </p>
         }
         @if (allItems().length > 0) {

@@ -3,11 +3,20 @@ import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
 import { MediaPathTable, MediaSettingsTable } from "../db/schema.js";
-import { internalProcedure, router, strictPrivateProcedure } from "../trpc.js";
+import {
+  adminProcedure,
+  internalProcedure,
+  router,
+  strictPrivateProcedure,
+} from "../trpc.js";
 import { invalidateMediaSettings } from "../utils/settings-cache.js";
 
 export const mediaSourcesSettingsRouter = router({
-  createSource: strictPrivateProcedure
+  // Admin-only: the worker scans this path on the host and imports every file
+  // under it into the caller's library. A normal user could otherwise add "/"
+  // or another user's media path and read their photos. (The path picker,
+  // directory.ls, is already admin-only.)
+  createSource: adminProcedure
     .input(z.string().trim().min(1))
     .mutation(async ({ input: path, ctx: { userId } }) => {
       const [createdPath] = await db

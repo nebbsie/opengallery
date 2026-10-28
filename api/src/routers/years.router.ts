@@ -1,4 +1,5 @@
 import { TRPCError } from "@trpc/server";
+import { alias } from "drizzle-orm/sqlite-core";
 import { and, desc, exists, isNull, isNotNull, sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
@@ -22,11 +23,19 @@ import { privateProcedure, router } from "../trpc.js";
 // rather than being bucketed into their import year.
 const yearExpr = sql<number | null>`CAST(strftime('%Y', ${FileTable.takenAt}) AS INTEGER)`;
 
+// Inner alias for the per-year cover subquery so it can be scoped with the same
+// access and hidden-person filters as the outer query.
+const coverFile = alias(FileTable, "f2");
+
 export const yearsRouter = router({
   getYears: privateProcedure.query(async ({ ctx: { userId, session } }) => {
     if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-    const accessScope = await getAccessScope(userId, session);
+    const [accessScope, hiddenFilter, coverHiddenFilter] = await Promise.all([
+      getAccessScope(userId, session),
+      hiddenPeopleFilter(FileTable.id),
+      hiddenPeopleFilter(coverFile.id),
+    ]);
 
     const years = await db
       .select({
@@ -39,6 +48,8 @@ export const yearsRouter = router({
           FROM file f2
           INNER JOIN library_file lf2 ON lf2.file_id = f2.id
           WHERE lf2.deleted_at IS NULL
+            AND ${buildFileAccessFilter(accessScope, coverFile.id)}
+            ${coverHiddenFilter ? sql`AND ${coverHiddenFilter}` : sql``}
             AND (
               (file.taken_at IS NULL AND f2.taken_at IS NULL)
               OR (file.taken_at IS NOT NULL AND CAST(strftime('%Y', f2.taken_at) AS INTEGER) = CAST(strftime('%Y', file.taken_at) AS INTEGER))
@@ -55,6 +66,7 @@ export const yearsRouter = router({
         and(
           buildFileAccessFilter(accessScope, FileTable.id),
           isNull(LibraryFileTable.deletedAt),
+          hiddenFilter,
         ),
       )
       .groupBy(yearExpr)
@@ -133,7 +145,10 @@ export const yearsRouter = router({
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
 
       const { year, limit, cursor, seekCursor } = input;
-      const accessScope = await getAccessScope(userId, session);
+      const [accessScope, hiddenFilter] = await Promise.all([
+        getAccessScope(userId, session),
+        hiddenPeopleFilter(FileTable.id),
+      ]);
 
       let cursorCondition: ReturnType<typeof sql> | undefined;
       if (cursor) {
@@ -170,6 +185,8 @@ export const yearsRouter = router({
             buildFileAccessFilter(accessScope, FileTable.id),
             isNull(LibraryFileTable.deletedAt),
             yearFilter,
+            // Match getTimelineByYear: hidden people never show in browse views.
+            hiddenFilter,
             sql`EXISTS (
               SELECT 1 FROM ${FileVariantTable}
               WHERE ${FileVariantTable.originalFileId} = ${FileTable.id}

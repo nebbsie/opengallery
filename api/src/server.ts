@@ -10,7 +10,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import * as fs from "node:fs";
 import path from "path";
 import { auth } from "./auth/auth.js";
-import { getCachedSession } from "./auth/session-cache.js";
+import { clearSessionCache, getCachedSession } from "./auth/session-cache.js";
 import { canUserViewFile } from "./authz/shared-access.js";
 import { db } from "./db/index.js";
 import { FaceTable, FileTable, FileVariantTable } from "./db/schema.js";
@@ -33,9 +33,17 @@ const parsedOrigins = rawOrigins
       .filter(Boolean)
   : [];
 
+// With TRUSTED_ORIGINS unset or "*", any origin used to be reflected with
+// credentials, so any other site (for example another service on the same
+// host, which counts as same-site for cookies) could read a signed-in user's
+// data. In production the web app is served same-origin by nginx and needs no
+// CORS, so "*" there allows no cross-origin reads. Dev (web on :4200, api on
+// :3000) still reflects.
+const isProduction = process.env["NODE_ENV"] === "production";
+
 await server.register(cors, {
   origin: allowAll
-    ? (_origin, cb) => cb(null, true)
+    ? (_origin, cb) => cb(null, !isProduction)
     : (origin, cb) => cb(null, !!origin && parsedOrigins.includes(origin)),
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -164,15 +172,34 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     .header("Content-Length", String(target.size))
     .header("ETag", etag)
     .header("Last-Modified", updatedAt.toUTCString())
-    .header("Cache-Control", "public, max-age=31536000, immutable");
+    .header("Cache-Control", "private, max-age=31536000, immutable");
 
   const range = req.headers.range;
   if (range) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (!m) return reply.code(416).send();
-    const start = m[1] ? parseInt(m[1], 10) : 0;
-    const end = m[2] ? parseInt(m[2], 10) : target.size - 1;
-    if (start > end || end >= target.size) return reply.code(416).send();
+    if (!m || (!m[1] && !m[2])) {
+      return reply
+        .code(416)
+        .header("Content-Range", `bytes */${target.size}`)
+        .send();
+    }
+    // "bytes=-N" is a suffix range (the last N bytes). An end past the file is
+    // clamped to the last byte (RFC 9110), as players often ask for more.
+    let start: number;
+    let end: number;
+    if (!m[1]) {
+      start = Math.max(0, target.size - parseInt(m[2]!, 10));
+      end = target.size - 1;
+    } else {
+      start = parseInt(m[1], 10);
+      end = m[2] ? Math.min(parseInt(m[2], 10), target.size - 1) : target.size - 1;
+    }
+    if (start > end || start >= target.size) {
+      return reply
+        .code(416)
+        .header("Content-Range", `bytes */${target.size}`)
+        .send();
+    }
 
     reply
       .code(206)
@@ -228,7 +255,7 @@ server.get("/face/:faceId", async (req, reply) => {
     .header("Content-Length", String(stats.size))
     .header("ETag", etag)
     .header("Last-Modified", updatedAt.toUTCString())
-    .header("Cache-Control", "public, max-age=31536000, immutable");
+    .header("Cache-Control", "private, max-age=31536000, immutable");
 
   return reply.send(fs.createReadStream(abs));
 });
@@ -273,6 +300,13 @@ const authHandler = async function (
 
     // Delegate to your auth handler
     const response = await auth.handler(req);
+
+    // A POST can end or revoke a session (sign-out, revoke-session,
+    // change-password). Drop cached sessions so the old cookie stops working
+    // now instead of after the session cache TTL.
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      clearSessionCache();
+    }
 
     // Apply status
     reply.status(response.status);
@@ -357,7 +391,7 @@ const start = async () => {
     const host = process.env["HOST"] ?? "0.0.0.0";
     logger.info(`Starting server on ${host}:${port}...`);
     logger.info(
-      `CORS mode: ${allowAll ? "ALLOW ALL (reflect)" : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
+      `CORS mode: ${allowAll ? (isProduction ? "SAME-ORIGIN ONLY (TRUSTED_ORIGINS=* in production)" : "ALLOW ALL (reflect)") : `ALLOWLIST ${JSON.stringify(parsedOrigins)}`}`,
     );
 
     await server.listen({ port, host });

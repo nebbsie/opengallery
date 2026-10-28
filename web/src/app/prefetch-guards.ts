@@ -17,7 +17,8 @@ export const prefetchGalleryAll: CanActivateFn = async (
 
   try {
     await queryClient.prefetchInfiniteQuery({
-      queryKey: [CacheKey.GalleryAll],
+      // Must match the component's key exactly, or this prefetch is never used.
+      queryKey: [CacheKey.GalleryAll, { seekCursor: null }],
       queryFn: async ({ pageParam }) =>
         trpc.files.getUsersFiles.query({
           kind: 'all',
@@ -43,7 +44,8 @@ export const prefetchGalleryPhotos: CanActivateFn = async (
 
   try {
     await queryClient.prefetchInfiniteQuery({
-      queryKey: [CacheKey.GalleryPhotos],
+      // Must match the component's key exactly, or this prefetch is never used.
+      queryKey: [CacheKey.GalleryPhotos, { seekCursor: null }],
       queryFn: async ({ pageParam }) =>
         trpc.files.getUsersFiles.query({
           kind: 'image',
@@ -69,7 +71,8 @@ export const prefetchGalleryVideos: CanActivateFn = async (
 
   try {
     await queryClient.prefetchInfiniteQuery({
-      queryKey: [CacheKey.GalleryVideos],
+      // Must match the component's key exactly, or this prefetch is never used.
+      queryKey: [CacheKey.GalleryVideos, { seekCursor: null }],
       queryFn: async ({ pageParam }) =>
         trpc.files.getUsersFiles.query({
           kind: 'video',

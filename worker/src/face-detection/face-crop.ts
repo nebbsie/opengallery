@@ -46,15 +46,14 @@ export async function createFaceCrop(opts: {
     const mx = pw * MARGIN;
     const my = ph * MARGIN;
 
-    let left = Math.floor(px - mx);
-    let top = Math.floor(py - my);
-    let width = Math.ceil(pw + mx * 2);
-    let height = Math.ceil(ph + my * 2);
-
-    left = Math.max(0, Math.min(left, imgW - 1));
-    top = Math.max(0, Math.min(top, imgH - 1));
-    width = Math.max(1, Math.min(width, imgW - left));
-    height = Math.max(1, Math.min(height, imgH - top));
+    // Clamp both edges, not the origin alone: clamping only left/top kept the
+    // full width, so a face at the image edge shifted the crop off the face.
+    const left = Math.max(0, Math.min(Math.floor(px - mx), imgW - 1));
+    const top = Math.max(0, Math.min(Math.floor(py - my), imgH - 1));
+    const right = Math.min(imgW, Math.ceil(px + pw + mx));
+    const bottom = Math.min(imgH, Math.ceil(py + ph + my));
+    const width = Math.max(1, right - left);
+    const height = Math.max(1, bottom - top);
 
     const cropDir = join(variantsPath, 'faces');
     const cropName = `${faceId}.avif`;

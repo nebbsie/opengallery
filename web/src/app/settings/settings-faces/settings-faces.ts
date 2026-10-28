@@ -104,8 +104,14 @@ const DEFAULT_THRESHOLD = 0.4;
           } @else {
             <div class="flex items-center gap-2">
               <span class="text-sm">Delete all people &amp; faces and rescan?</span>
-              <button hlmBtn variant="destructive" size="sm" (click)="rescan()">
-                Yes, rescan
+              <button
+                hlmBtn
+                variant="destructive"
+                size="sm"
+                (click)="rescan()"
+                [disabled]="rescanMutation.isPending()"
+              >
+                {{ rescanMutation.isPending() ? 'Rescanning…' : 'Yes, rescan' }}
               </button>
               <button hlmBtn variant="ghost" size="sm" (click)="confirming.set(false)">
                 Cancel
@@ -133,7 +139,7 @@ export class SettingsFaces {
   confirming = signal(false);
 
   settings = injectQuery(() => ({
-    queryKey: [CacheKey.MediaSourcesSettings],
+    queryKey: [CacheKey.SystemSettings],
     queryFn: async () => this.trpc.settings.get.query(),
   }));
 
@@ -156,7 +162,7 @@ export class SettingsFaces {
       this.trpc.settings.update.mutate({ faceMatchThreshold: this.threshold() }),
     onSuccess: (data) => {
       if (data?.faceMatchThreshold != null) this.threshold.set(data.faceMatchThreshold);
-      this.queryClient.invalidateQueries({ queryKey: [CacheKey.MediaSourcesSettings] });
+      this.queryClient.invalidateQueries({ queryKey: [CacheKey.SystemSettings] });
     },
   }));
 

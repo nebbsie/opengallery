@@ -7,7 +7,20 @@ const fileWatcherService = new FileWatcherService(logger);
 
 export async function runWatcher() {
   try {
-    await fileWatcherService.initialize();
+    // The API starts alongside the worker under supervisord. Retry instead of
+    // exiting: repeated fast exits put the whole worker into FATAL state.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fileWatcherService.initialize();
+        break;
+      } catch (error) {
+        const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5));
+        logger.warn(`Watcher init failed (attempt ${attempt}), retrying in ${delay}ms`, {
+          error: String(error),
+        });
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
 
     setInterval(async () => {
       try {

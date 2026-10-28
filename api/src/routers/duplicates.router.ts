@@ -1,19 +1,52 @@
 import * as fs from 'node:fs';
 import path from 'node:path';
-import { inArray, isNotNull, sql } from 'drizzle-orm';
+import { TRPCError } from '@trpc/server';
+import { type SQL, and, eq, inArray, isNotNull, isNull, ne, notInArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  type SessionLike,
+  buildFileAccessFilter,
+  getAccessScope,
+} from '../authz/shared-access.js';
 import { db } from '../db/index.js';
-import { FileTable } from '../db/schema.js';
+import { FileTable, LibraryFileTable } from '../db/schema.js';
 import { privateProcedure, router } from '../trpc.js';
 import { deleteFilesWithCascade } from '../utils/file-operations.js';
 import { resolveAssetPath } from '../utils/media-path.js';
 
+// Files a user may treat as their own duplicates: those in libraries they own.
+// Shared (view-only) files are excluded so a user can neither see nor delete
+// another user's copies. Admins and the internal worker see everything.
+async function ownedScope(userId: string | null, session: SessionLike) {
+  if (!userId) return { isAdmin: true, ownedLibraryIds: new Set<string>(), filter: sql`1 = 1` as SQL };
+  const scope = await getAccessScope(userId, session);
+  const filter = buildFileAccessFilter(
+    {
+      ...scope,
+      accessibleLibraryIds: scope.ownedLibraryIds,
+      recursiveAlbumIds: new Set(),
+      directFileIds: new Set(),
+    },
+    FileTable.id,
+  );
+  return { isAdmin: scope.isAdmin, ownedLibraryIds: scope.ownedLibraryIds, filter };
+}
+
+// Deletes run one at a time: the "another copy still exists" check and the
+// delete are split by async disk I/O, so two concurrent deletes of the two
+// copies in a group could otherwise both pass the check and remove both.
+let deleteChain: Promise<unknown> = Promise.resolve();
+
 export const duplicatesRouter = router({
-  list: privateProcedure.query(async () => {
+  list: privateProcedure.query(async ({ ctx: { userId, session } }) => {
+    const { filter } = await ownedScope(userId, session);
+
+    // Group within the caller's scope, so a copy only counts as a duplicate of
+    // another copy the caller can also see (and delete).
     const dupeHashSubquery = db
       .select({ contentHash: FileTable.contentHash })
       .from(FileTable)
-      .where(isNotNull(FileTable.contentHash))
+      .where(and(isNotNull(FileTable.contentHash), filter))
       .groupBy(FileTable.contentHash)
       .having(sql`COUNT(*) > 1`);
 
@@ -29,7 +62,7 @@ export const duplicatesRouter = router({
         createdAt: FileTable.createdAt,
       })
       .from(FileTable)
-      .where(inArray(FileTable.contentHash, dupeHashSubquery))
+      .where(and(inArray(FileTable.contentHash, dupeHashSubquery), filter))
       .orderBy(FileTable.contentHash, FileTable.createdAt);
 
     // Group by hash
@@ -49,24 +82,70 @@ export const duplicatesRouter = router({
 
   deleteFile: privateProcedure
     .input(z.object({ fileId: z.string().uuid() }))
-    .mutation(async ({ input }) => {
-      const [file] = await db
-        .select({ dir: FileTable.dir, name: FileTable.name })
-        .from(FileTable)
-        .where(sql`${FileTable.id} = ${input.fileId}`)
-        .limit(1);
+    .mutation(async ({ ctx: { userId, session }, input }) => {
+      const run = deleteChain.then(async () => {
+        const scope = await ownedScope(userId, session);
 
-      if (!file) throw new Error('File not found');
+        const [file] = await db
+          .select({ dir: FileTable.dir, name: FileTable.name, contentHash: FileTable.contentHash })
+          .from(FileTable)
+          .where(and(sql`${FileTable.id} = ${input.fileId}`, scope.filter))
+          .limit(1);
 
-      const abs = path.resolve(path.join(file.dir, file.name));
-      try {
-        const resolved = await resolveAssetPath(abs);
-        await fs.promises.unlink(resolved);
-      } catch {
-        // Best-effort: already deleted or path unresolvable
-      }
+        if (!file) throw new Error('File not found');
 
-      await deleteFilesWithCascade([input.fileId]);
-      return { ok: true } as const;
+        // The caller must own every live library entry of this file. One
+        // file row can sit in several users' libraries (overlapping paths),
+        // and the unlink below removes it from disk for all of them.
+        if (!scope.isAdmin) {
+          const owned = [...scope.ownedLibraryIds];
+          const [foreign] = await db
+            .select({ id: LibraryFileTable.id })
+            .from(LibraryFileTable)
+            .where(
+              and(
+                eq(LibraryFileTable.fileId, input.fileId),
+                isNull(LibraryFileTable.deletedAt),
+                ...(owned.length > 0 ? [notInArray(LibraryFileTable.libraryId, owned)] : []),
+              ),
+            )
+            .limit(1);
+          if (foreign) throw new TRPCError({ code: 'FORBIDDEN' });
+        }
+
+        // Never delete the last copy: another file with the same hash must
+        // still exist in the caller's scope (a stale list or a second tab can
+        // otherwise delete every copy in a group).
+        if (!file.contentHash) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'File has no content hash' });
+        }
+        const [other] = await db
+          .select({ id: FileTable.id })
+          .from(FileTable)
+          .where(
+            and(
+              eq(FileTable.contentHash, file.contentHash),
+              ne(FileTable.id, input.fileId),
+              scope.filter,
+            ),
+          )
+          .limit(1);
+        if (!other) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: 'No other copy of this file exists' });
+        }
+
+        const abs = path.resolve(path.join(file.dir, file.name));
+        try {
+          const resolved = await resolveAssetPath(abs);
+          await fs.promises.unlink(resolved);
+        } catch {
+          // Best-effort: already deleted or path unresolvable
+        }
+
+        await deleteFilesWithCascade([input.fileId]);
+        return { ok: true } as const;
+      });
+      deleteChain = run.catch(() => {});
+      return run;
     }),
 });
