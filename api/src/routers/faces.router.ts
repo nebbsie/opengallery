@@ -59,6 +59,7 @@ import { getVoteThreshold, ingestFileFaces, resolveLibraryId } from "../faces/in
 import { deletePeopleRows, refreshPeople } from "../faces/people.js";
 import { isReclusterRunning, reclusterAll, startAutoRecluster } from "../faces/recluster.js";
 import { dot, faceVec, meanVec } from "../faces/vector.js";
+import { hasRawOf, notRawCompanion } from "../utils/raw-pairing.js";
 
 // Keyset cursor for listPeoplePage: the (flag, faceCount, id) of the last row
 // returned, base64-encoded. Bad/garbled cursors decode to null (treated as the
@@ -376,6 +377,8 @@ export const facesRouter = router({
               .from(FileVariantTable)
               .where(eq(FileVariantTable.fileId, FileTable.id)),
           ),
+          // RAW companions get no tasks.
+          notRawCompanion(FileTable.id),
         ),
       );
 
@@ -1736,6 +1739,7 @@ export const facesRouter = router({
 
       const data = rows.map((r) => ({
         ...r.file,
+        hasRaw: hasRawOf(r.file),
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,

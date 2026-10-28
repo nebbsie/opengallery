@@ -46,6 +46,7 @@ import {
 import { privateProcedure, router } from "../trpc.js";
 import { embedText } from "../clip/clip-client.js";
 import { getClipIndex } from "../clip/clip-index.js";
+import { hasRawOf } from "../utils/raw-pairing.js";
 
 // ---------------------------------------------------------------------------
 // Query parsing
@@ -688,7 +689,7 @@ async function rankedSearch(
   const items = pageIds
     .map((id) => byId.get(id))
     .filter((r): r is (typeof rows)[number] => !!r)
-    .map((r) => ({ ...r.file, blurhash: r.blurhash, takenAt: r.takenAt, sortAt: r.sortAt }));
+    .map((r) => ({ ...r.file, hasRaw: hasRawOf(r.file), blurhash: r.blurhash, takenAt: r.takenAt, sortAt: r.sortAt }));
   const next = offset + input.limit;
   return {
     items,
@@ -764,6 +765,7 @@ export async function searchPhotos(
 
   const data = rows.map((r) => ({
     ...r.file,
+    hasRaw: hasRawOf(r.file),
     blurhash: r.blurhash,
     takenAt: r.takenAt,
     sortAt: r.sortAt,

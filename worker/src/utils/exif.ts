@@ -1,6 +1,8 @@
 import exifr from 'exifr';
 import type { ExifData } from '../types/exif-data.js';
 import { logger } from './logger.js';
+import { isRawName } from './media-types.js';
+import { readRawTags, type RawTags } from './raw.js';
 
 /**
  * Safely extract a string from an EXIF field.
@@ -40,7 +42,7 @@ export function isPlausibleDate(d: Date): boolean {
   return t <= Date.now() + 24 * 60 * 60 * 1000;
 }
 
-export async function getExifInfo(path: string): Promise<{
+export type ExifInfo = {
   takenAt: Date | undefined;
   lat: number | undefined;
   lon: number | undefined;
@@ -51,7 +53,63 @@ export async function getExifInfo(path: string): Promise<{
   exposureTime?: string | null;
   focalLength?: number | null;
   fNumber?: number | null;
-}> {
+  // Camera RAW only: the full sensor size, upright.
+  width?: number | null;
+  height?: number | null;
+};
+
+// "2021:02:13 13:44:40" -> a Date in local time, the same way exifr builds
+// EXIF dates, so a RAW and its JPEG get the same takenAt.
+function parseExifDate(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const m = /^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number) as [number, number, number, number, number, number, number];
+  return new Date(y, mo - 1, d, h, mi, s);
+}
+
+function rawExifInfo(tags: RawTags): ExifInfo {
+  let takenAt: Date | undefined;
+  for (const value of [tags.DateTimeOriginal, tags.CreateDate, tags.ModifyDate]) {
+    const parsed = parseExifDate(value);
+    if (parsed && isPlausibleDate(parsed)) {
+      takenAt = parsed;
+      break;
+    }
+  }
+  const lat = typeof tags.GPSLatitude === 'number' ? tags.GPSLatitude : undefined;
+  const lon = typeof tags.GPSLongitude === 'number' ? tags.GPSLongitude : undefined;
+  // 0,0 is what a camera without a GPS fix writes.
+  const hasGps = lat !== undefined && lon !== undefined && !(lat === 0 && lon === 0);
+  const [w, h] = (tags.ImageSize ?? '').split(/[ x]/).map(Number);
+  const swap = (tags.Orientation ?? 1) >= 5;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    takenAt,
+    lat: hasGps ? lat : undefined,
+    lon: hasGps ? lon : undefined,
+    cameraMake: safeString(tags.Make),
+    cameraModel: safeString(tags.Model),
+    lensModel: safeString(tags.LensModel),
+    iso: num(tags.ISO),
+    exposureTime: num(tags.ExposureTime) !== null ? String(tags.ExposureTime) : null,
+    focalLength: num(tags.FocalLengthIn35mmFormat) ?? num(tags.FocalLength),
+    fNumber: num(tags.FNumber),
+    width: w && h ? (swap ? h : w) : null,
+    height: w && h ? (swap ? w : h) : null,
+  };
+}
+
+export async function getExifInfo(path: string): Promise<ExifInfo> {
+  if (isRawName(path)) {
+    // exifr cannot read most RAW formats (RW2, CR3); exiftool reads them all.
+    try {
+      return rawExifInfo(await readRawTags(path));
+    } catch (error) {
+      logger.debug('RAW EXIF read failed', { path, error });
+      return { lat: undefined, lon: undefined, takenAt: undefined };
+    }
+  }
   try {
     let takenAt: Date | undefined;
     let lat: number | undefined;

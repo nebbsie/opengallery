@@ -18,7 +18,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
 import { injectQuery } from '@tanstack/angular-query-experimental';
-import { formatBytes, isMediaFile } from './upload-utils';
+import { formatBytes, isMediaFile, MEDIA_ACCEPT } from './upload-utils';
 
 export type UploadDialogContext = {
   files?: File[];
@@ -65,7 +65,7 @@ type Target = 'default' | 'album' | 'new';
           type="file"
           class="hidden"
           multiple
-          accept="image/*,video/*"
+          [accept]="mediaAccept"
           (change)="onPicked(filesInput)"
         />
         <input
@@ -190,6 +190,7 @@ export class UploadDialog {
 
   private readonly picked = signal<File[]>(this.context?.files ?? []);
   protected readonly skipped = computed(() => this.picked().length - this.files().length);
+  protected readonly mediaAccept = MEDIA_ACCEPT;
   protected readonly files = computed(() => this.picked().filter(isMediaFile));
 
   // Preselect the album the user is looking at, when it is an upload album.

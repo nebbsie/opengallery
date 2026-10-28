@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { FileTable, LibraryFileTable } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { companionIdsIn } from "../utils/raw-pairing.js";
 
 export const libraryFileRouter = router({
   create: internalProcedure
@@ -14,17 +15,34 @@ export const libraryFileRouter = router({
         })
       )
     )
-    .mutation(({ ctx: { userId }, input }) =>
-      db
+    .mutation(async ({ ctx: { userId }, input }) => {
+      // A RAW companion stays out of the library (utils/raw-pairing.ts), and
+      // a link that is already there is not added twice.
+      const companions = companionIdsIn(input.map((i) => i.fileId));
+      const existing = new Set(
+        input.length
+          ? (
+              await db
+                .select({ fileId: LibraryFileTable.fileId, libraryId: LibraryFileTable.libraryId })
+                .from(LibraryFileTable)
+                .where(inArray(LibraryFileTable.fileId, input.map((i) => i.fileId)))
+            ).map((r) => `${r.fileId}|${r.libraryId}`)
+          : [],
+      );
+      const rows = input.filter(
+        (i) => !companions.has(i.fileId) && !existing.has(`${i.fileId}|${i.libraryId}`),
+      );
+      if (rows.length === 0) return [];
+      return db
         .insert(LibraryFileTable)
         .values(
-          input.map((inp) => ({
+          rows.map((inp) => ({
             ...inp,
             userId,
           }))
         )
-        .returning()
-    ),
+        .returning();
+    }),
 
   getAllLibraryFiles: internalProcedure
     .input(z.string())

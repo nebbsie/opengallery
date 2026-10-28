@@ -58,9 +58,19 @@ import { createDownloadTicket } from "../utils/zip-download.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 import {
   deleteFilesWithCascade,
+  deleteRawPreviews,
   deleteVariantFilesFromDisk,
+  demoteRawFiles,
+  fileTaskRows,
   removeFacesForFiles,
 } from "../utils/file-operations.js";
+import {
+  hasRawOf,
+  isRawCompanion,
+  isRawName,
+  linkRawPairs,
+  rawIdsOf,
+} from "../utils/raw-pairing.js";
 import { getCachedMediaSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
 
@@ -85,32 +95,29 @@ export const filesRouter = router({
       ),
     )
     .mutation(async ({ input }) => {
-      const addedFiles = await db.insert(FileTable).values(input).returning();
+      const inserted = await db.insert(FileTable).values(input).returning();
+
+      // Camera RAW+JPEG pairs (utils/raw-pairing.ts). A new RAW next to its
+      // JPEG becomes the JPEG's hidden companion: no tasks, and the
+      // libraryFile/albumFile links the scanner makes next are skipped for it.
+      const pairs = linkRawPairs(inserted.map((f) => f.id));
+      const rawOfPhoto = new Map([...pairs.primaryOf].map(([raw, photo]) => [photo, raw]));
+      const addedFiles = inserted.map((f) => ({
+        ...f,
+        rawFileId: rawOfPhoto.get(f.id) ?? f.rawFileId,
+        rawCompanion: pairs.companions.has(f.id),
+      }));
 
       // Seed file tasks for downstream processing
-      type FileTaskInsert = typeof FileTaskTable.$inferInsert;
-      const taskRows: FileTaskInsert[] = [];
-      for (const f of addedFiles) {
-        if (f.type === "image") {
-          taskRows.push({ fileId: f.id, type: "encode_thumbnail" });
-          taskRows.push({ fileId: f.id, type: "encode_optimised" });
-          taskRows.push({ fileId: f.id, type: "detect_faces" });
-        } else {
-          taskRows.push({ fileId: f.id, type: "video_poster" });
-          taskRows.push({ fileId: f.id, type: "encode_optimised" });
-          // Faces from sampled frames (worker face-detection/detect.ts).
-          taskRows.push({ fileId: f.id, type: "detect_faces" });
-        }
-        // Object search embedding (worker clip-worker.ts).
-        taskRows.push({ fileId: f.id, type: "embed_clip" });
-        // GPS extraction runs independently of encoding (it only reads EXIF /
-        // ffprobe tags off the original) so geolocation lands even when the
-        // encode step is skipped because variants already exist.
-        taskRows.push({ fileId: f.id, type: "extract_geolocation" });
+      const taskRows = addedFiles
+        .filter((f) => !f.rawCompanion)
+        .flatMap((f) => fileTaskRows(f.id, f.type));
+      for (let i = 0; i < taskRows.length; i += 500) {
+        await db.insert(FileTaskTable).values(taskRows.slice(i, i + 500));
       }
-      if (taskRows.length) {
-        await db.insert(FileTaskTable).values(taskRows);
-      }
+
+      // A new photo took over a RAW that was a photo of its own.
+      await demoteRawFiles(pairs.primaryOf, pairs.demoted);
 
       return addedFiles;
     }),
@@ -158,7 +165,8 @@ export const filesRouter = router({
       const fileIds = rows.map((r) => r.id);
       if (fileIds.length === 0) return [] as { id: string }[];
 
-      return deleteFilesWithCascade(fileIds);
+      // RAW companions have no library row; they go with their photos.
+      return deleteFilesWithCascade([...fileIds, ...rawIdsOf(fileIds).values()]);
     }),
 
   // Re-process a file whose content changed on disk (D4). Drops all derived
@@ -210,6 +218,7 @@ export const filesRouter = router({
       await removeFacesForFiles([input.fileId]);
 
       await deleteVariantFilesFromDisk([input.fileId]);
+      await deleteRawPreviews([input.fileId]);
       await db
         .delete(FileVariantTable)
         .where(eq(FileVariantTable.originalFileId, input.fileId));
@@ -619,8 +628,23 @@ export const filesRouter = router({
         .orderBy(AlbumTable.name);
       const albums = albumRows.filter((a) => accessScope.visibleAlbumIds.has(a.id));
 
+      // Camera RAW: the companion of a RAW+JPEG pair, or the file itself when
+      // it is a RAW-only photo. For the badge, the info panel and download.
+      let raw: { name: string; size: number; paired: boolean } | null = null;
+      if (file.rawFileId) {
+        const [r] = await db
+          .select({ name: FileTable.name, size: FileTable.size })
+          .from(FileTable)
+          .where(eq(FileTable.id, file.rawFileId))
+          .limit(1);
+        if (r) raw = { name: r.name, size: r.size, paired: true };
+      } else if (isRawName(file.name)) {
+        raw = { name: file.name, size: file.size, paired: false };
+      }
+
       return {
         file,
+        raw,
         imageMetadata: imageMetadata ?? null,
         geoLocation: geoLocation ?? null,
         people,
@@ -675,6 +699,10 @@ export const filesRouter = router({
         optimised: null | { id: string; dir: string; name: string };
         thumbnail_lg: null | { id: string; dir: string; name: string };
       } = { originalFileId, thumbnail: null, optimised: null, thumbnail_lg: null };
+
+      // The file became a RAW companion while the worker encoded it: a
+      // companion has no variants, so it can never show on its own.
+      if (isRawCompanion(originalFileId)) return result;
 
       for (const v of variants) {
         const [res] = await db
@@ -1219,6 +1247,7 @@ const getUsersFiles = async (
 
   const data = rows.map((r) => ({
     ...r.file,
+    hasRaw: hasRawOf(r.file),
     blurhash: r.blurhash,
     takenAt: r.takenAt,
     width: r.width,

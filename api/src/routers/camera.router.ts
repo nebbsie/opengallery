@@ -20,6 +20,7 @@ import {
   LibraryTable,
 } from "../db/schema.js";
 import { privateProcedure, router } from "../trpc.js";
+import { hasRawOf } from "../utils/raw-pairing.js";
 
 export const cameraRouter = router({
   getAllCameras: privateProcedure.query(
@@ -155,6 +156,7 @@ export const cameraRouter = router({
 
       const data = rows.map((r) => ({
         ...r.file,
+        hasRaw: hasRawOf(r.file),
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,

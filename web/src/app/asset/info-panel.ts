@@ -224,6 +224,22 @@ export type ViewFileData = RouterOutputs['files']['viewFile'];
               <span class="text-muted-foreground text-xs">Size</span>
               <span class="text-sm tabular-nums">{{ bytes(f.size) }}</span>
             </div>
+            @if (d.raw; as raw) {
+              <div [class]="row">
+                <span class="text-muted-foreground text-xs">Format</span>
+                <span hlmBadge variant="secondary" class="font-semibold">{{ raw.paired ? 'RAW + JPEG' : 'RAW' }}</span>
+              </div>
+              @if (raw.paired) {
+                <div [class]="row">
+                  <span class="text-muted-foreground text-xs">RAW file</span>
+                  <span class="text-right text-sm font-medium break-all">{{ raw.name }}</span>
+                </div>
+                <div [class]="row">
+                  <span class="text-muted-foreground text-xs">RAW size</span>
+                  <span class="text-sm tabular-nums">{{ bytes(raw.size) }}</span>
+                </div>
+              }
+            }
             <div [class]="row">
               <span class="text-muted-foreground text-xs">Imported</span>
               <span class="text-sm tabular-nums">{{ f.createdAt | date: 'MMM d, y, h:mm a' }}</span>

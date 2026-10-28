@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { getVideoMetadata } from '../utils/ffprobe.js';
 import { logger } from '../utils/logger.js';
+import { isRawName } from '../utils/media-types.js';
+import { getRawPreview, NoRawPreviewError } from '../utils/raw.js';
 import { toContainerPath } from '../utils/paths.js';
 import { trpc } from '../utils/trpc.js';
 import { createFaceCrop } from './face-crop.js';
@@ -125,7 +127,10 @@ export async function detectFaces(fileId: string): Promise<void> {
     let model = '';
     let found: Found[] = [];
     if (file.type === 'image') {
-      const frame = await imageFrame(sourcePath);
+      // A camera RAW is read through its embedded JPEG preview (utils/raw.ts).
+      const frame = await imageFrame(
+        isRawName(file.name) ? await getRawPreview(file, variantsPath) : sourcePath,
+      );
       const result = await detectFacesRemote(frame.jpeg);
       model = result.model;
       found = result.faces.filter(keep).map((face) => ({ face, frame, vec: new Float32Array(0) }));
@@ -208,6 +213,12 @@ export async function detectFaces(fileId: string): Promise<void> {
       status: 'succeeded',
     });
   } catch (e) {
+    if (e instanceof NoRawPreviewError) {
+      // Nothing to look at; a retry cannot help.
+      logger.warn(`[face-detection] ${e.message}, skipping fileId=${fileId}`);
+      await trpc.fileTask.setStatusByFileAndType.mutate({ fileId, type: 'detect_faces', status: 'skipped' });
+      return;
+    }
     logger.error(`[face-detection] failed for fileId=${fileId}`, e as Error);
     await trpc.fileTask.setStatusByFileAndType.mutate({
       fileId,

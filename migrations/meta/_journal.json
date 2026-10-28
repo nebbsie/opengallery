@@ -75,7 +75,7 @@
     {
       "idx": 10,
       "version": "6",
-      "when": 1793318400000,
+      "when": 1793361600000,
       "tag": "0010_requeue_skipped_geolocation",
       "breakpoints": true
     },
@@ -84,6 +84,20 @@
       "version": "6",
       "when": 1793404800000,
       "tag": "0011_file_embedding",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1793491200000,
+      "tag": "0012_raw_companion",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1793577600000,
+      "tag": "0013_requeue_skipped_geolocation_again",
       "breakpoints": true
     }
   ]

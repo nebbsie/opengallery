@@ -2,6 +2,8 @@
 // the browser's mime type are only hints: a file is accepted when its magic
 // bytes match a format the worker can import (worker/src/utils/media-types.ts).
 
+import { RAW_EXTENSIONS, RAW_MIME } from "../utils/raw-pairing.js";
+
 export type SniffedMedia = {
   type: "image" | "video";
   // Extension the file is saved with when its own one does not fit.
@@ -18,10 +20,17 @@ export type SniffResult =
 // Bytes needed for every check below.
 export const SNIFF_BYTES = 64;
 
-const RAW_EXTS = new Set([
-  "dng", "nef", "nrw", "arw", "srf", "sr2", "cr2", "cr3", "crw", "orf",
-  "rw2", "raf", "srw", "pef", "x3f", "3fr", "erf", "kdc", "mrw",
+// Camera RAW formats the worker cannot read (it imports RAW_EXTENSIONS only,
+// see utils/raw-pairing.ts).
+const OTHER_RAW_EXTS = new Set([
+  "nrw", "srf", "sr2", "crw", "x3f", "3fr", "erf", "kdc", "mrw",
 ]);
+
+// A camera RAW, saved with its own extension so the scanner pairs it with a
+// JPEG of the same name.
+function raw(ext: string): SniffResult {
+  return media("image", ext, RAW_MIME[ext]!, [ext]);
+}
 
 const ascii = (b: Buffer, start: number, end: number) =>
   b.subarray(start, end).toString("latin1");
@@ -56,13 +65,23 @@ export function sniffMedia(head: Buffer, fileName: string): SniffResult {
     if (kind === "WEBP") return media("image", "webp", "image/webp");
     if (kind === "AVI ") return media("video", "avi", "video/x-msvideo");
   }
+  // Panasonic RW2 ("IIU"), Olympus ORF ("IIRO", "IIRS", "MMOR") and Fujifilm
+  // RAF have their own headers.
+  if (startsWith(head, [0x49, 0x49, 0x55, 0x00])) return raw("rw2");
+  if (ascii(head, 0, 4) === "IIRO" || ascii(head, 0, 4) === "IIRS" || ascii(head, 0, 4) === "MMOR") {
+    return raw("orf");
+  }
+  if (ascii(head, 0, 15) === "FUJIFILMCCD-RAW") return raw("raf");
   if (
     startsWith(head, [0x49, 0x49, 0x2a, 0x00]) ||
     startsWith(head, [0x4d, 0x4d, 0x00, 0x2a])
   ) {
-    // Most camera RAW formats are TIFF inside. The encoder cannot read them.
-    if (RAW_EXTS.has(nameExt) || ascii(head, 8, 10) === "CR") {
-      return { ok: false, reason: "RAW photos are not supported yet" };
+    // Most camera RAW formats are TIFF inside: Canon CR2 says so at byte 8,
+    // the others (NEF, ARW, DNG, PEF, SRW) only by their extension.
+    if (ascii(head, 8, 10) === "CR") return raw("cr2");
+    if (RAW_EXTENSIONS.has(nameExt)) return raw(nameExt);
+    if (OTHER_RAW_EXTS.has(nameExt)) {
+      return { ok: false, reason: "This RAW format is not supported" };
     }
     return media("image", "tiff", "image/tiff");
   }
@@ -80,9 +99,7 @@ export function sniffMedia(head: Buffer, fileName: string): SniffResult {
     if (brand === "avif" || brand === "avis") {
       return { ok: false, reason: "AVIF images are not supported yet" };
     }
-    if (brand === "crx ") {
-      return { ok: false, reason: "RAW photos are not supported yet" };
-    }
+    if (brand === "crx ") return raw("cr3");
     if (brand === "qt  ") {
       return media("video", "mov", "video/quicktime", ["mov", "mp4"]);
     }

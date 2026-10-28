@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { exec } from "child_process";
+import { existsSync } from "fs";
 import { mkdir } from "fs/promises";
 import { promisify } from "util";
 import { z } from "zod";
@@ -204,15 +205,21 @@ export const settingsRouter = router({
       // Check for NVENC support (cross-platform command)
       const { stdout, stderr } = await execAsync("ffmpeg -encoders");
       const output = stdout + stderr;
-      const hasNvenc = output.includes("h264_nvenc");
+      // These say what ffmpeg was BUILT with, not what hardware exists: the
+      // static Linux build includes NVENC and AMF on every machine. A GPU is
+      // listed below only when its device actually answers.
+      const ffmpegNvenc = output.includes("h264_nvenc");
       const hasVideotoolbox = output.includes("h264_videotoolbox"); // macOS
-      const hasVaapi = output.includes("h264_vaapi"); // Intel/AMD Linux
-      const hasAmf = output.includes("h264_amf"); // AMD AMF (Windows/cross-platform)
+      const ffmpegVaapi = output.includes("h264_vaapi"); // Intel/AMD Linux
+      // AMF needs AMD's Windows driver; the Linux build lists it but cannot use it.
+      const hasAmf = output.includes("h264_amf") && process.platform === "win32";
+      let hasNvenc = false;
+      let hasVaapi = false;
 
       const gpus: Array<{ id: string; name: string; encoder: string }> = [];
 
-      // Detect NVIDIA GPUs (includes Docker/container support)
-      if (hasNvenc) {
+      // Detect NVIDIA GPUs: nvidia-smi, or a /dev/nvidia0 device in a container.
+      if (ffmpegNvenc) {
         try {
           const { stdout: nvidiaStdout } = await execAsync(
             "nvidia-smi --query-gpu=index,name --format=csv,noheader",
@@ -227,6 +234,7 @@ export const settingsRouter = router({
               const index = parts[0]?.trim();
               const name = parts[1]?.trim();
               if (index && name) {
+                hasNvenc = true;
                 gpus.push({
                   id: `nvidia:${index}`,
                   name: `NVIDIA ${name}`,
@@ -236,39 +244,39 @@ export const settingsRouter = router({
             }
           }
         } catch {
-          // nvidia-smi failed - check for Docker/container GPU
-          const containerGpuName = process.env["NVIDIA_VISIBLE_DEVICES"]
-            ? "NVIDIA GPU (Docker/container)"
-            : "NVIDIA GPU (NVENC available)";
-          gpus.push({
-            id: "nvidia:0",
-            name: containerGpuName,
-            encoder: "h264_nvenc",
-          });
-          // Check if NVIDIA runtime is available via environment or fallback
+          // No nvidia-smi: only list a GPU when the container has the device.
+          if (existsSync("/dev/nvidia0")) {
+            hasNvenc = true;
+            gpus.push({
+              id: "nvidia:0",
+              name: "NVIDIA GPU (Docker/container)",
+              encoder: "h264_nvenc",
+            });
+          }
         }
       }
 
-      // Detect Intel/AMD VAAPI (Linux)
-      if (hasVaapi) {
+      // Detect Intel/AMD VAAPI (Linux): a render node with a working driver.
+      if (ffmpegVaapi && existsSync("/dev/dri/renderD128")) {
         try {
           const { stdout: vaapiStdout } = await execAsync(
-            "vainfo 2>&1 | grep -i 'driver version\\|VA-API version'",
+            "vainfo --display drm --device /dev/dri/renderD128 2>&1",
           );
-          const isAmd = vaapiStdout.toLowerCase().includes("radeon") ||
-            vaapiStdout.toLowerCase().includes("amdgpu") ||
-            vaapiStdout.toLowerCase().includes("mesa gallium");
-          gpus.push({
-            id: "vaapi",
-            name: isAmd ? "AMD GPU (VAAPI)" : "Intel/AMD GPU (VAAPI)",
-            encoder: "h264_vaapi",
-          });
+          const info = vaapiStdout.toLowerCase();
+          const driver = vaapiStdout.match(/Driver version:\s*(.+)/i)?.[1]?.trim();
+          // Only an H.264 encode entrypoint makes it useful for us.
+          if (driver && /vaprofileh264\w*\s*:\s*vaentrypointenc/.test(info)) {
+            hasVaapi = true;
+            const isAmd = info.includes("radeon") || info.includes("amdgpu") || info.includes("amd ");
+            const isIntel = info.includes("intel");
+            gpus.push({
+              id: "vaapi",
+              name: isAmd ? "AMD GPU (VAAPI)" : isIntel ? "Intel GPU (VAAPI)" : "GPU (VAAPI)",
+              encoder: "h264_vaapi",
+            });
+          }
         } catch {
-          gpus.push({
-            id: "vaapi",
-            name: "Intel/AMD GPU (VAAPI)",
-            encoder: "h264_vaapi",
-          });
+          // vainfo failed: no usable VAAPI driver, so do not offer it.
         }
       }
 

@@ -22,6 +22,7 @@ import {
 } from "../trpc.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 import { fileSortExpr, galleryOrderBy, keysetBefore } from "../db/file-sort.js";
+import { hasRawOf, isRawCompanion, notRawCompanion } from "../utils/raw-pairing.js";
 
 // Below this zoom, points are snapped to a lat/lon grid and aggregated
 // server-side so the client never receives more than a handful of points per
@@ -62,6 +63,8 @@ export const geoLocationRouter = router({
       ) {
         return null;
       }
+      // A RAW companion has no coordinates of its own (the map would show it).
+      if (isRawCompanion(input.fileId)) return null;
 
       const [result] = await db
         .insert(GeoLocationTable)
@@ -363,6 +366,7 @@ export const geoLocationRouter = router({
 
       const data = rows.map((r) => ({
         ...r.file,
+        hasRaw: hasRawOf(r.file),
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,
@@ -429,6 +433,8 @@ export const geoLocationRouter = router({
               .from(FileVariantTable)
               .where(eq(FileVariantTable.fileId, FileTable.id)),
           ),
+          // RAW companions get no tasks.
+          notRawCompanion(FileTable.id),
           notExists(
             db
               .select()
@@ -502,6 +508,8 @@ export const geoLocationRouter = router({
               .from(FileVariantTable)
               .where(eq(FileVariantTable.fileId, FileTable.id)),
           ),
+          // RAW companions get no tasks.
+          notRawCompanion(FileTable.id),
           notExists(
             db
               .select()

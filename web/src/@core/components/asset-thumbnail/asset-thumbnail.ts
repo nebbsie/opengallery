@@ -22,6 +22,8 @@ export interface ThumbnailAsset {
   id: string;
   blurhash?: string | null;
   takenAt?: Date | string | null;
+  // Has a camera RAW (RAW + JPEG pair) or is one.
+  hasRaw?: boolean;
 }
 
 const LONG_PRESS_MS = 450;
@@ -103,6 +105,15 @@ const altDate = new Intl.DateTimeFormat(undefined, {
           draggable="false"
           (load)="onImageLoad()"
         />
+
+        @if (_asset.hasRaw) {
+          <span
+            class="pointer-events-none absolute right-1.5 bottom-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] leading-none font-semibold tracking-wide text-white backdrop-blur-sm"
+            aria-hidden="true"
+          >
+            RAW
+          </span>
+        }
 
         @if (_asset.type === 'video') {
           <div

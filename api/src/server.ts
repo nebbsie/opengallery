@@ -26,6 +26,7 @@ import { beginRequestStats, type RequestStats } from "./request-context.js";
 import { appRouter, type AppRouter } from "./router.js";
 import { createContext, toHeaders } from "./trpc.js";
 import { resolveAssetPath } from "./utils/media-path.js";
+import { isRawName } from "./utils/raw-pairing.js";
 import {
   takeDownloadTicket,
   uniqueZipNames,
@@ -131,7 +132,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   // Normalize the variant up front so an invalid one is rejected before any query.
   const lower = variant?.toLowerCase();
   const v =
-    lower === "thumbnail" || lower === "optimised" || lower === "thumbnail_lg"
+    lower === "thumbnail" || lower === "optimised" || lower === "thumbnail_lg" || lower === "raw"
       ? lower
       : variant
         ? "invalid"
@@ -140,7 +141,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   if (v === "invalid") {
     return reply
       .code(400)
-      .send({ error: "Variant must be thumbnail | thumbnail_lg | optimised" });
+      .send({ error: "Variant must be thumbnail | thumbnail_lg | optimised | raw" });
   }
 
   const variantFile = async (type: string) =>
@@ -161,16 +162,24 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   // Single query on the hot thumbnail path: fetch either the original row or the
   // variant's file row directly. A variant request doesn't need the base row, so
   // we skip it (previously two queries: base + variant join).
+  const originalRow = async () =>
+    (await db.select().from(FileTable).where(eq(FileTable.id, id)).limit(1))[0];
+
+  // "raw": the camera RAW of a RAW+JPEG pair (a hidden companion, so only
+  // reachable through its photo), or the file itself when it is a RAW.
+  const rawFile = async () => {
+    const base = await originalRow();
+    if (!base) return undefined;
+    if (base.rawFileId) {
+      return (
+        await db.select().from(FileTable).where(eq(FileTable.id, base.rawFileId)).limit(1)
+      )[0];
+    }
+    return isRawName(base.name) ? base : undefined;
+  };
+
   let target =
-    v == null
-      ? (
-          await db
-            .select()
-            .from(FileTable)
-            .where(eq(FileTable.id, id))
-            .limit(1)
-        )[0]
-      : await variantFile(v);
+    v == null ? await originalRow() : v === "raw" ? await rawFile() : await variantFile(v);
 
   // The 640 px grid thumbnail is filled in by a backfill. Until it exists, serve
   // the 320 px one, but only cache it briefly so the sharp one shows up later.
@@ -204,8 +213,8 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
       isFallback ? "private, max-age=600" : "private, max-age=31536000, immutable",
     );
 
-  // ?download=1 on the original saves it under its own file name.
-  if (v == null && (req.query as { download?: string }).download === "1") {
+  // ?download=1 on the original (or its RAW) saves it under its own file name.
+  if ((v == null || v === "raw") && (req.query as { download?: string }).download === "1") {
     reply.header("Content-Disposition", contentDisposition(target.name));
   }
 

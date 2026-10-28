@@ -18,6 +18,7 @@ import {
   LibraryTable,
 } from "../db/schema.js";
 import { privateProcedure, router } from "../trpc.js";
+import { hasRawOf } from "../utils/raw-pairing.js";
 
 // Group only by takenAt year. Files with no takenAt form a null group ("No Date")
 // rather than being bucketed into their import year.
@@ -207,6 +208,7 @@ export const yearsRouter = router({
 
       const data = rows.map((r) => ({
         ...r.file,
+        hasRaw: hasRawOf(r.file),
         libraryId: r.libraryId,
         libraryFileId: r.libraryFileId,
         blurhash: r.blurhash,

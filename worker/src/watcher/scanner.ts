@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { basename, dirname, extname, join } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
 import { logger } from '../utils/logger.js';
-import { ALLOWED_EXTENSIONS, type MediaType, getMediaType } from '../utils/media-types.js';
+import { ALLOWED_EXTENSIONS, type MediaType, getMediaType, rawMime } from '../utils/media-types.js';
 import { getFullPath, toHostPath } from '../utils/paths.js';
 import { type RouterInputs, trpc } from '../utils/trpc.js';
 import { throttleIo } from '../utils/io-throttle.js';
@@ -97,7 +97,7 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
         continue;
       }
       const { entry, ext, type, stats } = result.value;
-      const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
+      const mime = rawMime(ext) || mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
 
       const arr: TempFile[] = byFolder.get(dir) ?? [];
       arr.push({
@@ -252,12 +252,22 @@ export async function scan(rootDir: string, userId: string, options?: { skipAlbu
       }),
     );
 
-    // Actually add all new files that aren't already in the DB.
-    const fileCreateResult = (await trpc.files.create.mutate(filesToAdd)) as Array<{
+    // Actually add all new files that aren't already in the DB. A camera RAW
+    // next to its JPEG comes back as a hidden companion of the JPEG: it gets no
+    // library or album link of its own.
+    const created = (await trpc.files.create.mutate(filesToAdd)) as Array<{
       id: string;
       dir: string;
       name: string;
+      rawCompanion?: boolean;
     }>;
+    const fileCreateResult = created.filter((f) => !f.rawCompanion);
+    if (created.length > fileCreateResult.length) {
+      logger.info(
+        `Paired ${created.length - fileCreateResult.length} RAW file(s) with their JPEG in folder: ${folder}`,
+      );
+    }
+    if (!fileCreateResult.length) continue;
 
     // Get the user's default library.
     const libraryId = await trpc.library.getDefaultLibraryIdForUser.query(userId);

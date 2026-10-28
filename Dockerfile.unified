@@ -129,10 +129,13 @@ FROM node:22-slim AS runner
 # libgomp1 (onnxruntime) + libglib2.0-0 (opencv-headless) are its shared-lib deps.
 # mesa-va-drivers (+ libva from the build-libva stage) let ffmpeg use AMD/Intel
 # GPUs through VAAPI (/dev/dri); vainfo is used by the GPU detection in Settings.
+# libimage-exiftool-perl: the worker reads camera RAW files (tags and the
+# embedded JPEG preview) with exiftool (worker/src/utils/raw.ts).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       supervisor nginx wget xz-utils ca-certificates \
       python3 libgomp1 libglib2.0-0 \
       libva2 libva-drm2 mesa-va-drivers vainfo \
+      libimage-exiftool-perl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install FFmpeg with NVENC/AMD support using the BtbN glibc static build.

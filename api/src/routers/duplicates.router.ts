@@ -13,12 +13,19 @@ import { FileTable, ImageMetadataTable, LibraryFileTable } from '../db/schema.js
 import { adminProcedure, router } from '../trpc.js';
 import { deleteFilesWithCascade } from '../utils/file-operations.js';
 import { resolveAssetPath } from '../utils/media-path.js';
+import { notRawCompanion } from '../utils/raw-pairing.js';
 
 // Files a user may treat as their own duplicates: those in libraries they own.
 // Shared (view-only) files are excluded so a user can neither see nor delete
 // another user's copies. Admins and the internal worker see everything.
 async function ownedScope(userId: string | null, session: SessionLike) {
-  if (!userId) return { isAdmin: true, ownedLibraryIds: new Set<string>(), filter: sql`1 = 1` as SQL };
+  if (!userId) {
+    return {
+      isAdmin: true,
+      ownedLibraryIds: new Set<string>(),
+      filter: notRawCompanion(FileTable.id),
+    };
+  }
   const scope = await getAccessScope(userId, session);
   const filter = buildFileAccessFilter(
     {
@@ -29,7 +36,12 @@ async function ownedScope(userId: string | null, session: SessionLike) {
     },
     FileTable.id,
   );
-  return { isAdmin: scope.isAdmin, ownedLibraryIds: scope.ownedLibraryIds, filter };
+  // A RAW companion is part of its photo, never a duplicate on its own.
+  return {
+    isAdmin: scope.isAdmin,
+    ownedLibraryIds: scope.ownedLibraryIds,
+    filter: and(filter, notRawCompanion(FileTable.id))!,
+  };
 }
 
 // Deletes run one at a time: the "another copy still exists" check and the

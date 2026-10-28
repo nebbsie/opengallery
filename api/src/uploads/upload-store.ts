@@ -1,4 +1,5 @@
 import { and, eq, inArray, lt, ne, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
 import * as fsp from "node:fs/promises";
@@ -18,6 +19,8 @@ import {
   UploadSessionTable,
 } from "../db/schema.js";
 import { logger } from "../logger.js";
+import { demoteRawFiles, fileTaskRows } from "../utils/file-operations.js";
+import { linkRawPairs, primaryOfRaw } from "../utils/raw-pairing.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
 import { SNIFF_BYTES, finalFileName, sniffMedia } from "./sniff.js";
@@ -506,8 +509,10 @@ async function ensureAlbumChain(
 
 // Same rows as files.create + libraryFile.create + albumFile.create, which the
 // scanner calls for a new file. The worker's watcher sees the file a moment
-// later, finds the row and skips it.
-function insertFileRows(opts: {
+// later, finds the row and skips it. A camera RAW uploaded next to its JPEG
+// (same base name, same album) becomes the JPEG's hidden companion, in either
+// order (utils/raw-pairing.ts). Returns the id of the photo that shows.
+async function insertFileRows(opts: {
   dir: string;
   name: string;
   type: "image" | "video";
@@ -516,8 +521,8 @@ function insertFileRows(opts: {
   contentHash: string;
   libraryId: string;
   albumId: string;
-}): string {
-  return db.transaction((tx) => {
+}): Promise<string> {
+  const { fileId, pairs } = db.transaction((tx) => {
     const [file] = tx
       .insert(FileTable)
       .values({
@@ -531,25 +536,18 @@ function insertFileRows(opts: {
       .returning({ id: FileTable.id })
       .all();
     const fileId = file!.id;
-    const tasks: (typeof FileTaskTable.$inferInsert)[] =
-      opts.type === "image"
-        ? [
-            { fileId, type: "encode_thumbnail" },
-            { fileId, type: "encode_optimised" },
-            { fileId, type: "detect_faces" },
-          ]
-        : [
-            { fileId, type: "video_poster" },
-            { fileId, type: "encode_optimised" },
-            { fileId, type: "detect_faces" },
-          ];
-    tasks.push({ fileId, type: "extract_geolocation" });
-    tasks.push({ fileId, type: "embed_clip" });
-    tx.insert(FileTaskTable).values(tasks).run();
-    tx.insert(LibraryFileTable).values({ fileId, libraryId: opts.libraryId }).run();
-    tx.insert(AlbumFileTable).values({ fileId, albumId: opts.albumId }).run();
-    return fileId;
+    // Same connection, so this runs inside the transaction.
+    const pairs = linkRawPairs([fileId]);
+    if (!pairs.companions.has(fileId)) {
+      tx.insert(FileTaskTable).values(fileTaskRows(fileId, opts.type)).run();
+      tx.insert(LibraryFileTable).values({ fileId, libraryId: opts.libraryId }).run();
+      tx.insert(AlbumFileTable).values({ fileId, albumId: opts.albumId }).run();
+    }
+    return { fileId, pairs };
   });
+  // The upload is a JPEG and its RAW was already here as a photo of its own.
+  await demoteRawFiles(pairs.primaryOf, pairs.demoted);
+  return pairs.primaryOf.get(fileId) ?? fileId;
 }
 
 export type FinishResult = {
@@ -602,18 +600,33 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
       .leftJoin(AlbumFileTable, eq(AlbumFileTable.fileId, FileTable.id))
       .where(and(eq(FileTable.contentHash, contentHash), eq(LibraryTable.userId, userId)))
       .limit(1);
-    if (dupe) {
+    // The same RAW may already be here as the hidden companion of a photo:
+    // that photo is the duplicate.
+    const rawPrimary = alias(FileTable, "raw_primary");
+    const [rawDupe] = dupe
+      ? []
+      : await db
+          .select({ id: rawPrimary.id, albumId: AlbumFileTable.albumId })
+          .from(FileTable)
+          .innerJoin(rawPrimary, eq(rawPrimary.rawFileId, FileTable.id))
+          .innerJoin(LibraryFileTable, eq(LibraryFileTable.fileId, rawPrimary.id))
+          .innerJoin(LibraryTable, eq(LibraryTable.id, LibraryFileTable.libraryId))
+          .leftJoin(AlbumFileTable, eq(AlbumFileTable.fileId, rawPrimary.id))
+          .where(and(eq(FileTable.contentHash, contentHash), eq(LibraryTable.userId, userId)))
+          .limit(1);
+    const existing = dupe ?? rawDupe;
+    if (existing) {
       await fsp.rm(s.partPath, { force: true });
       await db
         .update(UploadSessionTable)
         .set({
           status: "duplicate",
-          fileId: dupe.id,
-          albumId: dupe.albumId,
+          fileId: existing.id,
+          albumId: existing.albumId,
           updatedAt: new Date().toISOString(),
         })
         .where(eq(UploadSessionTable.id, s.id));
-      return { status: "duplicate", fileId: dupe.id, albumId: dupe.albumId, name: s.fileName };
+      return { status: "duplicate", fileId: existing.id, albumId: existing.albumId, name: s.fileName };
     }
 
     await fsp.mkdir(s.destDir, { recursive: true });
@@ -631,7 +644,7 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
 
     let fileId: string;
     try {
-      fileId = insertFileRows({
+      fileId = await insertFileRows({
         dir: s.destDir,
         name,
         type: m.type,
@@ -649,7 +662,7 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
         .where(and(eq(FileTable.dir, s.destDir), eq(FileTable.name, name)))
         .limit(1);
       if (!row) throw e;
-      fileId = row.id;
+      fileId = primaryOfRaw(row.id) ?? row.id;
     }
 
     await db

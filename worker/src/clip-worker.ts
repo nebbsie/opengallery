@@ -5,6 +5,8 @@ import { faceServiceHealthy } from './face-detection/face-client.js';
 import { videoFrameAt } from './face-detection/detect.js';
 import { getVideoMetadata } from './utils/ffprobe.js';
 import { logger } from './utils/logger.js';
+import { isRawName } from './utils/media-types.js';
+import { getRawPreview, NoRawPreviewError } from './utils/raw.js';
 import { toContainerPath } from './utils/paths.js';
 import { trpc } from './utils/trpc.js';
 
@@ -28,10 +30,20 @@ async function embedImage(jpeg: Buffer): Promise<{ model: string; embedding: str
   return (await res.json()) as { model: string; embedding: string };
 }
 
-async function frameFor(file: { type: string; dir: string; name: string }): Promise<Buffer | null> {
+async function frameFor(file: {
+  type: string;
+  dir: string;
+  name: string;
+  contentHash: string | null;
+}): Promise<Buffer | null> {
   const path = toContainerPath(join(file.dir, file.name));
   let source: Buffer | string = path;
-  if (file.type === 'video') {
+  if (file.type === 'image' && isRawName(file.name)) {
+    // A camera RAW is read through its embedded JPEG preview (utils/raw.ts),
+    // usually cached by the encode step already.
+    const settings = await trpc.settings.get.query();
+    source = await getRawPreview(file, settings?.variantsPath ?? settings?.uploadPath ?? null);
+  } else if (file.type === 'video') {
     // One frame from a third of the way in: past intros and fades.
     const meta = await getVideoMetadata(path);
     const frame = await videoFrameAt(path, Math.max(0, (meta.duration ?? 0) / 3));
@@ -58,6 +70,10 @@ async function embedFile(fileId: string): Promise<void> {
     await trpc.clip.setEmbedding.mutate({ fileId, model, embedding });
     await trpc.fileTask.setStatusByFileAndType.mutate({ fileId, type: 'embed_clip', status: 'succeeded' });
   } catch (e) {
+    if (e instanceof NoRawPreviewError) {
+      await trpc.fileTask.setStatusByFileAndType.mutate({ fileId, type: 'embed_clip', status: 'skipped' });
+      return;
+    }
     if (e instanceof ModelMissing) {
       // Not this file's fault: put it back without using an attempt.
       await trpc.fileTask.setStatusByFileAndType.mutate({ fileId, type: 'embed_clip', status: 'pending' });

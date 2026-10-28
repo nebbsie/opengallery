@@ -38,7 +38,7 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 import { injectQuery, keepPreviousData, QueryClient } from '@tanstack/angular-query-experimental';
 import { HideFromDialog, HideFromTarget } from '../shared-viewer/hide-from-dialog/hide-from-dialog';
 import { FileRules, joinNames, Viewer, viewerRulesKeys } from '../shared-viewer/viewer-rules';
-import { assetDate, formatCoords } from './asset-format';
+import { assetDate, formatBytes, formatCoords } from './asset-format';
 import { AssetInfoPanel, ViewFileData } from './info-panel';
 import { StageSlot, ViewerStage } from './viewer-stage';
 
@@ -128,6 +128,16 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
             }
           </div>
 
+          @if (current()?.raw; as raw) {
+            <!-- Camera RAW: the photo has a RAW file (RAW + JPEG), or is one. -->
+            <span
+              class="shrink-0 rounded-md bg-black/35 px-2 py-1 text-[11px] leading-none font-semibold tracking-wide text-white backdrop-blur-sm"
+              [title]="raw.paired ? 'RAW + JPEG: ' + raw.name : 'RAW photo'"
+            >
+              RAW
+            </span>
+          }
+
           @if (current()?.file?.type === 'image' || (!current() && slotType() !== 'video')) {
             <button
               hlmBtn
@@ -144,18 +154,68 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
             </button>
           }
 
-          <a
-            hlmBtn
-            variant="ghost"
-            size="icon"
-            [class]="ctrlBtn"
-            [href]="apiUrl + '/asset/' + id()"
-            [attr.download]="current()?.file?.name ?? ''"
-            aria-label="Download original"
-            title="Download original"
-          >
-            <ng-icon hlm name="lucideDownload" />
-          </a>
+          @if (current()?.raw?.paired) {
+            <!-- RAW + JPEG: choose which file to download. -->
+            <div class="relative">
+              <button
+                hlmBtn
+                variant="ghost"
+                size="icon"
+                type="button"
+                [class]="downloadMenuOpen() ? ctrlBtnOn : ctrlBtn"
+                aria-haspopup="menu"
+                [attr.aria-expanded]="downloadMenuOpen()"
+                aria-label="Download"
+                title="Download"
+                (click)="downloadMenuOpen.set(!downloadMenuOpen())"
+              >
+                <ng-icon hlm name="lucideDownload" />
+              </button>
+              @if (downloadMenuOpen()) {
+                <!-- Tap outside closes the menu. -->
+                <div class="fixed inset-0 z-30" aria-hidden="true" (click)="downloadMenuOpen.set(false)"></div>
+                <div
+                  role="menu"
+                  aria-label="Download"
+                  class="absolute top-12 right-0 z-40 w-56 overflow-hidden rounded-xl bg-black/80 py-1 text-sm text-white shadow-lg backdrop-blur-md"
+                >
+                  <a
+                    role="menuitem"
+                    class="flex min-h-11 items-center justify-between gap-3 px-3 outline-none hover:bg-white/10 focus-visible:bg-white/15"
+                    [href]="apiUrl + '/asset/' + id() + '?download=1'"
+                    [attr.download]="current()?.file?.name ?? ''"
+                    (click)="downloadMenuOpen.set(false)"
+                  >
+                    <span>JPEG</span>
+                    <span class="text-xs text-white/60 tabular-nums">{{ bytes(current()?.file?.size) }}</span>
+                  </a>
+                  <a
+                    role="menuitem"
+                    class="flex min-h-11 items-center justify-between gap-3 px-3 outline-none hover:bg-white/10 focus-visible:bg-white/15"
+                    [href]="apiUrl + '/asset/' + id() + '/raw?download=1'"
+                    [attr.download]="current()?.raw?.name ?? ''"
+                    (click)="downloadMenuOpen.set(false)"
+                  >
+                    <span>RAW</span>
+                    <span class="text-xs text-white/60 tabular-nums">{{ bytes(current()?.raw?.size) }}</span>
+                  </a>
+                </div>
+              }
+            </div>
+          } @else {
+            <a
+              hlmBtn
+              variant="ghost"
+              size="icon"
+              [class]="ctrlBtn"
+              [href]="apiUrl + '/asset/' + id()"
+              [attr.download]="current()?.file?.name ?? ''"
+              aria-label="Download original"
+              title="Download original"
+            >
+              <ng-icon hlm name="lucideDownload" />
+            </a>
+          }
 
           @if (current()?.canManageShares) {
             <button
@@ -347,6 +407,9 @@ export class Asset {
   protected readonly tagMode = signal(false);
   protected readonly chromeVisible = signal(true);
   protected readonly isFullscreen = signal(false);
+  // RAW + JPEG download menu in the top bar.
+  protected readonly downloadMenuOpen = signal(false);
+  protected readonly bytes = formatBytes;
 
   private readonly stage = viewChild(ViewerStage);
   protected readonly dismissProgress = computed(() => this.stage()?.dismissProgress() ?? 0);
@@ -493,6 +556,12 @@ export class Asset {
   });
 
   constructor() {
+    // A move to another item closes the download menu.
+    effect(() => {
+      this.id();
+      this.downloadMenuOpen.set(false);
+    });
+
     // Prefetch the neighbours' data and preload their large images.
     effect(() => {
       if (!this.current()) return;
@@ -604,7 +673,8 @@ export class Asset {
     let handled = true;
     switch (event.key) {
       case 'Escape':
-        if (!stage?.escape()) this.close();
+        if (this.downloadMenuOpen()) this.downloadMenuOpen.set(false);
+        else if (!stage?.escape()) this.close();
         break;
       case 'ArrowLeft':
         this.go('prev');

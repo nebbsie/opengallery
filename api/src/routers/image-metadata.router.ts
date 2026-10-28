@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { FileTable, ImageMetadataTable } from "../db/schema.js";
 import { internalProcedure, router } from "../trpc.js";
+import { isRawCompanion } from "../utils/raw-pairing.js";
 
 export const imageMetadataRouter = router({
   save: internalProcedure
@@ -23,6 +24,8 @@ export const imageMetadataRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      // A RAW companion has no metadata (it would show in the gallery).
+      if (isRawCompanion(input.fileId)) return null;
       const values = {
         width: input.width,
         height: input.height,

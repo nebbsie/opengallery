@@ -24,6 +24,7 @@ import {
   UserTable,
 } from "../db/schema.js";
 import { internalProcedure, privateProcedure, router } from "../trpc.js";
+import { hasRawOf } from "../utils/raw-pairing.js";
 
 const fvThumb = alias(FileVariantTable, "fv_thumb");
 const fvOpt = alias(FileVariantTable, "fv_opt");
@@ -789,6 +790,7 @@ export const albumRouter = router({
         },
         files: files.map((r) => ({
           ...r.file,
+          hasRaw: hasRawOf(r.file),
           blurhash: r.blurhash,
           width: r.width,
           height: r.height,

@@ -93,11 +93,17 @@ export const FileTable = sqliteTable(
     // indexed keyset scans instead of full scans + filesort. Kept in sync by
     // imageMetadata.save; backfilled by the 0005 migration.
     takenAt: text("taken_at"),
+    // Camera RAW+JPEG pair: the RAW file (same base name, same folder) of this
+    // photo. The RAW row is a hidden companion: it has no library, album, task
+    // or derived rows, so it never shows on its own. Plain text, no FK, like
+    // the other links here; kept in sync by utils/raw-pairing.ts.
+    rawFileId: text("raw_file_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("file_path_uidx").on(t.dir, t.name),
+    index("file_raw_file_id_idx").on(t.rawFileId),
     // Global gallery + asset prev/next: undated media sinks to the sentinel
     // bottom. The sentinel is an inline literal (NOT a bound param) so it
     // matches the ORDER BY expression and SQLite can use this index.

@@ -7,6 +7,8 @@ import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
 import { validateCamera } from '../utils/camera-validator.js';
 import { getExifInfo } from '../utils/exif.js';
+import { isRawName } from '../utils/media-types.js';
+import { getRawPreview, NoRawPreviewError } from '../utils/raw.js';
 import { getVideoMetadata } from '../utils/ffprobe.js';
 import { throttleIo } from '../utils/io-throttle.js';
 import { logger } from '../utils/logger.js';
@@ -186,8 +188,20 @@ async function encodeImage(
   const optQuality = settings?.optimizedQuality ?? 80;
 
   const hostPath = join(file.dir, file.name);
-  const path = toContainerPath(hostPath);
+  const originalPath = toContainerPath(hostPath);
   const fileId = file.id;
+  // A camera RAW is decoded from its embedded JPEG preview (already upright);
+  // its tags still come from the RAW itself.
+  const isRaw = isRawName(file.name);
+  let path = originalPath;
+  if (isRaw) {
+    try {
+      path = await getRawPreview(file, variantsPath);
+    } catch (e) {
+      if (e instanceof NoRawPreviewError) throw new UndecodableImageError(e.message);
+      throw e;
+    }
+  }
 
   // Extract metadata (width/height) early using sharp. Tolerant: a corrupt
   // header shouldn't hard-fail here before the thumbnail step gets a chance to
@@ -387,8 +401,15 @@ async function encodeImage(
     exposureTime,
     focalLength,
     fNumber,
-  } = await getExifInfo(path);
+    width: rawWidth,
+    height: rawHeight,
+  } = await getExifInfo(originalPath);
   timings['exif'] = Date.now() - stepStart;
+  // A RAW's preview can be smaller than the sensor: store the real size.
+  if (isRaw && rawWidth && rawHeight) {
+    width = rawWidth;
+    height = rawHeight;
+  }
   stepStart = Date.now();
 
   const validatedCamera = validateCamera(cameraMake ?? null, cameraModel ?? null);

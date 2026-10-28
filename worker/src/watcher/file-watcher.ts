@@ -5,7 +5,7 @@ import { existsSync, statSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, extname } from 'node:path';
 import { computeFileHash } from '../utils/hash.js';
-import { getMediaType, isSupportedFile, type MediaType } from '../utils/media-types.js';
+import { getMediaType, isSupportedFile, rawMime, type MediaType } from '../utils/media-types.js';
 import { toContainerPath, toHostPath } from '../utils/paths.js';
 import { trpc, type RouterOutputs } from '../utils/trpc.js';
 import { scan } from './scanner.js';
@@ -227,7 +227,7 @@ export class FileWatcherService {
         return; // Skip if not supported media type
       }
 
-      const mime = mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
+      const mime = rawMime(ext) || mimeLookup(ext) || (type === 'image' ? 'image/*' : 'video/*');
       // The DB stores host-style paths (the scanner does the same); the
       // container path is only for reading the file.
       const dir = toHostPath(dirname(filePath));
@@ -261,6 +261,12 @@ export class FileWatcherService {
             contentHash,
           },
         ]);
+
+        if (fileCreateResult[0]?.rawCompanion) {
+          // A camera RAW next to its JPEG: stored as the JPEG's hidden companion.
+          this.logger.info(`Paired RAW file with its JPEG: ${filePath}`);
+          return;
+        }
 
         if (fileCreateResult && fileCreateResult.length > 0 && fileCreateResult[0]) {
           const newFileId = fileCreateResult[0].id;
