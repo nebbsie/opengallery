@@ -22,7 +22,8 @@ echo "Downloading InsightFace ${MODEL_NAME} -> $DEST"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-curl -fsSL "$PACK_URL" -o "$tmp/${MODEL_NAME}.zip"
+# Retry: one dropped stream from GitHub otherwise fails the whole image build.
+curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$PACK_URL" -o "$tmp/${MODEL_NAME}.zip"
 # Some packs nest the .onnx files in a folder; flatten into DEST.
 unzip -o -j "$tmp/${MODEL_NAME}.zip" '*.onnx' -d "$DEST" >/dev/null
 # Only detection + recognition are used; drop the landmark/attribute models.
