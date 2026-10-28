@@ -730,6 +730,9 @@ export const UploadSessionTable = sqliteTable(
     partPath: text("part_path").notNull(),
     received: integer("received").notNull().default(0),
     status: text("status").$type<UploadSessionStatus>().notNull().default("open"),
+    // JSON: metadata sent with the upload (an import's sidecar), applied when
+    // the upload finishes. See FileImportMetaTable.
+    meta: text("meta"),
     fileId: text("file_id"),
     albumId: text("album_id"),
     createdAt: createdAt(),
@@ -762,3 +765,16 @@ export const TrashItemTable = sqliteTable(
   },
   (t) => [index("trash_item_created_idx").on(t.createdAt)],
 );
+
+// Metadata that came with an imported file from outside, e.g. the JSON
+// sidecar of a Google Takeout photo. The file's own EXIF wins; these fill the
+// gaps (Takeout often strips the date or GPS from the image).
+export const FileImportMetaTable = sqliteTable("file_import_meta", {
+  fileId: text("file_id").primaryKey(),
+  source: text("source").notNull(),
+  takenAt: text("taken_at"),
+  lat: real("lat"),
+  lon: real("lon"),
+  description: text("description"),
+  createdAt: createdAt(),
+});

@@ -66,6 +66,19 @@ export const uploadRouter = router({
         mime: z.string().max(200),
         albumId: z.string().nullish(),
         newAlbumName: z.string().max(200).nullish(),
+        // A parent folder for the new album (one level), e.g. "Google Photos".
+        folder: z.string().max(100).nullish(),
+        // Metadata from an import (e.g. a Google Takeout JSON sidecar). The
+        // file's own EXIF wins; these fill the gaps.
+        meta: z
+          .object({
+            source: z.string().max(40),
+            takenAt: z.string().datetime().nullish(),
+            lat: z.number().min(-90).max(90).nullish(),
+            lon: z.number().min(-180).max(180).nullish(),
+            description: z.string().max(5000).nullish(),
+          })
+          .nullish(),
       }),
     )
     .mutation(({ ctx, input }) =>

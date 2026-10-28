@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { createHash } from "node:crypto";
 import { constants, createReadStream, createWriteStream } from "node:fs";
@@ -12,6 +12,8 @@ import { clearScopeCache } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
   AlbumFileTable,
+  FileImportMetaTable,
+  GeoLocationTable,
   AlbumTable,
   FileTable,
   FileTaskTable,
@@ -210,6 +212,16 @@ export type CreateUploadInput = {
   mime: string;
   albumId?: string | null | undefined;
   newAlbumName?: string | null | undefined;
+  folder?: string | null | undefined;
+  meta?: ImportMeta | null | undefined;
+};
+
+export type ImportMeta = {
+  source: string;
+  takenAt?: string | null | undefined;
+  lat?: number | null | undefined;
+  lon?: number | null | undefined;
+  description?: string | null | undefined;
 };
 
 export async function createUpload(input: CreateUploadInput) {
@@ -255,7 +267,8 @@ export async function createUpload(input: CreateUploadInput) {
     albumId = album.id;
   } else {
     const name = cleanAlbumName(input.newAlbumName ?? "") || DEFAULT_ALBUM_NAME;
-    destDir = join(userDir, name);
+    const folder = input.folder ? cleanAlbumName(input.folder) : "";
+    destDir = folder ? join(userDir, folder, name) : join(userDir, name);
   }
   if (!albumId && !isInside(userDir, destDir)) {
     throw new UploadError(400, "BAD_ALBUM", "That album name is not allowed");
@@ -298,6 +311,7 @@ export async function createUpload(input: CreateUploadInput) {
       destDir,
       partPath: "",
       albumId,
+      meta: input.meta ? JSON.stringify(input.meta) : null,
     })
     .returning();
   const partPath = join(partDir, `${session!.id}.part`);
@@ -724,11 +738,51 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
       })
       .where(eq(UploadSessionTable.id, s.id));
 
+    if (s.meta) await applyImportMeta(fileId, s.meta);
+
     // A bare "something changed" signal (no ids): see ws-manager.ts.
     wsManager.broadcast("upload:finished", null);
     logger.info(`[upload] ${join(s.destDir, name)} (${s.size} bytes)`);
     return { status: "done", fileId, albumId, name };
   });
+}
+
+// Keep an import's metadata (e.g. a Google Takeout JSON sidecar) and use it
+// now for what the file lacks: the date (imageMetadata.save also falls back to
+// it when the EXIF has none) and the position (the geo worker replaces it
+// when the file has its own GPS).
+async function applyImportMeta(fileId: string, raw: string): Promise<void> {
+  let meta: ImportMeta;
+  try {
+    meta = JSON.parse(raw) as ImportMeta;
+  } catch {
+    return;
+  }
+  const hasGeo =
+    meta.lat != null && meta.lon != null && !(meta.lat === 0 && meta.lon === 0);
+  await db
+    .insert(FileImportMetaTable)
+    .values({
+      fileId,
+      source: meta.source,
+      takenAt: meta.takenAt ?? null,
+      lat: hasGeo ? meta.lat! : null,
+      lon: hasGeo ? meta.lon! : null,
+      description: meta.description?.trim() || null,
+    })
+    .onConflictDoNothing();
+  if (meta.takenAt) {
+    await db
+      .update(FileTable)
+      .set({ takenAt: meta.takenAt })
+      .where(and(eq(FileTable.id, fileId), isNull(FileTable.takenAt)));
+  }
+  if (hasGeo) {
+    await db
+      .insert(GeoLocationTable)
+      .values({ fileId, lat: meta.lat!, lon: meta.lon! })
+      .onConflictDoNothing();
+  }
 }
 
 // Remove uploads nobody touched for a day, old finished rows, and part files

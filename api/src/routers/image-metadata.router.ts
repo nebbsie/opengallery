@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/index.js";
-import { FileTable, ImageMetadataTable } from "../db/schema.js";
+import { FileImportMetaTable, FileTable, ImageMetadataTable } from "../db/schema.js";
 import { internalProcedure, router } from "../trpc.js";
 import { isRawCompanion } from "../utils/raw-pairing.js";
 
@@ -26,11 +26,21 @@ export const imageMetadataRouter = router({
     .mutation(async ({ input }) => {
       // A RAW companion has no metadata (it would show in the gallery).
       if (isRawCompanion(input.fileId)) return null;
+      // No date in the file: use the one an import brought (Takeout JSON).
+      const imported = input.takenAt
+        ? undefined
+        : (
+            await db
+              .select({ takenAt: FileImportMetaTable.takenAt })
+              .from(FileImportMetaTable)
+              .where(eq(FileImportMetaTable.fileId, input.fileId))
+              .limit(1)
+          )[0];
       const values = {
         width: input.width,
         height: input.height,
         blurhash: input.blurhash ?? null,
-        takenAt: input.takenAt?.toISOString() ?? null,
+        takenAt: input.takenAt?.toISOString() ?? imported?.takenAt ?? null,
         cameraMake: input.cameraMake ?? null,
         cameraModel: input.cameraModel ?? null,
         lensModel: input.lensModel ?? null,

@@ -11,6 +11,7 @@ import {
   FileTable,
   FileTaskTable,
   FileVariantTable,
+  FileImportMetaTable,
   GeoLocationTable,
   ImageMetadataTable,
   LibraryFileTable,
@@ -695,6 +696,10 @@ export async function deleteFilesWithCascade(fileIds: string[]) {
   await db
     .delete(GeoLocationTable)
     .where(inArray(GeoLocationTable.fileId, idsToDelete));
+
+  await db
+    .delete(FileImportMetaTable)
+    .where(inArray(FileImportMetaTable.fileId, idsToDelete));
 
   // Remove detected faces and repair/clean up their person clusters.
   await removeFacesForFiles(idsToDelete, false);
