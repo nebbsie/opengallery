@@ -34,6 +34,19 @@ export function describeWriteError(e: unknown): string {
   return (e as Error)?.message ?? "Unknown error";
 }
 
+// The API runs as root in the container. A file or folder it makes in the
+// media folder takes the owner of its parent folder, so the person who owns
+// the library on the host can still move and delete it.
+export function inheritOwner(p: string): void {
+  if (process.getuid?.() !== 0) return;
+  try {
+    const parent = fs.statSync(path.dirname(p));
+    fs.chownSync(p, parent.uid, parent.gid);
+  } catch (e) {
+    logger.warn(`[media] could not set the owner of ${p}: ${e}`);
+  }
+}
+
 // A free path inside dir for name: "name", then "name (2)", "name (3)", ...
 function freePath(dir: string, name: string): string {
   const ext = path.extname(name);
@@ -80,7 +93,10 @@ export async function moveToTrash(
     kind === "folder" ? folderStats(real) : { size: stat.size, files: 1 };
 
   const trashDir = path.join(path.dirname(real), TRASH_DIR);
-  fs.mkdirSync(trashDir, { recursive: true });
+  if (!fs.existsSync(trashDir)) {
+    fs.mkdirSync(trashDir, { recursive: true });
+    inheritOwner(trashDir);
+  }
   const target = freePath(trashDir, path.basename(real));
   fs.renameSync(real, target);
 

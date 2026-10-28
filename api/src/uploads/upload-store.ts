@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { contributableAlbums, uploadableAlbum } from "../authz/album-contrib.js";
+import { inheritOwner } from "../utils/media-trash.js";
 import { clearScopeCache } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import {
@@ -670,6 +671,7 @@ export async function finishUpload(id: string, userId: string): Promise<FinishRe
     if (shared) {
       // The shared album's folder already exists; nothing is created above it.
       name = await placeFile(s.partPath, s.destDir, finalFileName(s.fileName, m));
+      inheritOwner(join(s.destDir, name));
       libraryId = shared.libraryId;
       albumId = shared.id;
     } else {
