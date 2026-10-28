@@ -15,6 +15,7 @@ DEST="${CLIP_HOME}/${MODEL}"
 for f in visual/model.onnx visual/preprocess_cfg.json textual/model.onnx textual/tokenizer.json config.json; do
   mkdir -p "$(dirname "$DEST/$f")"
   echo "Downloading $MODEL/$f"
-  curl -fsSL "$BASE/$f" -o "$DEST/$f"
+  # The text model is about 1.1 GB: retry and resume dropped transfers.
+  curl -fsSL --retry 8 --retry-delay 5 --retry-all-errors -C - "$BASE/$f" -o "$DEST/$f"
 done
 echo "Done. Model in $DEST"
