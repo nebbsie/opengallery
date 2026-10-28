@@ -44,10 +44,6 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideImages" class="mb-4" />
           <p class="text-foreground font-medium">No albums yet</p>
-          <p class="max-w-sm text-center text-sm text-pretty">
-            Albums come from the folders in your library. Add a source folder in Settings, and
-            each folder with photos becomes an album.
-          </p>
         </div>
       } @else {
         <app-virtual-thumbnail-grid

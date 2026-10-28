@@ -56,7 +56,7 @@ function pinHtml(apiUrl: string, cover: string | null, count: number, size: numb
       <app-error-alert [error]="error()" />
     } @else {
       <div class="relative min-h-0 w-full flex-1">
-        <div #mapContainer class="absolute inset-0 rounded-lg border"></div>
+        <div #mapContainer class="absolute inset-0 rounded-lg"></div>
 
         @if (loading()) {
           <div class="bg-background/60 absolute inset-0 flex items-center justify-center rounded-lg">
@@ -68,7 +68,6 @@ function pinHtml(apiUrl: string, cover: string | null, count: number, size: numb
           >
             <ng-icon hlm size="xl" name="lucideMap" class="mb-4" />
             <p class="text-foreground font-medium">No places yet</p>
-            <p class="text-sm">Photos with a location in their data show here.</p>
           </div>
         }
       </div>
@@ -161,6 +160,9 @@ export class Map implements OnDestroy {
       zoomControl: true,
       attributionControl: true,
     });
+    // Leaflet's default prefix has a flag icon; keep only the plain link. The
+    // OpenStreetMap credit after it stays (the data licence needs it).
+    this.map.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
 
     // Base map: OpenFreeMap vector tiles (free and open source, no API key, no
     // usage limits), drawn by MapLibre GL inside Leaflet. CARTO's free raster

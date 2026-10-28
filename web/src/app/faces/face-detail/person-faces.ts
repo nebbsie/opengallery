@@ -52,7 +52,7 @@ const MAX_SELECTION = 5000;
   template: `
     @if (isAdmin()) {
       <div
-        class="bg-background/95 sticky top-0 z-10 mb-3 flex min-h-12 flex-wrap items-center gap-2 border-b py-2 backdrop-blur"
+        class="glass-strong sticky top-0 z-10 mb-3 flex min-h-12 flex-wrap items-center gap-2 rounded-2xl px-3 py-2"
         role="toolbar"
         aria-label="Face actions"
       >
@@ -132,7 +132,7 @@ const MAX_SELECTION = 5000;
       </div>
 
       @if (moveOpen() && selectedCount() > 0) {
-        <section class="bg-card mb-4 rounded-lg border p-3" aria-label="Move faces to a person">
+        <section class="bg-glass-tint mb-4 rounded-2xl border border-glass-border p-3" aria-label="Move faces to a person">
           <div class="mb-2 flex items-center justify-between">
             <h3 class="text-foreground text-sm font-semibold">
               Move {{ selectedCount() | plural: 'face' }} to...

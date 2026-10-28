@@ -49,10 +49,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
           <ng-icon hlm size="xl" name="lucideImagePlus" class="mb-4" />
           <p>No assets yet</p>
           @if (isAdmin()) {
-            <p class="mb-4 text-sm">Add a source folder to import your library</p>
-            <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
-          } @else {
-            <p class="text-sm">Photos shared with you will show here</p>
+            <a hlmBtn class="mt-4" routerLink="/settings/sources">Go to Source Folders</a>
           }
         </div>
       } @else {

@@ -51,7 +51,7 @@ const COPY: Record<ErrorKind, { title: string; body: string }> = {
   template: `
     <div
       role="alert"
-      class="bg-card text-card-foreground mx-auto my-6 flex max-w-md flex-col items-center gap-3 rounded-xl border p-6 text-center"
+      class="bg-glass-tint text-card-foreground mx-auto my-6 flex max-w-md flex-col items-center gap-3 rounded-2xl border border-glass-border p-6 text-center"
     >
       <div class="bg-muted text-muted-foreground grid size-12 place-items-center rounded-full">
         <ng-icon hlm [name]="kind() === 'network' ? 'lucideWifiOff' : 'lucideCircleAlert'" />

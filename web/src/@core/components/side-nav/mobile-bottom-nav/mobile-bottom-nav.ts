@@ -25,8 +25,9 @@ type NavItem = { path: string; label: string; icon: string; exact?: boolean };
 
 // Primary navigation for mobile: a bottom bar in normal layout flow (the left
 // rail is hidden on mobile). Photos, Search, People, Albums and More. More opens
-// a sheet with the other sections. Each tab has a text label, a 44px+ target
-// and room for the home indicator (safe-area inset).
+// a sheet with the other sections. Tabs are icons only (named for screen
+// readers by aria-label), with a 44px+ target and room for the home indicator
+// (safe-area inset).
 @Component({
   selector: 'app-mobile-bottom-nav',
   imports: [RouterLink, RouterLinkActive, PrefetchRouteDirective, NgIcon, HlmIcon],
@@ -45,16 +46,19 @@ type NavItem = { path: string; label: string; icon: string; exact?: boolean };
       lucideUpload,
     }),
   ],
+  // A floating glass dock in normal layout flow, so it never covers content.
+  // The glass is on the <nav>, not the host: backdrop-filter would make it the
+  // containing block of the fixed More sheet.
   host: {
-    class:
-      'bg-background z-40 flex shrink-0 items-stretch justify-around border-t pb-[env(safe-area-inset-bottom)] sm:hidden',
+    class: 'z-40 flex shrink-0 px-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:hidden',
   },
   template: `
-    <nav class="flex w-full items-stretch" aria-label="Main">
+    <nav class="glass flex w-full items-stretch rounded-[1.75rem] px-1" aria-label="Main">
       @for (item of tabs; track item.path) {
         <a
-          class="text-muted-foreground flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 pt-1.5 pb-1 text-[11px] font-medium transition-[color,scale] duration-100 active:scale-[0.96]"
+          class="text-muted-foreground flex min-h-14 flex-1 items-center justify-center transition-[color,scale] duration-100 active:scale-[0.96]"
           [routerLink]="item.path"
+          [attr.aria-label]="item.label"
           flPrefetchRoute
           routerLinkActive="!text-foreground"
           #rla="routerLinkActive"
@@ -63,35 +67,34 @@ type NavItem = { path: string; label: string; icon: string; exact?: boolean };
           (click)="moreOpen.set(false)"
         >
           <span
-            class="grid h-7 w-14 place-items-center rounded-full transition-colors duration-150"
-            [class.bg-accent]="rla.isActive"
+            class="grid h-10 w-14 place-items-center rounded-full transition-colors duration-150"
+            [class.bg-glass-tint-strong]="rla.isActive"
           >
-            <ng-icon hlm size="sm" [name]="item.icon" />
+            <ng-icon hlm size="base" [name]="item.icon" />
           </span>
-          {{ item.label }}
         </a>
       }
       <button
         type="button"
-        class="text-muted-foreground flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 pt-1.5 pb-1 text-[11px] font-medium transition-[color,scale] duration-100 active:scale-[0.96]"
+        class="text-muted-foreground flex min-h-14 flex-1 items-center justify-center transition-[color,scale] duration-100 active:scale-[0.96]"
         [class.!text-foreground]="moreOpen() || moreActive()"
+        aria-label="More"
         aria-haspopup="dialog"
         [attr.aria-expanded]="moreOpen()"
         (click)="moreOpen.set(!moreOpen())"
       >
         <span
-          class="grid h-7 w-14 place-items-center rounded-full transition-colors duration-150"
-          [class.bg-accent]="moreOpen() || moreActive()"
+          class="grid h-10 w-14 place-items-center rounded-full transition-colors duration-150"
+          [class.bg-glass-tint-strong]="moreOpen() || moreActive()"
         >
-          <ng-icon hlm size="sm" name="lucideEllipsis" />
+          <ng-icon hlm size="base" name="lucideEllipsis" />
         </span>
-        More
       </button>
     </nav>
 
     @if (moreOpen()) {
       <div
-        class="fixed inset-0 z-50 bg-black/40 motion-safe:animate-in motion-safe:fade-in-0"
+        class="motion-safe:animate-in motion-safe:fade-in-0 fixed inset-0 z-50 bg-black/30 backdrop-blur-[3px]"
         aria-hidden="true"
         (click)="moreOpen.set(false)"
       ></div>
@@ -99,16 +102,16 @@ type NavItem = { path: string; label: string; icon: string; exact?: boolean };
         role="dialog"
         aria-modal="true"
         aria-label="More"
-        class="bg-background fixed inset-x-0 bottom-0 z-50 rounded-t-2xl border-t px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-bottom-4"
+        class="glass-strong motion-safe:animate-in motion-safe:slide-in-from-bottom-4 fixed inset-x-2 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-50 rounded-[1.75rem] px-3 pt-2 pb-3"
         (keydown.escape)="moreOpen.set(false)"
       >
-        <div class="bg-muted mx-auto mb-3 h-1 w-10 rounded-full" aria-hidden="true"></div>
+        <div class="bg-foreground/15 mx-auto mb-3 h-1 w-10 rounded-full" aria-hidden="true"></div>
         <ul class="flex flex-col">
           @if (canUpload()) {
             <li>
               <button
                 type="button"
-                class="hover:bg-accent flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-base transition-[background-color,scale] duration-100 active:scale-[0.98]"
+                class="hover:bg-glass-tint flex min-h-12 w-full items-center gap-4 rounded-lg px-3 text-base transition-[background-color,scale] duration-100 active:scale-[0.98]"
                 (click)="openUpload()"
               >
                 <ng-icon hlm size="sm" name="lucideUpload" class="text-muted-foreground" />
@@ -119,10 +122,10 @@ type NavItem = { path: string; label: string; icon: string; exact?: boolean };
           @for (item of more; track item.path) {
             <li>
               <a
-                class="hover:bg-accent flex min-h-12 items-center gap-4 rounded-lg px-3 text-base transition-[background-color,scale] duration-100 active:scale-[0.98]"
+                class="hover:bg-glass-tint flex min-h-12 items-center gap-4 rounded-lg px-3 text-base transition-[background-color,scale] duration-100 active:scale-[0.98]"
                 [routerLink]="item.path"
                 flPrefetchRoute
-                routerLinkActive="bg-accent font-medium"
+                routerLinkActive="bg-glass-tint-strong font-medium"
                 [routerLinkActiveOptions]="{ exact: !!item.exact }"
                 (click)="moreOpen.set(false)"
               >
@@ -177,6 +180,8 @@ export class MobileBottomNav {
   // More is highlighted when the page is one of its sections.
   protected readonly moreActive = computed(() => {
     const url = this.url();
-    return this.more.some((m) => url === m.path || url.startsWith(`${m.path}/`) || url.startsWith(`${m.path}?`));
+    return this.more.some(
+      (m) => url === m.path || url.startsWith(`${m.path}/`) || url.startsWith(`${m.path}?`),
+    );
   });
 }

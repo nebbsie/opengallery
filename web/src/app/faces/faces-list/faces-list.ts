@@ -142,7 +142,7 @@ const SEARCH_DEBOUNCE_MS = 250;
          Merge folds the source into the named or larger target in one click,
          with Undo in the toast. "Not the same" dismisses the pair for good. -->
     @if (isAdmin() && suggestions().length > 0 && !search()) {
-      <section class="bg-card mb-6 rounded-2xl border p-4" aria-labelledby="suggestions-title">
+      <section class="bg-glass-tint mb-6 rounded-2xl border border-glass-border p-4" aria-labelledby="suggestions-title">
         <div class="mb-3 flex items-center gap-2">
           <ng-icon hlm size="sm" name="lucideSparkles" class="text-primary" />
           <h2 id="suggestions-title" class="text-foreground text-sm font-semibold">
@@ -152,7 +152,7 @@ const SEARCH_DEBOUNCE_MS = 250;
         </div>
         <div class="flex gap-3 overflow-x-auto pb-1">
           @for (s of suggestions(); track s.source.id + '|' + s.target.id) {
-            <div class="bg-background flex w-64 shrink-0 flex-col gap-3 rounded-lg border p-3">
+            <div class="bg-background/70 flex w-64 shrink-0 flex-col gap-3 rounded-xl border border-glass-border p-3">
               <div class="flex items-center justify-center gap-2">
                 @for (p of [s.source, s.target]; track p.id; let first = $first) {
                   @if (!first) {
@@ -244,9 +244,6 @@ const SEARCH_DEBOUNCE_MS = 250;
             <p>No {{ filter() }} people</p>
           } @else {
             <p>No people found yet</p>
-            @if (isAdmin()) {
-              <p class="text-sm">Faces show here after your photos are scanned</p>
-            }
           }
         </div>
       } @else {
@@ -257,7 +254,7 @@ const SEARCH_DEBOUNCE_MS = 250;
         >
           @for (person of allPeople(); track person.id) {
             <li
-              class="bg-card flex flex-col items-center rounded-lg border p-3"
+              class="bg-glass-tint flex flex-col items-center rounded-2xl border border-glass-border p-3"
               [class.opacity-60]="isAdmin() && person.hidden"
             >
               <a

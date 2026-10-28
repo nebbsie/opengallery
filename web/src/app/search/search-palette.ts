@@ -1,6 +1,13 @@
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { DOCUMENT } from '@angular/common';
-import { ChangeDetectionStrategy, Component, DestroyRef, effect, inject, untracked } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  effect,
+  inject,
+  untracked,
+} from '@angular/core';
 import { Router } from '@angular/router';
 import { SearchBox } from './search-box';
 import { SearchState } from './search-state';
@@ -15,7 +22,7 @@ import { SearchState } from './search-state';
   template: `
     @if (state.paletteOpen()) {
       <div
-        class="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] motion-safe:animate-in motion-safe:fade-in-0"
+        class="motion-safe:animate-in motion-safe:fade-in-0 fixed inset-0 z-50 bg-black/30 backdrop-blur-[3px]"
         aria-hidden="true"
         (click)="state.closePalette()"
       ></div>
@@ -24,7 +31,7 @@ import { SearchState } from './search-state';
         aria-modal="true"
         aria-label="Search"
         cdkTrapFocus
-        class="bg-popover text-popover-foreground fixed top-[12vh] left-1/2 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 rounded-2xl border p-2 shadow-2xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-2"
+        class="glass-strong text-popover-foreground motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-2 fixed top-[12vh] left-1/2 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 rounded-3xl p-2"
         (keydown.escape)="state.closePalette()"
       >
         <app-search-box

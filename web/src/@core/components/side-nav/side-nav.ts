@@ -58,67 +58,88 @@ import { SearchPalette } from '../../../app/search/search-palette';
     // The left rail is hidden on mobile for the default context (the bottom nav
     // takes over there) but stays visible on mobile for the settings sub-nav.
     // `!flex` forces it back on (overriding `hidden`) when in settings.
-    class:
-      'hidden sm:flex flex-col w-full h-full border-r items-center overflow-hidden max-w-[50px] sm:max-w-[64px]',
+    // The glass lives on the inner panel, not the host: backdrop-filter would
+    // make the panel the containing block of the fixed search palette.
+    class: 'hidden sm:flex shrink-0 h-full',
     '[class.!flex]': "sideBarType() === 'settings'",
   },
   template: `
-    <div class="flex items-center justify-center p-3 pt-4">
-      <a routerLink="/" aria-label="Open Gallery home">
-        <app-logo [size]="20" />
-      </a>
-    </div>
+    <nav
+      class="glass flex h-full w-[52px] flex-col items-center overflow-hidden rounded-[1.5rem] sm:w-[60px] sm:rounded-[1.75rem]"
+      aria-label="Main"
+    >
+      <div class="flex shrink-0 items-center justify-center p-3 pt-4">
+        <a routerLink="/" aria-label="Open Gallery home">
+          <app-logo [size]="20" />
+        </a>
+      </div>
 
-    <div class="flex min-h-0 flex-1 flex-col p-3">
-      @switch (sideBarType()) {
-        @case ('settings') {
-          <app-side-nav-settings />
-          <hlm-tooltip>
-            <a
-              class="mt-auto"
-              hlmBtn
-              hlmTooltipTrigger
-              position="right"
-              size="icon"
-              routerLink="/"
-              aria-label="Back"
-              [variant]="'menu'"
-            >
-              <ng-icon hlm size="sm" name="lucideChevronLeft" />
-            </a>
-
-            <span *brnTooltipContent class="flex items-center"> Back </span>
-          </hlm-tooltip>
+      <!-- Only the items scroll on short screens; Settings / Back stay pinned
+           below them. A thin scrollbar shows there is more. -->
+      <div
+        class="flex min-h-0 w-full flex-1 flex-col items-center overflow-x-hidden overflow-y-auto px-1.5 [scrollbar-width:thin] sm:px-2"
+      >
+        @switch (sideBarType()) {
+          @case ('settings') {
+            <app-side-nav-settings />
+          }
+          @default {
+            <app-side-nav-default />
+          }
         }
-        @default {
-          <app-side-nav-default />
+      </div>
 
-          <hlm-tooltip>
-            <a
-              class="mt-auto"
-              hlmTooltipTrigger
-              hlmBtn
-              position="right"
-              size="icon"
-              routerLink="/settings"
-              [attr.aria-label]="hasPendingWork() ? 'Settings, encoding in progress' : 'Settings'"
-              [variant]="'menu'"
-            >
-              <div class="relative">
-                <ng-icon hlm size="sm" name="lucideSettings" />
+      <div class="flex shrink-0 flex-col items-center p-1.5 pb-3 sm:p-2 sm:pb-3">
+        @switch (sideBarType()) {
+          @case ('settings') {
+            <hlm-tooltip>
+              <a
+                hlmBtn
+                hlmTooltipTrigger
+                position="right"
+                size="icon"
+                routerLink="/"
+                aria-label="Back"
+                [variant]="'menu'"
+              >
+                <ng-icon hlm size="sm" name="lucideChevronLeft" />
+              </a>
+
+              <span *brnTooltipContent class="flex items-center"> Back </span>
+            </hlm-tooltip>
+          }
+          @default {
+            <hlm-tooltip>
+              <a
+                hlmTooltipTrigger
+                hlmBtn
+                position="right"
+                size="icon"
+                routerLink="/settings"
+                [attr.aria-label]="hasPendingWork() ? 'Settings, encoding in progress' : 'Settings'"
+                [variant]="'menu'"
+              >
+                <div class="relative">
+                  <ng-icon hlm size="sm" name="lucideSettings" />
+                  @if (hasPendingWork()) {
+                    <span
+                      class="absolute -top-1 -right-1 h-2 w-2 animate-pulse rounded-full bg-blue-500"
+                    ></span>
+                  }
+                </div>
+              </a>
+
+              <span *brnTooltipContent class="flex items-center">
+                Settings
                 @if (hasPendingWork()) {
-                  <span class="absolute -right-1 -top-1 h-2 w-2 animate-pulse rounded-full bg-blue-500"></span>
+                  (encoding)
                 }
-              </div>
-            </a>
-
-            <span *brnTooltipContent class="flex items-center">
-              Settings @if (hasPendingWork()) { (encoding) }
-            </span>
-          </hlm-tooltip>
+              </span>
+            </hlm-tooltip>
+          }
         }
-      }
-    </div>
+      </div>
+    </nav>
 
     <app-search-palette />
   `,

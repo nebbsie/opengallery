@@ -24,7 +24,7 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  --muted-foreground: oklch(0.49 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
@@ -68,7 +68,7 @@
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
+  --muted-foreground: oklch(0.49 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
@@ -93,6 +93,112 @@
   }
 }
 
+/* Glass. Floating chrome (nav, dialogs, popovers, toasts, bars) is frosted
+   glass over a soft ambient backdrop; page content sits in a translucent
+   "window". Only small floating surfaces blur: a full-page backdrop-filter
+   costs GPU time on every scroll frame. */
+:root {
+  --glass-bg: oklch(1 0 0 / 0.62);
+  --glass-strong-bg: oklch(1 0 0 / 0.9);
+  --glass-window-bg: oklch(1 0 0 / 0.66);
+  --glass-border: oklch(0.145 0 0 / 0.08);
+  --glass-highlight: oklch(1 0 0 / 0.75);
+  --glass-shadow: 0 8px 32px -8px oklch(0.2 0.02 260 / 0.18), 0 2px 6px -2px oklch(0.2 0 0 / 0.08);
+  --glass-tint: oklch(0.145 0 0 / 0.045);
+  --glass-tint-strong: oklch(0.145 0 0 / 0.11);
+  --ambient-1: oklch(0.8 0.12 250 / 0.7);
+  --ambient-2: oklch(0.82 0.11 330 / 0.6);
+  --ambient-3: oklch(0.86 0.11 170 / 0.55);
+  --ambient-base: oklch(0.975 0.004 260);
+}
+
+:root.dark {
+  --glass-bg: oklch(0.22 0.005 260 / 0.55);
+  --glass-strong-bg: oklch(0.2 0.005 260 / 0.8);
+  --glass-window-bg: oklch(0.16 0.006 260 / 0.6);
+  --glass-border: oklch(1 0 0 / 0.11);
+  --glass-highlight: oklch(1 0 0 / 0.09);
+  --glass-shadow: 0 12px 40px -10px oklch(0 0 0 / 0.6), 0 2px 8px -2px oklch(0 0 0 / 0.4);
+  --glass-tint: oklch(1 0 0 / 0.05);
+  --glass-tint-strong: oklch(1 0 0 / 0.13);
+  --ambient-1: oklch(0.5 0.16 262 / 0.75);
+  --ambient-2: oklch(0.48 0.17 318 / 0.6);
+  --ambient-3: oklch(0.52 0.12 185 / 0.5);
+  --ambient-base: oklch(0.14 0.01 265);
+}
+
+/* Tints for hover and active states on glass: `bg-glass-tint`,
+   `bg-glass-tint-strong`, `border-glass-border`. */
+@theme inline {
+  --color-glass-tint: var(--glass-tint);
+  --color-glass-tint-strong: var(--glass-tint-strong);
+  --color-glass-border: var(--glass-border);
+}
+
+/* Small floating chrome: nav, bars, toasts. Never put this on an element
+   with position: fixed descendants; backdrop-filter makes it their
+   containing block. */
+@utility glass {
+  background-color: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--glass-shadow);
+}
+
+/* Text-heavy floating panels (dialogs, menus, popovers): more opaque so
+   the text stays readable over photos. */
+@utility glass-strong {
+  background-color: var(--glass-strong-bg);
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--glass-shadow);
+}
+
+/* The page "window". No blur: the backdrop behind it is already a smooth
+   gradient, and a blur this large would repaint on scroll. */
+@utility glass-window {
+  background-color: var(--glass-window-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--glass-shadow);
+}
+
+/* Users who ask for less transparency, and browsers without
+   backdrop-filter, get solid surfaces. */
+@media (prefers-reduced-transparency: reduce) {
+  :root,
+  :root.dark {
+    --glass-bg: var(--popover);
+    --glass-strong-bg: var(--popover);
+    --glass-window-bg: var(--background);
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root,
+  :root.dark {
+    --glass-bg: var(--popover);
+    --glass-strong-bg: var(--popover);
+    --glass-window-bg: var(--background);
+  }
+}
+
+body {
+  background-color: var(--ambient-base);
+  background-image:
+    radial-gradient(60rem 40rem at 0% 0%, var(--ambient-1), transparent 70%),
+    radial-gradient(50rem 36rem at 100% 10%, var(--ambient-2), transparent 70%),
+    radial-gradient(56rem 40rem at 60% 110%, var(--ambient-3), transparent 70%);
+  background-attachment: fixed;
+}
+
 html,
 body {
   overscroll-behavior-y: none; /** Stop vertical bounce; keep horizontal swipe navigation */
@@ -101,4 +207,65 @@ body {
   /* Crisper, thinner text on macOS; ignored on other platforms. */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Leaflet map controls as glass. Leaflet's CSS is global (angular.json), so
+   these selectors include .leaflet-container to win over it. */
+.leaflet-container .leaflet-bar {
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+  border-radius: 0.875rem;
+  background-color: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--glass-shadow);
+}
+
+.leaflet-container .leaflet-bar a,
+.leaflet-container .leaflet-bar a:hover {
+  width: 2.25rem;
+  height: 2.25rem;
+  line-height: 2.25rem;
+  border-bottom-color: var(--glass-border);
+  background-color: transparent;
+  color: var(--foreground);
+}
+
+.leaflet-container .leaflet-bar a:hover {
+  background-color: var(--glass-tint-strong);
+}
+
+.leaflet-container .leaflet-bar a.leaflet-disabled {
+  background-color: transparent;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+/* The map credit stays (the data licence needs it) but small and quiet. */
+.leaflet-container .leaflet-control.leaflet-control-attribution {
+  margin: 0 0.5rem 0.5rem 0;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 9999px;
+  background-color: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  opacity: 0.75;
+  transition: opacity 150ms;
+}
+
+.leaflet-container .leaflet-control.leaflet-control-attribution:hover {
+  opacity: 1;
+}
+
+.leaflet-container .leaflet-control-attribution a {
+  color: inherit;
+}
+
+.leaflet-container .leaflet-control-attribution a:hover {
+  color: var(--foreground);
 }

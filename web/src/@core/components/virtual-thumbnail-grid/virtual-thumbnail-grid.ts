@@ -282,7 +282,7 @@ const RAIL_PADDING_Y = 24;
           @if (row.type === 'year-header') {
             <div class="flex h-full items-center justify-between gap-2 px-1">
               <h2 class="text-foreground/85 text-3xl font-bold tracking-tight tabular-nums">
-                {{ row.year }}
+                {{ row.year || 'No Date' }}
               </h2>
               @if (row.first && aspectAvailable() && layout() === 'auto') {
                 <button
@@ -382,7 +382,7 @@ const RAIL_PADDING_Y = 24;
             [class]="
               handleDragging()
                 ? 'bg-primary text-primary-foreground ring-primary'
-                : 'bg-popover text-popover-foreground ring-border'
+                : 'glass-strong text-popover-foreground'
             "
             [style.opacity]="timelineVisible() || handleDragging() ? 1 : 0"
             [style.pointer-events]="timelineVisible() || handleDragging() ? 'auto' : 'none'"
@@ -395,7 +395,7 @@ const RAIL_PADDING_Y = 24;
           </div>
           @if (handleDragging() && handleLabel()) {
             <div
-              class="bg-popover text-popover-foreground ring-border absolute right-14 -translate-y-1/2 rounded-full px-3 py-1.5 text-sm font-semibold whitespace-nowrap tabular-nums shadow-lg ring-1"
+              class="glass-strong text-popover-foreground absolute right-14 -translate-y-1/2 rounded-full px-3 py-1.5 text-sm font-semibold whitespace-nowrap tabular-nums"
               [style.top]="handleTop()"
             >
               {{ handleLabel() }}
@@ -493,7 +493,7 @@ const RAIL_PADDING_Y = 24;
               <!-- Hover / drag tooltip -->
               @if ((timelineHovered() || isDragging()) && hoverTimelineLabel()) {
                 <div
-                  class="bg-popover text-popover-foreground ring-border pointer-events-none absolute right-full mr-2 -translate-y-1/2 rounded-lg px-3 py-1.5 text-left whitespace-nowrap shadow-xl ring-1"
+                  class="glass-strong text-popover-foreground pointer-events-none absolute right-full mr-2 -translate-y-1/2 rounded-xl px-3 py-1.5 text-left whitespace-nowrap"
                   [style.top.%]="hoverTimelinePosition() ?? currentTimelinePosition()"
                 >
                   <div class="text-xs leading-none font-semibold tabular-nums">
@@ -701,7 +701,9 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
       if (openDay) openDay.end = i;
       if (monthChanged && openMonth) openMonth.end = i;
 
-      if (yearChanged && y) {
+      // Undated items (sorted last by the API) get one "No Date" header; year 0
+      // marks it.
+      if (yearChanged) {
         rows.push({ type: 'year-header', year: y, height: YEAR_HEADER_HEIGHT, first: firstYear });
         firstYear = false;
       }
@@ -1678,7 +1680,10 @@ export class VirtualThumbnailGrid<T = unknown> implements AfterViewInit, OnDestr
   private parseTimelineDate(value: Date | string | null | undefined): Date | null {
     if (!value) return null;
     const date = value instanceof Date ? value : new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
+    if (Number.isNaN(date.getTime())) return null;
+    // The API sorts undated items under a year-0000 sentinel (see
+    // undatedBottomSortExpr in api/src/db/file-sort.ts); that is no date.
+    return date.getUTCFullYear() < 1 ? null : date;
   }
 
   private initScrollRestoration(key: string): void {

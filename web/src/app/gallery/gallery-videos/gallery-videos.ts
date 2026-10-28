@@ -43,7 +43,6 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideVideo" class="mb-4" />
           <p>No videos found</p>
-          <p class="text-sm">Videos will appear here once they are imported</p>
         </div>
       } @else {
         <app-virtual-thumbnail-grid

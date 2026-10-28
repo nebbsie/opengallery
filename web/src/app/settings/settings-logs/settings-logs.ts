@@ -32,7 +32,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
     class: 'flex flex-col w-full h-full overflow-hidden',
   },
   template: `
-    <div class="flex items-center justify-between gap-4 pb-3 shrink-0">
+    <div class="flex flex-wrap items-center justify-between gap-4 pb-3 shrink-0">
       <div>
         <h1 class="text-foreground block text-lg font-bold">Logs</h1>
         <p class="text-muted-foreground text-sm">

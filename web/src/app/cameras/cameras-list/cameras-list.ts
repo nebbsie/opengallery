@@ -25,14 +25,13 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideCamera" class="mb-4" />
           <p>No cameras found</p>
-          <p class="text-sm">Photos with camera metadata will appear here</p>
         </div>
       } @else {
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           @for (camera of cameras.data()!; track camera.make + camera.model) {
             <a
               [routerLink]="['/cameras', camera.make, camera.model]"
-              class="bg-card hover:bg-accent group rounded-lg border p-4 transition-colors"
+              class="bg-glass-tint hover:bg-glass-tint-strong group rounded-2xl border border-glass-border p-4 transition-colors"
             >
               <div class="flex items-center gap-3">
                 <div class="bg-primary/10 text-primary rounded-lg p-3">

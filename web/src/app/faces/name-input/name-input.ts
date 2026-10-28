@@ -35,7 +35,7 @@ let nextId = 0;
   template: `
     @if (confirmTarget(); as t) {
       <div
-        class="bg-popover text-popover-foreground flex flex-col gap-2 rounded-lg border p-2 text-left shadow-md"
+        class="glass-strong text-popover-foreground flex flex-col gap-2 rounded-xl p-2 text-left"
         role="group"
         [attr.aria-label]="'Merge into ' + t.name"
         (keydown.escape)="$event.preventDefault(); $event.stopPropagation(); backToInput()"
@@ -87,7 +87,7 @@ let nextId = 0;
           [id]="listId"
           role="listbox"
           [attr.aria-label]="'People named like ' + draft()"
-          class="bg-popover text-popover-foreground absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border p-1 text-left shadow-md"
+          class="glass-strong text-popover-foreground absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-xl p-1 text-left"
         >
           @for (p of matches(); track p.id; let i = $index) {
             <li

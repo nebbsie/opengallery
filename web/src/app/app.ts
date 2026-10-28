@@ -17,7 +17,8 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
   selector: 'app-root',
   host: {
     // viewport-fit=cover: keep the app clear of notches; the bottom nav pads itself.
-    class: 'flex flex-col h-[100dvh] pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]',
+    class:
+      'flex flex-col h-[100dvh] pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]',
   },
   template: `
     <!-- "View as" preview banner. Sits above everything in normal flow, so it
@@ -30,7 +31,8 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
         <p class="flex min-w-0 items-center gap-2">
           <ng-icon hlm size="sm" name="lucideEye" class="shrink-0" />
           <span class="min-w-0 leading-tight">
-            Viewing as <span class="font-semibold">{{ preview.name }}</span>. Read-only preview.
+            Viewing as <span class="font-semibold">{{ preview.name }}</span
+            >. Read-only preview.
           </span>
         </p>
         <button
@@ -43,7 +45,11 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
       </div>
     }
 
-    <main class="relative flex min-h-0 flex-1 overflow-hidden">
+    <!-- The rail and the page "window" float over the ambient backdrop. -->
+    <main
+      class="relative flex min-h-0 flex-1 overflow-hidden"
+      [class]="isAssetRoute() ? '' : 'gap-2 p-2 sm:gap-3 sm:p-3'"
+    >
       <!-- The photo viewer is full-bleed: no rail, no bottom nav, no padding. -->
       @if (isAuthenticated() && !isAssetRoute()) {
         <app-side-nav />
@@ -51,7 +57,13 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
 
       <div
         class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-        [class.p-3]="!isAssetRoute()"
+        [class]="
+          isAssetRoute()
+            ? 'bg-background'
+            : isAuthenticated()
+              ? 'glass-window rounded-2xl p-3 sm:rounded-3xl sm:p-4'
+              : ''
+        "
       >
         <router-outlet />
       </div>

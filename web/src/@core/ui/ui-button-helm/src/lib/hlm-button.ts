@@ -13,12 +13,15 @@ export const buttonVariants = cva(
         destructive:
           'bg-destructive hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 text-white shadow-xs',
         outline:
-          'text-foreground bg-background hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 border shadow-xs',
+          'text-foreground bg-background/60 hover:bg-background/90 hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 border shadow-xs',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-xs',
         ghost: 'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         link: 'text-primary underline-offset-4 hover:underline',
-        menu: 'text-primary hover:bg-accent/50 justify-center',
-        menu_active: 'text-primary bg-accent justify-center',
+        // Rail items sit on glass, so they tint with the foreground colour
+        // instead of the solid accent.
+        menu: 'text-muted-foreground hover:text-foreground hover:bg-glass-tint justify-center rounded-xl',
+        menu_active:
+          'text-foreground bg-glass-tint-strong justify-center rounded-xl shadow-[inset_0_1px_0_var(--glass-highlight)]',
       },
       size: {
         default: 'h-9 px-4 py-2 has-[>ng-icon]:px-3',

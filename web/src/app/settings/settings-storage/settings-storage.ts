@@ -81,7 +81,7 @@ function formatBytes(bytes: number): string {
 
       @if (sources.data().paths.length > 0) {
         @for (path of sources.data().paths; track path.id) {
-          <div class="bg-card mb-4 flex max-w-lg items-center gap-3 rounded-lg border p-4">
+          <div class="bg-glass-tint mb-4 flex max-w-lg items-center gap-3 rounded-2xl border border-glass-border p-4">
             <div class="rounded-lg bg-blue-500/10 p-2 text-blue-500">
               <ng-icon hlm size="lg" name="lucideFolder" />
             </div>
@@ -191,7 +191,7 @@ function formatBytes(bytes: number): string {
 
       <div class="grid gap-4 md:grid-cols-2">
         <!-- Raw Storage Card -->
-        <div class="bg-card rounded-lg border p-4">
+        <div class="bg-glass-tint rounded-2xl border border-glass-border p-4">
           <div class="mb-3 flex items-center gap-3">
             <div class="rounded-lg bg-blue-500/10 p-2 text-blue-500">
               <ng-icon hlm size="lg" name="lucideFolder" />
@@ -205,7 +205,7 @@ function formatBytes(bytes: number): string {
         </div>
 
         <!-- Optimised Storage Card -->
-        <div class="bg-card rounded-lg border p-4">
+        <div class="bg-glass-tint rounded-2xl border border-glass-border p-4">
           <div class="mb-3 flex items-center gap-3">
             <div class="rounded-lg bg-green-500/10 p-2 text-green-500">
               <ng-icon hlm size="lg" name="lucideImages" />

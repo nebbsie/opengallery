@@ -36,7 +36,6 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideImage" class="mb-4" />
           <p>No photos found</p>
-          <p class="text-sm">Photos will appear here once they are imported</p>
         </div>
       } @else {
         <app-virtual-thumbnail-grid

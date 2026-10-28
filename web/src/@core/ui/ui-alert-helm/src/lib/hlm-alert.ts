@@ -8,9 +8,9 @@ const alertVariants = cva(
 	{
 		variants: {
 			variant: {
-				default: 'bg-card text-card-foreground',
+				default: 'bg-glass-tint text-card-foreground',
 				destructive:
-					'text-destructive bg-card [&>[hlmAlertIcon]]:text-current [&>[hlmAlertDescription]]:text-destructive/90 [&>[hlmAlertDesc]]:text-destructive/90',
+					'text-destructive bg-glass-tint [&>[hlmAlertIcon]]:text-current [&>[hlmAlertDescription]]:text-destructive/90 [&>[hlmAlertDesc]]:text-destructive/90',
 			},
 		},
 		defaultVariants: {

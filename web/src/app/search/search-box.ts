@@ -69,7 +69,7 @@ let nextId = 0;
   host: { class: 'relative block' },
   template: `
     <div
-      class="bg-muted focus-within:bg-background focus-within:ring-ring/50 flex h-11 items-center gap-2 rounded-full px-4 transition-[background-color,box-shadow] duration-150 focus-within:shadow-sm focus-within:ring-2"
+      class="bg-glass-tint-strong focus-within:bg-background/80 focus-within:ring-ring/50 flex h-11 items-center gap-2 rounded-full px-4 transition-[background-color,box-shadow] duration-150 focus-within:shadow-sm focus-within:ring-2"
     >
       <ng-icon hlm size="sm" name="lucideSearch" class="text-muted-foreground shrink-0" />
       <input
@@ -114,17 +114,19 @@ let nextId = 0;
         [id]="listId"
         role="listbox"
         aria-label="Search suggestions"
-        class="bg-popover text-popover-foreground z-50 overflow-y-auto overscroll-contain py-2"
+        class="text-popover-foreground z-50 overflow-y-auto overscroll-contain py-2"
         [class]="
           inline()
             ? 'mt-2 max-h-[min(60vh,28rem)]'
-            : 'absolute top-full right-0 left-0 mt-2 max-h-[min(70vh,32rem)] rounded-xl border shadow-lg'
+            : 'glass-strong absolute top-full right-0 left-0 mt-2 max-h-[min(70vh,32rem)] rounded-2xl'
         "
         (mousedown)="$event.preventDefault()"
       >
         @for (section of sections(); track $index) {
           @if (section.title) {
-            <p class="text-muted-foreground px-4 pt-2 pb-1 text-xs font-medium">{{ section.title }}</p>
+            <p class="text-muted-foreground px-4 pt-2 pb-1 text-xs font-medium">
+              {{ section.title }}
+            </p>
           }
           @for (option of section.options; track option.id) {
             <div
@@ -157,7 +159,9 @@ let nextId = 0;
               <span class="min-w-0 flex-1">
                 <span class="block truncate">{{ option.label }}</span>
                 @if (option.sublabel) {
-                  <span class="text-muted-foreground block truncate text-xs tabular-nums">{{ option.sublabel }}</span>
+                  <span class="text-muted-foreground block truncate text-xs tabular-nums">{{
+                    option.sublabel
+                  }}</span>
                 }
               </span>
               @if (option.kind === 'recent') {
@@ -336,7 +340,9 @@ export class SearchBox {
   });
 
   protected readonly options = computed(() => this.sections().flatMap((s) => s.options));
-  protected readonly activeOption = computed<Option | null>(() => this.options()[this.activeIndex()] ?? null);
+  protected readonly activeOption = computed<Option | null>(
+    () => this.options()[this.activeIndex()] ?? null,
+  );
   protected readonly showList = computed(
     () => this.focused() && !this.dismissed() && this.options().length > 0,
   );

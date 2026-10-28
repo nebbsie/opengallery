@@ -31,7 +31,7 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
   host: { class: 'contents' },
   template: `
     <div
-      class="bg-popover text-popover-foreground fixed inset-x-0 bottom-0 z-50 flex min-h-[3.5rem] items-center gap-1 border-t px-2 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_16px_rgba(0,0,0,0.08)] transition-[translate,opacity] duration-200 ease-out sm:inset-x-auto sm:bottom-4 sm:left-1/2 sm:-translate-x-1/2 sm:rounded-full sm:border sm:pb-0 sm:pl-2 sm:pr-3 sm:shadow-xl"
+      class="glass-strong text-popover-foreground fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] z-50 flex min-h-[3.5rem] items-center gap-1 rounded-[1.75rem] px-1 transition-[translate,opacity] duration-200 ease-out sm:inset-x-auto sm:bottom-5 sm:left-1/2 sm:-translate-x-1/2 sm:rounded-full sm:pr-3 sm:pl-2"
       [class]="
         visible()
           ? 'translate-y-0 opacity-100'
@@ -44,20 +44,23 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
     >
       <button
         type="button"
-        class="hover:bg-muted grid size-10 shrink-0 place-items-center rounded-full transition-[background-color,scale] duration-150 active:scale-[0.96]"
+        class="hover:bg-glass-tint-strong grid size-10 shrink-0 place-items-center rounded-full transition-[background-color,scale] duration-150 active:scale-[0.96]"
         aria-label="Clear selection"
         title="Clear selection (Esc)"
         (click)="selection.clear()"
       >
         <ng-icon hlm size="sm" name="lucideX" />
       </button>
-      <span class="mr-auto min-w-0 truncate pr-2 text-sm font-semibold tabular-nums sm:mr-3" aria-live="polite">
+      <span
+        class="mr-auto min-w-0 truncate pr-2 text-sm font-semibold tabular-nums sm:mr-3"
+        aria-live="polite"
+      >
         {{ shownCount() | plural: 'item' }} selected
       </span>
 
       <button
         type="button"
-        class="hover:bg-muted flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:opacity-50"
+        class="hover:bg-glass-tint-strong flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:opacity-50"
         [disabled]="downloading()"
         (click)="download()"
       >
@@ -71,7 +74,7 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
       </button>
       <button
         type="button"
-        class="hover:bg-muted flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
+        class="hover:bg-glass-tint-strong flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
         (click)="openPeople('share')"
       >
         <ng-icon hlm size="sm" name="lucideShare2" />
@@ -81,7 +84,7 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
       @if (isAdmin()) {
         <button
           type="button"
-          class="hover:bg-muted flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
+          class="hover:bg-glass-tint-strong flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96]"
           (click)="openPeople('hide')"
         >
           <ng-icon hlm size="sm" name="lucideEyeOff" />
@@ -129,7 +132,9 @@ export class SelectionBar {
     try {
       const { token, count } = await this.trpc.files.createDownload.mutate({ fileIds: ids });
       this.startDownload(`${this.apiUrl}/download/${encodeURIComponent(token)}`);
-      this.toast.success(`Zipping ${count.toLocaleString()} ${count === 1 ? 'item' : 'items'}. The download starts soon.`);
+      this.toast.success(
+        `Zipping ${count.toLocaleString()} ${count === 1 ? 'item' : 'items'}. The download starts soon.`,
+      );
     } catch (err) {
       this.toast.error((err as Error)?.message || 'Could not start the download. Try again.');
     } finally {

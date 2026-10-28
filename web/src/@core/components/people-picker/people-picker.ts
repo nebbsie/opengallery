@@ -66,7 +66,7 @@ const PAGE = 48;
       <div class="flex justify-center py-6"><hlm-spinner /></div>
     } @else if (all().length === 0) {
       <p class="text-muted-foreground rounded-lg border p-4 text-sm">
-        No people found yet. Faces show here after face detection runs.
+        No people found yet.
       </p>
     } @else {
       <div class="relative mb-2">

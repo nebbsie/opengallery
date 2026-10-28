@@ -36,10 +36,10 @@ import { formatBytes } from './upload-utils';
   ],
   host: {
     class:
-      'bg-popover text-popover-foreground fixed inset-x-2 bottom-(--upload-bottom) z-[60] flex max-h-[70dvh] flex-col overflow-hidden rounded-xl border shadow-2xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-[380px]',
-    // The bottom nav is 3.5rem tall plus the home indicator inset.
+      'glass-strong text-popover-foreground fixed inset-x-3 bottom-(--upload-bottom) z-[60] flex max-h-[70dvh] flex-col overflow-hidden rounded-3xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-2 sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-[380px]',
+    // The bottom dock is 3.5rem tall, 0.5rem above the home indicator inset.
     '[style.--upload-bottom]':
-      "aboveNav() ? 'calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)' : 'calc(env(safe-area-inset-bottom) + 0.5rem)'",
+      "aboveNav() ? 'calc(4.5rem + env(safe-area-inset-bottom))' : 'calc(env(safe-area-inset-bottom) + 0.5rem)'",
     role: 'region',
     'aria-label': 'Uploads',
   },
@@ -199,7 +199,11 @@ export class UploadPanel {
   );
 
   protected readonly finishedCount = computed(
-    () => this.svc.items().filter((i) => i.state === 'done' || i.state === 'duplicate' || i.state === 'cancelled').length,
+    () =>
+      this.svc
+        .items()
+        .filter((i) => i.state === 'done' || i.state === 'duplicate' || i.state === 'cancelled')
+        .length,
   );
 
   protected readonly title = computed(() => {

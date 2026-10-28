@@ -3,7 +3,7 @@ import { hlm } from '@spartan-ng/brain/core';
 import { type VariantProps, cva } from 'class-variance-authority';
 import type { ClassValue } from 'clsx';
 
-export const cardVariants = cva('bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm', {
+export const cardVariants = cva('glass-strong text-card-foreground flex flex-col gap-6 rounded-3xl py-6', {
 	variants: {},
 	defaultVariants: {},
 });
