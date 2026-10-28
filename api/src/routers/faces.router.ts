@@ -1,11 +1,26 @@
 import { TRPCError } from "@trpc/server";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { and, desc, eq, exists, gt, inArray, isNull, notExists, or, sql } from "drizzle-orm";
+import {
+  type SQL,
+  and,
+  desc,
+  eq,
+  exists,
+  gt,
+  inArray,
+  isNull,
+  notExists,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { z } from "zod";
 import {
   buildFileAccessFilter,
+  clearScopeCache,
   getAccessScope,
+  isPersonHiddenFor,
   type AccessScope,
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
@@ -21,6 +36,7 @@ import {
   PersonTable,
   PersonMergeDismissedTable,
   SystemSettingsTable,
+  ViewerHiddenPersonTable,
 } from "../db/schema.js";
 import {
   adminProcedure,
@@ -29,7 +45,12 @@ import {
   router,
 } from "../trpc.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
-import { removeFacesForFiles } from "../utils/file-operations.js";
+import {
+  deleteViewerRulesForPeople,
+  moveViewerRulesToPerson,
+  pinViewerHiddenFaces,
+  removeFacesForFiles,
+} from "../utils/file-operations.js";
 
 // Keyset cursor for listPeoplePage: the (flag, faceCount, id) of the last row
 // returned, base64-encoded. Bad/garbled cursors decode to null (treated as the
@@ -140,11 +161,18 @@ async function resolveLibraryId(fileId: string): Promise<string | null> {
   return row?.libraryId ?? null;
 }
 
+// A non-admin sees a person only through the photos they can see: a person
+// with no visible photo, a person hidden from them, or a globally hidden person
+// does not exist for them. Every such case throws the same NOT_FOUND as a
+// missing id, so a viewer cannot tell that a person is hidden.
+const personNotFound = () =>
+  new TRPCError({ code: "NOT_FOUND", message: "Person not found" });
+
 // Ensure the requesting user is allowed to act on a person cluster, returning
 // the person row. Admins can act on any cluster (their accessibleLibraryIds only
 // covers their own/shared libraries, so we must short-circuit on isAdmin here).
-// Throws NOT_FOUND/FORBIDDEN otherwise. Pass write=true for mutations: a library
-// shared to the user is view-only, so only the owner may change its clusters.
+// Pass write=true for mutations: a library shared to the user is view-only, so
+// only the owner may change its clusters.
 async function loadAuthorizedPerson(
   personId: string,
   scope: AccessScope,
@@ -155,13 +183,79 @@ async function loadAuthorizedPerson(
     .from(PersonTable)
     .where(eq(PersonTable.id, personId))
     .limit(1);
-  if (!person) throw new TRPCError({ code: "NOT_FOUND", message: "Person not found" });
-  const allowed = write ? scope.ownedLibraryIds : scope.accessibleLibraryIds;
-  if (!scope.isAdmin && !allowed.has(person.libraryId)) {
-    throw new TRPCError({ code: "FORBIDDEN" });
+  if (!person) throw personNotFound();
+  if (scope.isAdmin) return person;
+  if (isPersonHiddenFor(scope, person.id)) throw personNotFound();
+  if (write) {
+    if (!scope.ownedLibraryIds.has(person.libraryId)) throw personNotFound();
+    return person;
   }
+  if (person.hidden) throw personNotFound();
+  const [visible] = await viewerPeopleQuery(scope, [eq(PersonTable.id, person.id)]);
+  if (!visible) throw personNotFound();
   return person;
 }
+
+// People as a non-admin viewer sees them: only people with at least one photo
+// the viewer can see, never a person hidden from them or globally hidden. The
+// count is the number of photos the viewer gets on the person page (same rules
+// as getPersonFiles), and the cover is a face from one of those photos, so a
+// count or an avatar never gives away a hidden photo.
+function viewerPeopleQuery(scope: AccessScope, extra: SQL[] = []) {
+  return db
+    .select({
+      id: PersonTable.id,
+      name: PersonTable.name,
+      coverFaceId: sql<string | null>`coalesce(
+        max(case when ${FaceTable.id} = ${PersonTable.coverFaceId} then ${FaceTable.id} end),
+        min(case when ${FaceTable.cropName} is not null then ${FaceTable.id} end),
+        min(${FaceTable.id})
+      )`,
+      faceCount: sql<number>`count(distinct ${FaceTable.fileId})`,
+      hidden: PersonTable.hidden,
+    })
+    .from(PersonTable)
+    .innerJoin(FaceTable, eq(FaceTable.personId, PersonTable.id))
+    .where(
+      and(
+        eq(PersonTable.hidden, false),
+        notInArray(
+          PersonTable.id,
+          db
+            .select({ personId: ViewerHiddenPersonTable.personId })
+            .from(ViewerHiddenPersonTable)
+            .where(eq(ViewerHiddenPersonTable.viewerUserId, scope.userId)),
+        ),
+        buildFileAccessFilter(scope, FaceTable.fileId),
+        exists(
+          db
+            .select({ _: sql`1` })
+            .from(LibraryFileTable)
+            .where(
+              and(
+                eq(LibraryFileTable.fileId, FaceTable.fileId),
+                isNull(LibraryFileTable.deletedAt),
+              ),
+            ),
+        ),
+        exists(
+          db
+            .select({ _: sql`1` })
+            .from(FileVariantTable)
+            .where(
+              and(
+                eq(FileVariantTable.originalFileId, FaceTable.fileId),
+                eq(FileVariantTable.type, "thumbnail"),
+              ),
+            ),
+        ),
+        ...extra,
+      ),
+    )
+    .groupBy(PersonTable.id);
+}
+
+const peopleNameFlag = sql<number>`CASE WHEN ${PersonTable.name} IS NULL THEN 1 ELSE 0 END`;
 
 export const facesRouter = router({
   // --- worker / internal ---------------------------------------------------
@@ -482,6 +576,11 @@ export const facesRouter = router({
       }).catch(() => {});
     }
 
+    // Every person is about to go, and with them the "hidden from viewer"
+    // rules. Pin those rules onto the photos first, so a rescan never shows a
+    // viewer a photo of a person the admin hid from them.
+    await pinViewerHiddenFaces();
+
     const now = new Date().toISOString();
     // better-sqlite3 transactions must be synchronous (an async callback throws
     // "Transaction function cannot return a promise"), so use the sync .run() API
@@ -490,6 +589,7 @@ export const facesRouter = router({
       // Faces reference people, so delete faces first.
       const faces = tx.delete(FaceTable).run();
       const people = tx.delete(PersonTable).run();
+      tx.delete(ViewerHiddenPersonTable).run();
       const tasks = tx
         .update(FileTaskTable)
         .set({
@@ -509,6 +609,7 @@ export const facesRouter = router({
         tasksReset: tasks.changes,
       };
     });
+    clearScopeCache();
 
     return result;
   }),
@@ -518,6 +619,15 @@ export const facesRouter = router({
     .query(async ({ ctx: { userId, session }, input }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
+
+      if (!scope.isAdmin) {
+        return viewerPeopleQuery(scope).orderBy(
+          peopleNameFlag,
+          desc(sql`count(distinct ${FaceTable.fileId})`),
+          PersonTable.id,
+        );
+      }
+
       const libIds = [...scope.accessibleLibraryIds];
       if (libIds.length === 0) return [];
 
@@ -559,38 +669,57 @@ export const facesRouter = router({
     .query(async ({ ctx: { userId, session }, input }) => {
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
-      const libIds = [...scope.accessibleLibraryIds];
-      if (libIds.length === 0) return { items: [], nextCursor: null };
 
       // Sort key: named (flag 0) before unnamed (flag 1), then face_count desc,
       // then id asc as a stable tiebreaker for the keyset cursor.
-      const flag = sql<number>`CASE WHEN ${PersonTable.name} IS NULL THEN 1 ELSE 0 END`;
-
-      const conds = [inArray(PersonTable.libraryId, libIds)];
-      if (!input.includeHidden) conds.push(eq(PersonTable.hidden, false));
-
+      const flag = peopleNameFlag;
       const cursor = decodePeopleCursor(input.cursor);
-      if (cursor) {
-        // Rows strictly after the cursor in (flag ASC, faceCount DESC, id ASC).
-        conds.push(
-          sql`(${flag} > ${cursor.flag}
-            OR (${flag} = ${cursor.flag} AND ${PersonTable.faceCount} < ${cursor.faceCount})
-            OR (${flag} = ${cursor.flag} AND ${PersonTable.faceCount} = ${cursor.faceCount} AND ${PersonTable.id} > ${cursor.id}))`,
-        );
-      }
+      // Rows strictly after the cursor in (flag ASC, faceCount DESC, id ASC).
+      const afterCursor = (count: SQL | typeof PersonTable.faceCount) =>
+        cursor
+          ? sql`(${flag} > ${cursor.flag}
+            OR (${flag} = ${cursor.flag} AND ${count} < ${cursor.faceCount})
+            OR (${flag} = ${cursor.flag} AND ${count} = ${cursor.faceCount} AND ${PersonTable.id} > ${cursor.id}))`
+          : undefined;
 
-      const rows = await db
-        .select({
-          id: PersonTable.id,
-          name: PersonTable.name,
-          coverFaceId: PersonTable.coverFaceId,
-          faceCount: PersonTable.faceCount,
-          hidden: PersonTable.hidden,
-        })
-        .from(PersonTable)
-        .where(and(...conds))
-        .orderBy(flag, desc(PersonTable.faceCount), PersonTable.id)
-        .limit(input.limit + 1);
+      let rows: Array<{
+        id: string;
+        name: string | null;
+        coverFaceId: string | null;
+        faceCount: number;
+        hidden: boolean;
+      }>;
+      if (!scope.isAdmin) {
+        // Counts are per viewer (see viewerPeopleQuery), so the keyset runs on
+        // the aggregate in HAVING.
+        const visibleCount = sql`count(distinct ${FaceTable.fileId})`;
+        const having = afterCursor(visibleCount);
+        const query = viewerPeopleQuery(scope);
+        rows = await (having ? query.having(having) : query)
+          .orderBy(flag, desc(visibleCount), PersonTable.id)
+          .limit(input.limit + 1);
+      } else {
+        const libIds = [...scope.accessibleLibraryIds];
+        if (libIds.length === 0) return { items: [], nextCursor: null };
+
+        const conds = [inArray(PersonTable.libraryId, libIds)];
+        if (!input.includeHidden) conds.push(eq(PersonTable.hidden, false));
+        const after = afterCursor(PersonTable.faceCount);
+        if (after) conds.push(after);
+
+        rows = await db
+          .select({
+            id: PersonTable.id,
+            name: PersonTable.name,
+            coverFaceId: PersonTable.coverFaceId,
+            faceCount: PersonTable.faceCount,
+            hidden: PersonTable.hidden,
+          })
+          .from(PersonTable)
+          .where(and(...conds))
+          .orderBy(flag, desc(PersonTable.faceCount), PersonTable.id)
+          .limit(input.limit + 1);
+      }
 
       let nextCursor: string | null = null;
       if (rows.length > input.limit) {
@@ -612,6 +741,14 @@ export const facesRouter = router({
       if (!userId) throw new TRPCError({ code: "UNAUTHORIZED" });
       const scope = await getAccessScope(userId, session);
       const person = await loadAuthorizedPerson(input, scope);
+      if (!scope.isAdmin) {
+        // Count and cover over the photos this viewer can see.
+        const [visible] = await viewerPeopleQuery(scope, [
+          eq(PersonTable.id, person.id),
+        ]);
+        if (!visible) throw personNotFound();
+        return visible;
+      }
       return {
         id: person.id,
         name: person.name,
@@ -694,6 +831,8 @@ export const facesRouter = router({
         .set({ personId: null, updatedAt: new Date().toISOString() })
         .where(eq(FaceTable.personId, input));
       await db.delete(PersonTable).where(eq(PersonTable.id, input));
+      await deleteViewerRulesForPeople([input]);
+      clearScopeCache();
       // Drop any merge dismissals that referenced this now-gone cluster.
       await db
         .delete(PersonMergeDismissedTable)
@@ -760,6 +899,9 @@ export const facesRouter = router({
         .where(eq(PersonTable.id, input.targetId));
 
       await db.delete(PersonTable).where(eq(PersonTable.id, input.sourceId));
+      // Whoever the source was hidden from keeps the merged person hidden.
+      await moveViewerRulesToPerson(input.sourceId, input.targetId);
+      clearScopeCache();
       // The source cluster no longer exists, so any dismissal mentioning it is
       // dead weight — clear it (incl. a prior "not the same" between the two).
       await db

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { SideNavDefault } from '@core/components/side-nav/side-nav-default/side-nav-default';
 import { SideNavSettings } from '@core/components/side-nav/side-nav-settings/side-nav-settings';
+import { Auth } from '@core/services/auth/auth';
 import { Sidebar } from '@core/services/sidebar/sidebar';
 import { injectTrpc } from '@core/services/trpc';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -120,6 +121,7 @@ import { injectQuery } from '@tanstack/angular-query-experimental';
 export class SideNav {
   private readonly sidebar = inject(Sidebar);
   private readonly trpc = injectTrpc();
+  private readonly isAdmin = inject(Auth).isAdmin;
 
   sideBarType = this.sidebar.content;
 
@@ -127,6 +129,8 @@ export class SideNav {
     queryKey: ['queue', 'encodingCounts'],
     queryFn: () => this.trpc.queue.encodingCounts.query(),
     refetchInterval: 10_000,
+    // Encoding work is admin-only detail; viewers never see the dot.
+    enabled: this.isAdmin(),
   }));
 
   hasPendingWork = computed(() => (this.queueCounts.data()?.totalPending ?? 0) > 0);

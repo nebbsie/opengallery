@@ -7,7 +7,7 @@ import {
 } from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import { FileTaskTable } from "../db/schema.js";
-import { privateProcedure, router } from "../trpc.js";
+import { adminProcedure, router } from "../trpc.js";
 
 // Restrict task rows to files in libraries the caller owns. Admins and the
 // internal worker are unrestricted. Shared (view-only) access is not enough to
@@ -29,8 +29,9 @@ async function ownedTaskFilter(
   );
 }
 
+// Settings > Issues is an admin page: the failed tasks are system data.
 export const issuesRouter = router({
-  list: privateProcedure.query(async ({ ctx: { userId, session } }) => {
+  list: adminProcedure.query(async ({ ctx: { userId, session } }) => {
     const owned = await ownedTaskFilter(userId, session);
     const encodeTypes = [
       "encode_thumbnail",
@@ -60,7 +61,7 @@ export const issuesRouter = router({
     }));
   }),
 
-  retry: privateProcedure
+  retry: adminProcedure
     .input(z.object({ fileId: z.string().uuid() }))
     .mutation(async ({ ctx: { userId, session }, input }) => {
       const owned = await ownedTaskFilter(userId, session);
@@ -90,7 +91,7 @@ export const issuesRouter = router({
       return { ok: true } as const;
     }),
 
-  retryAll: privateProcedure.mutation(async ({ ctx: { userId, session } }) => {
+  retryAll: adminProcedure.mutation(async ({ ctx: { userId, session } }) => {
     const owned = await ownedTaskFilter(userId, session);
     const encodeTypes = [
       "encode_thumbnail",

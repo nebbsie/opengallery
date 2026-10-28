@@ -5,6 +5,7 @@ import {
   exists,
   inArray,
   isNull,
+  notInArray,
   or,
   sql,
 } from "drizzle-orm";
@@ -13,10 +14,13 @@ import { db } from "../db/index.js";
 import {
   AlbumFileTable,
   AlbumTable,
+  FaceTable,
   LibraryFileTable,
   LibraryTable,
   SharedItemTable,
   type SharedItemType,
+  ViewerHiddenFileTable,
+  ViewerHiddenPersonTable,
 } from "../db/schema.js";
 
 export type SessionLike = {
@@ -34,6 +38,11 @@ export type AccessScope = {
   accessibleLibraryIds: Set<string>;
   directFileIds: Set<string>;
   ownedLibraryIds: Set<string>;
+  // Per-viewer rules (always empty for admins). A hidden person removes every
+  // file with a face of that person; a hidden file removes that file. Both
+  // win over any share.
+  hiddenPersonIds: Set<string>;
+  hiddenFileIds: Set<string>;
 };
 
 export const isAdminSession = (session: SessionLike) =>
@@ -77,12 +86,14 @@ export async function getAccessScope(
       visibleAlbumIds: new Set(albums.map((row) => row.id)),
       recursiveAlbumIds: new Set(albums.map((row) => row.id)),
       directFileIds: new Set<string>(),
+      hiddenPersonIds: new Set<string>(),
+      hiddenFileIds: new Set<string>(),
     };
     scopeCache.set(cacheKey, { scope, expires: Date.now() + SCOPE_TTL_MS });
     return scope;
   }
 
-  const [ownedLibraries, sharedItems] = await Promise.all([
+  const [ownedLibraries, sharedItems, hiddenPeople, hiddenFiles] = await Promise.all([
     db
       .select({ id: LibraryTable.id })
       .from(LibraryTable)
@@ -100,6 +111,14 @@ export async function getAccessScope(
           eq(SharedItemTable.sharedToUserId, userId),
         ),
       ),
+    db
+      .select({ personId: ViewerHiddenPersonTable.personId })
+      .from(ViewerHiddenPersonTable)
+      .where(eq(ViewerHiddenPersonTable.viewerUserId, userId)),
+    db
+      .select({ fileId: ViewerHiddenFileTable.fileId })
+      .from(ViewerHiddenFileTable)
+      .where(eq(ViewerHiddenFileTable.viewerUserId, userId)),
   ]);
 
   const ownedLibraryIds = new Set(ownedLibraries.map((row) => row.id));
@@ -239,9 +258,61 @@ export async function getAccessScope(
     visibleAlbumIds,
     recursiveAlbumIds,
     directFileIds,
+    hiddenPersonIds: new Set(hiddenPeople.map((row) => row.personId)),
+    hiddenFileIds: new Set(hiddenFiles.map((row) => row.fileId)),
   };
+  await dropFullyHiddenAlbums(scope, childrenByParent);
   scopeCache.set(cacheKey, { scope, expires: Date.now() + SCOPE_TTL_MS });
   return scope;
+}
+
+// An album whose whole subtree has photos, but none the viewer may see, would
+// show as "0 items" and hint that something is hidden (an album named after
+// the hidden person, say). Drop such albums from the viewer's scope, so they
+// are not listed and opening one gives the same NOT_FOUND as a missing album.
+// Albums that are really empty stay. Runs only when the viewer has rules.
+async function dropFullyHiddenAlbums(
+  scope: AccessScope,
+  childrenByParent: Map<string, string[]>,
+): Promise<void> {
+  if (scope.hiddenPersonIds.size === 0 && scope.hiddenFileIds.size === 0) return;
+  if (scope.visibleAlbumIds.size === 0) return;
+
+  const visibleFilter = buildFileAccessFilter(scope, AlbumFileTable.fileId);
+  const rows = await db
+    .select({
+      albumId: AlbumFileTable.albumId,
+      total: sql<number>`count(*)`,
+      visible: sql<number>`sum(case when ${visibleFilter} then 1 else 0 end)`,
+    })
+    .from(AlbumFileTable)
+    .where(inArray(AlbumFileTable.albumId, [...scope.visibleAlbumIds]))
+    .groupBy(AlbumFileTable.albumId);
+
+  const direct = new Map(rows.map((r) => [r.albumId, r]));
+  const memo = new Map<string, { total: number; visible: number }>();
+  const rollup = (id: string): { total: number; visible: number } => {
+    const hit = memo.get(id);
+    if (hit) return hit;
+    const own = direct.get(id);
+    const acc = { total: Number(own?.total ?? 0), visible: Number(own?.visible ?? 0) };
+    memo.set(id, acc);
+    for (const child of childrenByParent.get(id) ?? []) {
+      if (!scope.visibleAlbumIds.has(child)) continue;
+      const c = rollup(child);
+      acc.total += c.total;
+      acc.visible += c.visible;
+    }
+    return acc;
+  };
+
+  for (const id of [...scope.visibleAlbumIds]) {
+    const r = rollup(id);
+    if (r.total > 0 && r.visible === 0) {
+      scope.visibleAlbumIds.delete(id);
+      scope.recursiveAlbumIds.delete(id);
+    }
+  }
 }
 
 /**
@@ -306,8 +377,72 @@ export function buildFileAccessFilter(
     return sql`0 = 1`;
   }
 
-  if (conditions.length === 1) return conditions[0]!;
-  return or(...conditions)!;
+  const access = conditions.length === 1 ? conditions[0]! : or(...conditions)!;
+  const exclusions = viewerRuleExclusions(scope, fileIdColumn);
+  return exclusions.length > 0 ? and(access, ...exclusions)! : access;
+}
+
+// The per-viewer hide rules as NOT IN subqueries (keyed by viewer, so the
+// parameter count stays fixed however many people or files are hidden).
+function viewerRuleExclusions(
+  scope: AccessScope,
+  fileIdColumn: SQLiteColumn,
+): SQL[] {
+  const exclusions: SQL[] = [];
+  if (scope.hiddenPersonIds.size > 0) {
+    exclusions.push(
+      notInArray(
+        fileIdColumn,
+        db
+          .select({ fileId: FaceTable.fileId })
+          .from(FaceTable)
+          .innerJoin(
+            ViewerHiddenPersonTable,
+            eq(ViewerHiddenPersonTable.personId, FaceTable.personId),
+          )
+          .where(eq(ViewerHiddenPersonTable.viewerUserId, scope.userId)),
+      ),
+    );
+  }
+  if (scope.hiddenFileIds.size > 0) {
+    exclusions.push(
+      notInArray(
+        fileIdColumn,
+        db
+          .select({ fileId: ViewerHiddenFileTable.fileId })
+          .from(ViewerHiddenFileTable)
+          .where(eq(ViewerHiddenFileTable.viewerUserId, scope.userId)),
+      ),
+    );
+  }
+  return exclusions;
+}
+
+// True when the viewer may not see this person at all (hidden from them).
+export function isPersonHiddenFor(scope: AccessScope, personId: string): boolean {
+  return scope.hiddenPersonIds.has(personId);
+}
+
+// True when a viewer rule hides this file (directly, or through a hidden
+// person whose face is in it).
+export async function isFileHiddenFor(
+  scope: AccessScope,
+  fileId: string,
+): Promise<boolean> {
+  if (scope.isAdmin) return false;
+  if (scope.hiddenFileIds.has(fileId)) return true;
+  if (scope.hiddenPersonIds.size === 0) return false;
+  const [row] = await db
+    .select({ id: FaceTable.id })
+    .from(FaceTable)
+    .where(
+      and(
+        eq(FaceTable.fileId, fileId),
+        inArray(FaceTable.personId, [...scope.hiddenPersonIds]),
+      ),
+    )
+    .limit(1);
+  return !!row;
 }
 
 export async function canUserViewAlbum(
@@ -326,6 +461,7 @@ export async function canUserViewFile(
 ): Promise<boolean> {
   const scope = await getAccessScope(userId, session);
   if (scope.isAdmin) return true;
+  if (await isFileHiddenFor(scope, fileId)) return false;
   if (scope.directFileIds.has(fileId)) return true;
 
   // Check via library membership

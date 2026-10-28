@@ -2,6 +2,7 @@ import { DatePipe, NgClass } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   effect,
   ElementRef,
   inject,
@@ -13,6 +14,7 @@ import {
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ErrorAlert } from '@core/components/error/error';
 import { ShareItem } from '@core/dialogs/share-item/share-item';
+import { Auth } from '@core/services/auth/auth';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
@@ -22,6 +24,7 @@ import {
   lucideChevronRight,
   lucideCopy,
   lucideDownload,
+  lucideEyeOff,
   lucideFolder,
   lucideInfo,
   lucideShare2,
@@ -34,6 +37,13 @@ import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
 import * as L from 'leaflet';
+import { HideFromDialog, HideFromTarget } from '../shared-viewer/hide-from-dialog/hide-from-dialog';
+import {
+  FileRules,
+  joinNames,
+  Viewer,
+  viewerRulesKeys,
+} from '../shared-viewer/viewer-rules';
 
 const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
 
@@ -46,6 +56,7 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
       lucideChevronRight,
       lucideCopy,
       lucideDownload,
+      lucideEyeOff,
       lucideFolder,
       lucideInfo,
       lucideShare2,
@@ -104,6 +115,21 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               (click)="openShareDialog()"
             >
               <ng-icon hlm name="lucideShare2" />
+            </button>
+          }
+
+          @if (isAdmin()) {
+            <button
+              hlmBtn
+              variant="ghost"
+              size="icon"
+              class="{{ ctrlBtn }}"
+              type="button"
+              title="Hide from…"
+              aria-label="Hide from…"
+              (click)="openHideFromDialog()"
+            >
+              <ng-icon hlm name="lucideEyeOff" />
             </button>
           }
 
@@ -212,6 +238,20 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
                       <span class="text-muted-foreground text-xs">Size</span>
                       <span class="text-sm">{{ formatBytes(f.size) }}</span>
                     </div>
+                    @if (hiddenFromLabel(); as label) {
+                      <!-- Admin-only: who cannot see this file. Opens the picker. -->
+                      <div class="flex items-start justify-between gap-3">
+                        <span class="text-muted-foreground text-xs">Hidden from</span>
+                        <button
+                          type="button"
+                          class="text-right text-sm break-words hover:underline"
+                          title="Change who this is hidden from"
+                          (click)="openHideFromDialog()"
+                        >
+                          {{ label }}
+                        </button>
+                      </div>
+                    }
                     @if (data.imageMetadata) {
                       <div class="flex items-center justify-between gap-3">
                         <span class="text-muted-foreground text-xs">Dimensions</span>
@@ -476,6 +516,8 @@ export class Asset implements OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly queryClient = inject(QueryClient);
   private readonly dialog = inject(HlmDialogService);
+  // False while the admin previews as another user.
+  protected readonly isAdmin = inject(Auth).isAdmin;
 
   protected readonly backLink = this.route.snapshot.queryParamMap.get('from');
   protected readonly albumId = this.route.snapshot.queryParamMap.get('albumId');
@@ -588,6 +630,31 @@ export class Asset implements OnDestroy {
         personId: this.personId ?? undefined,
       }),
   }));
+
+  // Admin-only: who cannot see this file (directly or through a hidden person
+  // in it), for the info panel. Shares its cache keys with the picker.
+  private readonly viewers = injectQuery(() => ({
+    queryKey: viewerRulesKeys.viewers(),
+    queryFn: async (): Promise<Viewer[]> => this.trpc.viewerRules.viewers.query(),
+    enabled: this.isAdmin(),
+  }));
+
+  private readonly fileRules = injectQuery(() => ({
+    queryKey: viewerRulesKeys.file(this.id()),
+    queryFn: async (): Promise<FileRules> => this.trpc.viewerRules.forFile.query({ fileId: this.id() }),
+    enabled: this.isAdmin(),
+  }));
+
+  protected readonly hiddenFromLabel = computed(() => {
+    const rules = this.fileRules.data();
+    if (!rules) return '';
+    const ids = new Set([
+      ...rules.hiddenFromUserIds,
+      ...rules.hiddenViaPerson.map((r) => r.userId),
+    ]);
+    const names = (this.viewers.data() ?? []).filter((v) => ids.has(v.id)).map((v) => v.name);
+    return joinNames(names);
+  });
 
   // No direct query here; we rely on UiSettingsService
 
@@ -885,6 +952,19 @@ export class Asset implements OnDestroy {
     } catch {
       // ignore
     }
+  }
+
+  // The dialog renders in a .cdk-overlay-pane, so onKeydown leaves the arrow
+  // and Escape keys to it while it is open.
+  openHideFromDialog() {
+    const data = this.file.data();
+    if (!data || !this.isAdmin()) return;
+    const target: HideFromTarget = {
+      kind: 'file',
+      fileId: data.file.id,
+      fileType: data.file.type === 'video' ? 'video' : 'image',
+    };
+    this.dialog.open(HideFromDialog, { context: { target } });
   }
 
   openShareDialog() {

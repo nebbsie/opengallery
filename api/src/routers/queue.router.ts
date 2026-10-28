@@ -1,12 +1,24 @@
 import { and, inArray, sql } from "drizzle-orm";
+import {
+  buildFileAccessFilter,
+  getAccessScope,
+} from "../authz/shared-access.js";
 import { db } from "../db/index.js";
 import { FileTaskTable } from "../db/schema.js";
 import { privateProcedure, router } from "../trpc.js";
 
 export const queueRouter = router({
   // Returns total distinct files with any non-succeeded tasks (i.e., work remaining)
-  encodingCounts: privateProcedure.query(async () => {
+  // A non-admin only counts files they can see, so a hidden file being
+  // processed never shows up in their "processing" badge.
+  encodingCounts: privateProcedure.query(async ({ ctx: { userId, session } }) => {
     const statuses = ["pending", "in_progress", "failed"] as const;
+    const scopeFilter = userId
+      ? buildFileAccessFilter(
+          await getAccessScope(userId, session),
+          FileTaskTable.fileId,
+        )
+      : sql`1 = 1`;
 
     const totalRes = await db
       .select({
@@ -16,7 +28,8 @@ export const queueRouter = router({
       .where(
         and(
           inArray(FileTaskTable.status, [...statuses]),
-          sql`${FileTaskTable.attempts} < 3`
+          sql`${FileTaskTable.attempts} < 3`,
+          scopeFilter
         )
       );
 
@@ -30,7 +43,8 @@ export const queueRouter = router({
       .where(
         and(
           inArray(FileTaskTable.status, [...statuses]),
-          sql`${FileTaskTable.attempts} < 3`
+          sql`${FileTaskTable.attempts} < 3`,
+          scopeFilter
         )
       )
       .groupBy(FileTaskTable.status);

@@ -50,6 +50,13 @@
       "when": 1780200000000,
       "tag": "0006_merge_suggestions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793145600000,
+      "tag": "0007_viewer_rules_invites",
+      "breakpoints": true
     }
   ]
 }

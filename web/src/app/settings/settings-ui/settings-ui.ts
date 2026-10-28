@@ -15,7 +15,7 @@ import { injectQuery, QueryClient } from '@tanstack/angular-query-experimental';
   imports: [HlmButton, NgIcon, HlmIcon, HlmSwitch],
   template: `
     <div>
-      <h1 class="text-foreground mb-2 block text-lg font-bold">UI Settings</h1>
+      <h1 class="text-foreground mb-2 block text-lg font-bold">Display</h1>
       <p class="text-muted-foreground mb-6 text-sm">Control UI preferences for your account.</p>
     </div>
 

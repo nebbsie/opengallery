@@ -18,6 +18,12 @@ export const routes: Routes = [
     loadComponent: () => import('./register/register').then((c) => c.Register),
   },
   {
+    // Public: an invitee opens this link before they have an account.
+    path: 'invite/:token',
+    title: 'Invite - Open Gallery',
+    loadComponent: () => import('./invite/invite').then((c) => c.Invite),
+  },
+  {
     path: 'gallery',
     title: 'Gallery - Open Gallery',
     canActivate: [AuthGuard],

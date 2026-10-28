@@ -40,8 +40,16 @@ export interface StorageStats {
 }
 
 export const settingsRouter = router({
-  get: privateProcedure.query(async () => {
+  // The worker (internal token) and the admin settings pages need the full
+  // row. Any other user gets it without the filesystem paths: where the
+  // server keeps its files is admin-only.
+  get: privateProcedure.query(async ({ ctx }) => {
     const res = await getCachedSystemSettings();
+    const isAdminOrWorker =
+      ctx.isInternal || ctx.session?.user?.type === "admin";
+    if (res && !isAdminOrWorker) {
+      return { ...res, uploadPath: null, variantsPath: null };
+    }
     return (
       res ?? {
         id: "",

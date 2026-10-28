@@ -26,7 +26,8 @@ export const mediaSourcesSettingsRouter = router({
       return createdPath;
     }),
 
-  deleteSource: strictPrivateProcedure
+  // Admin-only like createSource: Settings > Sources is an admin page.
+  deleteSource: adminProcedure
     .input(z.uuid())
     .mutation(async ({ input: pathId, ctx: { userId } }) => {
       return db

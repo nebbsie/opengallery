@@ -1,6 +1,8 @@
 import { NgOptimizedImage } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { Auth } from '@core/services/auth/auth';
+import { injectTrpc } from '@core/services/trpc';
+import { injectQuery } from '@tanstack/angular-query-experimental';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCrown, lucideLogOut } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
@@ -66,10 +68,26 @@ import { Loading } from '@core/components/loading/loading';
 export class SettingsProfile {
   protected readonly auth = inject(Auth);
 
-  avatarUrl = computed(() => this.auth.user()?.image ?? 'profile_placeholder.png');
-  name = computed(() => this.auth.user()?.name ?? '');
-  email = computed(() => this.auth.user()?.email ?? '');
-  type = computed(() => this.auth.user()?.type);
+  private readonly trpc = injectTrpc();
+
+  // While an admin uses "View as", the session user is still the admin. Ask
+  // the API who it acts as, so the preview shows the viewed user's profile.
+  private readonly me = injectQuery(() => ({
+    queryKey: ['users', 'me', this.auth.viewAs()?.userId ?? null],
+    queryFn: async () => this.trpc.users.me.query(),
+    enabled: !!this.auth.viewAs(),
+  }));
+
+  private readonly shown = computed(() => (this.auth.viewAs() ? this.me.data() : this.auth.user()));
+
+  avatarUrl = computed(() =>
+    this.auth.viewAs()
+      ? 'profile_placeholder.png'
+      : (this.auth.user()?.image ?? 'profile_placeholder.png'),
+  );
+  name = computed(() => this.shown()?.name ?? this.auth.viewAs()?.name ?? '');
+  email = computed(() => this.shown()?.email ?? '');
+  type = computed(() => this.shown()?.type);
 
   logOut() {
     this.auth.signOut();

@@ -262,10 +262,12 @@ export const filesRouter = router({
         });
       }
 
+      // Same error as a missing file, so a viewer cannot tell a hidden file
+      // (or one outside their shares) from one that does not exist.
       if (!(await canUserViewFile(userId, session, file.id))) {
         throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "You do not have access to this file.",
+          code: "NOT_FOUND",
+          message: `File not found: ${fileId}`,
         });
       }
 
@@ -285,7 +287,7 @@ export const filesRouter = router({
           });
         }
         if (!accessScope.visibleAlbumIds.has(albumId)) {
-          throw new TRPCError({ code: "FORBIDDEN" });
+          throw new TRPCError({ code: "NOT_FOUND" });
         }
 
         const [membership] = await db
@@ -343,6 +345,8 @@ export const filesRouter = router({
       >();
       for (const row of faceRows) {
         if (!row.personId) continue;
+        // People hidden from this viewer never show as a chip.
+        if (accessScope.hiddenPersonIds.has(row.personId)) continue;
         const hasCrop = !!row.cropName;
         const existing = peopleByPerson.get(row.personId);
         // Keep the first face we see for a person, but upgrade to one that has
@@ -690,10 +694,9 @@ export const filesRouter = router({
 
         result[v.type] = { id: res.id, dir: v.dir, name: v.name };
 
-        wsManager.broadcast("file:variant-saved", {
-          originalFileId,
-          variantType: v.type,
-        });
+        // Sent to every connected user, so no file id: a viewer must not
+        // learn the id of a file hidden from them. The web only refetches.
+        wsManager.broadcast("file:variant-saved", { variantType: v.type });
       }
 
       return result;

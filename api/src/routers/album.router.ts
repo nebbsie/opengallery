@@ -3,6 +3,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
+  type AccessScope,
   buildFileAccessFilter,
   canUserManageSharedItem,
   clearScopeCache,
@@ -101,6 +102,25 @@ function resolveRecursiveCover(
     queue.push(...(childrenByParent.get(id) ?? []));
   }
   return null;
+}
+
+// The explicit covers (album.cover) this viewer may see. An admin sees all; a
+// viewer must never get a cover that is hidden from them or outside their
+// shares, so those albums fall back to the computed cover.
+async function viewableCovers(
+  scope: AccessScope,
+  covers: Array<string | null>,
+): Promise<Set<string>> {
+  const ids = [...new Set(covers.filter((c): c is string => !!c))];
+  if (ids.length === 0) return new Set();
+  if (scope.isAdmin) return new Set(ids);
+  const rows = await db
+    .select({ id: FileTable.id })
+    .from(FileTable)
+    .where(
+      and(inArray(FileTable.id, ids), buildFileAccessFilter(scope, FileTable.id)),
+    );
+  return new Set(rows.map((r) => r.id));
 }
 
 export const albumRouter = router({
@@ -397,6 +417,7 @@ export const albumRouter = router({
             inArray(AlbumFileTable.albumId, subtreeIdList),
             inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
             sql`${FileTaskTable.attempts} < 3`,
+            buildFileAccessFilter(accessScope, AlbumFileTable.fileId),
           ),
         );
       const pendingFilesByAlbum = new Map<string, Set<string>>();
@@ -417,11 +438,16 @@ export const albumRouter = router({
         );
       }
 
+      const coversOk = await viewableCovers(
+        accessScope,
+        rootRows.map((r) => r.album.cover),
+      );
+
       return rootRows.map((r) => ({
         ...r.album,
         items: itemsByAlbum[r.album.id] ?? 0,
         cover:
-          r.album.cover ??
+          (r.album.cover && coversOk.has(r.album.cover) ? r.album.cover : null) ??
           resolveRecursiveCover(r.album.id, firstImageByAlbum, childrenByParent),
         pendingTasks: pendingByAlbum[r.album.id] ?? 0,
         canManageShares:
@@ -453,8 +479,13 @@ export const albumRouter = router({
         .where(inArray(AlbumTable.id, accessibleAlbumIds))
         .orderBy(desc(AlbumTable.createdAt));
 
+      const coversOk = await viewableCovers(
+        accessScope,
+        rows.map((r) => r.album.cover),
+      );
       return rows.map((r) => ({
         ...r.album,
+        cover: r.album.cover && coversOk.has(r.album.cover) ? r.album.cover : null,
       }));
     },
   ),
@@ -469,7 +500,7 @@ export const albumRouter = router({
 
       const accessScope = await getAccessScope(userId, session);
       if (!accessScope.visibleAlbumIds.has(albumId)) {
-        throw new TRPCError({ code: "FORBIDDEN" });
+        throw new TRPCError({ code: "NOT_FOUND" });
       }
 
       const [row] = await db
@@ -483,7 +514,12 @@ export const albumRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Album not found" });
       }
 
-      return row.album;
+      const coversOk = await viewableCovers(accessScope, [row.album.cover]);
+      return {
+        ...row.album,
+        cover:
+          row.album.cover && coversOk.has(row.album.cover) ? row.album.cover : null,
+      };
     }),
 
   // Fetch files for an album, ensuring access by current user
@@ -494,7 +530,7 @@ export const albumRouter = router({
 
       const accessScope = await getAccessScope(userId, session);
       if (!accessScope.visibleAlbumIds.has(albumId)) {
-        throw new TRPCError({ code: "FORBIDDEN" });
+        throw new TRPCError({ code: "NOT_FOUND" });
       }
 
       const normalize = (p: string) => p.replace(/\\/g, "/");
@@ -699,11 +735,15 @@ export const albumRouter = router({
 
       // Each child's count/cover rolls up through its own sub-albums, reusing the
       // single subtree scan above (explicit cover still wins when one is set).
+      const coversOk = await viewableCovers(
+        accessScope,
+        accessibleChildren.map((c) => c.cover),
+      );
       const childrenWithMeta = accessibleChildren.map((c) => ({
         ...c,
         items: recursiveItemCount(c.id, directFilesByAlbum, childrenByParent),
         cover:
-          c.cover ??
+          (c.cover && coversOk.has(c.cover) ? c.cover : null) ??
           resolveRecursiveCover(c.id, firstImageByAlbum, childrenByParent),
         canManageShares:
           accessScope.isAdmin || accessScope.ownedLibraryIds.has(c.libraryId),
@@ -724,6 +764,7 @@ export const albumRouter = router({
             eq(AlbumFileTable.albumId, albumId),
             inArray(FileTaskTable.status, ["pending", "in_progress", "failed"]),
             sql`${FileTaskTable.attempts} < 3`,
+            buildFileAccessFilter(accessScope, AlbumFileTable.fileId),
           ),
         );
       const pendingTasks = Number(pendingTasksRes[0]?.pendingCount ?? 0);

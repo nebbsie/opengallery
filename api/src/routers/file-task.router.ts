@@ -9,7 +9,6 @@ import { resolveAssetPath } from "../utils/media-path.js";
 import {
   adminProcedure,
   internalProcedure,
-  privateProcedure,
   router,
 } from "../trpc.js";
 import { wsManager } from "../ws-manager.js";
@@ -44,7 +43,7 @@ export const fileTaskRouter = router({
 
   // Per-task-type rollup for the Tasks settings page: how many of each task type
   // are done vs still outstanding, instead of a per-file list.
-  summary: privateProcedure.query(async () => {
+  summary: adminProcedure.query(async () => {
     // Video transcodes share the `encode_optimised` task type with image
     // optimisation, so they'd otherwise be invisible (lumped under "Optimised
     // images"). Split them out by the file's media type for display: an
@@ -259,8 +258,8 @@ export const fileTaskRouter = router({
         .returning({ id: FileTaskTable.id, status: FileTaskTable.status });
 
       if (row && input.status === "succeeded") {
+        // No file id: the message goes to every connected user.
         wsManager.broadcast("file:task-completed", {
-          fileId: input.fileId,
           type: input.type,
           status: "succeeded",
         });
@@ -403,9 +402,9 @@ export const fileTaskRouter = router({
         }
       }
 
+      // No file id: the message goes to every connected user.
       for (const b of succeededBroadcasts) {
         wsManager.broadcast("file:task-completed", {
-          fileId: b.fileId,
           type: b.type,
           status: "succeeded",
         });
@@ -787,7 +786,7 @@ export const fileTaskRouter = router({
     }),
 
   // List outstanding encode-related tasks per file (attempts <3 and not succeeded)
-  listOutstanding: privateProcedure
+  listOutstanding: adminProcedure
     .input(
       z
         .object({

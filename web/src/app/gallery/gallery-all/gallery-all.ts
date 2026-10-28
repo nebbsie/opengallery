@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { RouterLink } from '@angular/router';
 import { AssetThumbnail } from '@core/components/asset-thumbnail/asset-thumbnail';
 import { ErrorAlert } from '@core/components/error/error';
+import { Auth } from '@core/services/auth/auth';
 import { VirtualThumbnailGrid } from '@core/components/virtual-thumbnail-grid/virtual-thumbnail-grid';
 import { CacheKey } from '@core/services/cache-key.types';
 import { ScrollPosition } from '@core/services/scroll-position/scroll-position';
@@ -43,8 +44,12 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideImagePlus" class="mb-4" />
           <p>No assets yet</p>
-          <p class="mb-4 text-sm">Add a source folder to import your library</p>
-          <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
+          @if (isAdmin()) {
+            <p class="mb-4 text-sm">Add a source folder to import your library</p>
+            <a hlmBtn routerLink="/settings/sources">Go to Source Folders</a>
+          } @else {
+            <p class="text-sm">Photos shared with you will show here</p>
+          }
         </div>
       } @else {
         <app-virtual-thumbnail-grid
@@ -69,6 +74,7 @@ import { injectInfiniteQuery, injectQuery } from '@tanstack/angular-query-experi
 })
 export class GalleryAll {
   private readonly trpc = injectTrpc();
+  protected readonly isAdmin = inject(Auth).isAdmin;
   private readonly scrollPosition = inject(ScrollPosition);
   protected readonly timelineDate = (item: {
     sortAt?: Date | string | null;

@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import { createHash, timingSafeEqual } from "node:crypto";
 import superjson from "superjson";
-import { getCachedSession } from "./auth/session-cache.js";
+import { getEffectiveSession } from "./auth/view-as.js";
 import { logger } from "./logger.js";
 import { getRequestStats } from "./request-context.js";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -48,7 +48,7 @@ export function isInternalToken(token: string | undefined): boolean {
   return timingSafeEqual(a, b);
 }
 
-const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
+const AuthMiddleware = t.middleware(async ({ ctx, next, type }) => {
   const authz = ctx.req.headers.authorization;
   const bearer = authz?.startsWith("Bearer ") ? authz.slice(7) : undefined;
   const isInternal = isInternalToken(bearer);
@@ -57,11 +57,19 @@ const AuthMiddleware = t.middleware(async ({ ctx, next }) => {
   let userId: string | null = null;
 
   if (!isInternal) {
-    session = await getCachedSession(toHeaders(ctx.req.headers));
+    session = await getEffectiveSession(toHeaders(ctx.req.headers));
     const expiresAt = session?.session?.expiresAt;
     const expired = !expiresAt || new Date(expiresAt) <= new Date();
     if (!expired) {
       userId = (session?.user?.id as string | undefined) ?? null;
+    }
+    // "View as" is a read-only preview: the admin must not change anything
+    // while acting as another user.
+    if (userId && session?.viewAs && type === "mutation") {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Read-only while viewing as another user",
+      });
     }
   }
 

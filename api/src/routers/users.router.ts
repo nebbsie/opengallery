@@ -13,15 +13,40 @@ import {
   SharedItemTable,
   UiSettingsTable,
   UserTable,
+  ViewerHiddenFileTable,
+  ViewerHiddenPersonTable,
 } from "../db/schema.js";
 import { auth, runAsAdminSignup } from "../auth/auth.js";
 import { clearSessionCache } from "../auth/session-cache.js";
-import { adminProcedure, privateProcedure, publicProcedure, router } from "../trpc.js";
+import { clearScopeCache } from "../authz/shared-access.js";
+import {
+  adminProcedure,
+  privateProcedure,
+  publicProcedure,
+  strictPrivateProcedure,
+  router,
+} from "../trpc.js";
 
 export const usersRouter = router({
   isFirstSignup: publicProcedure.query(async () => {
     const [res] = await db.select().from(UserTable).limit(1);
     return res === undefined;
+  }),
+
+  // The user the API is acting as. While an admin uses "View as", this is the
+  // viewed user (type "user") and viewAs names the admin, so the web app can
+  // show the banner and hide admin UI from the preview.
+  me: strictPrivateProcedure.query(({ ctx }) => {
+    const user = ctx.session?.user;
+    return {
+      id: ctx.userId,
+      name: (user?.name as string) ?? "",
+      email: (user?.email as string) ?? "",
+      type: (user?.type as "user" | "admin") ?? "user",
+      viewAs: (ctx.session?.viewAs as { adminName: string } | undefined)
+        ? { adminName: ctx.session.viewAs.adminName as string }
+        : null,
+    };
   }),
 
   getAll: privateProcedure.query(async ({ ctx }) => {
@@ -71,6 +96,13 @@ export const usersRouter = router({
         .delete(UiSettingsTable)
         .where(eq(UiSettingsTable.userId, input.id));
       await db.delete(EventLogTable).where(eq(EventLogTable.userId, input.id));
+      await db
+        .delete(ViewerHiddenPersonTable)
+        .where(eq(ViewerHiddenPersonTable.viewerUserId, input.id));
+      await db
+        .delete(ViewerHiddenFileTable)
+        .where(eq(ViewerHiddenFileTable.viewerUserId, input.id));
+      clearScopeCache(input.id);
 
       // Find libraries owned by the user
       const libs = await db

@@ -10,7 +10,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import * as fs from "node:fs";
 import path from "path";
 import { auth } from "./auth/auth.js";
-import { clearSessionCache, getCachedSession } from "./auth/session-cache.js";
+import { clearSessionCache } from "./auth/session-cache.js";
+import { getEffectiveSession } from "./auth/view-as.js";
 import { canUserViewFile } from "./authz/shared-access.js";
 import { db } from "./db/index.js";
 import { FaceTable, FileTable, FileVariantTable } from "./db/schema.js";
@@ -87,7 +88,7 @@ server.get("/health", async () => ({ status: "ok" }));
 await server.register(websocket);
 
 server.get("/ws", { websocket: true }, async (socket, req) => {
-  const session = await getCachedSession(toHeaders(req.headers));
+  const session = await getEffectiveSession(toHeaders(req.headers));
   const userId = session?.user?.id as string | undefined;
   if (!userId) {
     socket.close(4001, "Unauthorized");
@@ -99,7 +100,7 @@ server.get("/ws", { websocket: true }, async (socket, req) => {
 server.get("/asset/:id/:variant?", async (req, reply) => {
   const { id, variant } = req.params as { id: string; variant?: string };
 
-  const session = await getCachedSession(toHeaders(req.headers));
+  const session = await getEffectiveSession(toHeaders(req.headers));
   const sessionUserId = (session?.user?.id as string | undefined) ?? null;
 
   if (!sessionUserId) {
@@ -108,7 +109,8 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
 
   const canView = await canUserViewFile(sessionUserId, session, id);
   if (!canView) {
-    return reply.code(403).send({ error: "Forbidden" });
+    // Same answer as a missing file, so a viewer cannot tell a hidden one exists.
+    return reply.code(404).send({ error: "Not found" });
   }
 
   // Normalize the variant up front so an invalid one is rejected before any query.
@@ -218,7 +220,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
 server.get("/face/:faceId", async (req, reply) => {
   const { faceId } = req.params as { faceId: string };
 
-  const session = await getCachedSession(toHeaders(req.headers));
+  const session = await getEffectiveSession(toHeaders(req.headers));
   const sessionUserId = (session?.user?.id as string | undefined) ?? null;
   if (!sessionUserId) return reply.code(401).send({ error: "Unauthorized" });
 
@@ -233,7 +235,7 @@ server.get("/face/:faceId", async (req, reply) => {
   }
 
   const canView = await canUserViewFile(sessionUserId, session, face.fileId);
-  if (!canView) return reply.code(403).send({ error: "Forbidden" });
+  if (!canView) return reply.code(404).send({ error: "Face not found" });
 
   const abs = await resolveAssetPath(
     path.resolve(path.join(face.cropDir, face.cropName)),

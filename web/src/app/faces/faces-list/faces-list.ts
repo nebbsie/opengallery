@@ -184,18 +184,20 @@ type PeoplePages = {
         <div class="text-muted-foreground flex flex-col items-center justify-center py-12">
           <ng-icon hlm size="xl" name="lucideUsers" class="mb-4" />
           <p>No people detected yet</p>
-          <p class="text-sm">Faces appear here as your photos are scanned</p>
+          @if (isAdmin()) {
+            <p class="text-sm">Faces appear here as your photos are scanned</p>
+          }
         </div>
       } @else {
         <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           @for (person of allPeople(); track person.id) {
             <div
               class="bg-card flex flex-col items-center rounded-lg border p-3"
-              [class.opacity-60]="person.hidden"
+              [class.opacity-60]="isAdmin() && person.hidden"
             >
               <a [routerLink]="['/faces', person.id]" class="group block">
                 <div class="bg-muted relative h-28 w-28 overflow-hidden rounded-full">
-                  @if (person.hidden) {
+                  @if (isAdmin() && person.hidden) {
                     <span
                       class="absolute right-1 top-1 z-10 rounded bg-amber-500/90 px-1.5 py-0.5 text-[10px] font-medium text-white"
                     >
@@ -229,6 +231,11 @@ type PeoplePages = {
                     placeholder="Add a name"
                     autofocus
                   />
+                } @else if (!isAdmin()) {
+                  <!-- Only the admin names people. -->
+                  <p class="w-full truncate text-sm font-medium">
+                    {{ person.name || 'Unnamed person' }}
+                  </p>
                 } @else if (person.name) {
                   <button class="w-full truncate text-sm font-medium" (click)="edit(person.id, person.name)">
                     {{ person.name }}
@@ -265,7 +272,9 @@ export class FacesList {
   private readonly host = inject(ElementRef<HTMLElement>);
   private readonly sentinel = viewChild<ElementRef<HTMLElement>>('sentinel');
 
-  protected readonly isAdmin = computed(() => this.auth.user()?.type === 'admin');
+  // False while the admin previews as another user, so the page looks exactly
+  // as that user sees it.
+  protected readonly isAdmin = this.auth.isAdmin;
 
   protected readonly editingId = signal<string | null>(null);
   protected draftName = '';

@@ -10,7 +10,7 @@ import {
 } from '../authz/shared-access.js';
 import { db } from '../db/index.js';
 import { FileTable, LibraryFileTable } from '../db/schema.js';
-import { privateProcedure, router } from '../trpc.js';
+import { adminProcedure, router } from '../trpc.js';
 import { deleteFilesWithCascade } from '../utils/file-operations.js';
 import { resolveAssetPath } from '../utils/media-path.js';
 
@@ -37,8 +37,9 @@ async function ownedScope(userId: string | null, session: SessionLike) {
 // copies in a group could otherwise both pass the check and remove both.
 let deleteChain: Promise<unknown> = Promise.resolve();
 
+// Settings > Duplicates is an admin page, so both procedures are admin-only.
 export const duplicatesRouter = router({
-  list: privateProcedure.query(async ({ ctx: { userId, session } }) => {
+  list: adminProcedure.query(async ({ ctx: { userId, session } }) => {
     const { filter } = await ownedScope(userId, session);
 
     // Group within the caller's scope, so a copy only counts as a duplicate of
@@ -80,7 +81,7 @@ export const duplicatesRouter = router({
     }));
   }),
 
-  deleteFile: privateProcedure
+  deleteFile: adminProcedure
     .input(z.object({ fileId: z.string().uuid() }))
     .mutation(async ({ ctx: { userId, session }, input }) => {
       const run = deleteChain.then(async () => {

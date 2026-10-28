@@ -29,4 +29,7 @@ export const CacheKey = {
   YearsAll: 'years-all',
   YearSingle: 'year-single',
   YearTimeline: 'year-timeline',
+  Users: 'users',
+  Invites: 'invites',
+  ViewerRules: 'viewer-rules',
 };

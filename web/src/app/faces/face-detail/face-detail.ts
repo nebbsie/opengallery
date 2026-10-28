@@ -11,8 +11,9 @@ import { optimisticEdit } from '@core/services/optimistic';
 import { injectTrpc } from '@core/services/trpc';
 import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideUser } from '@ng-icons/lucide';
+import { lucideEyeOff, lucideUser } from '@ng-icons/lucide';
 import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { Loading } from '@core/components/loading/loading';
@@ -22,6 +23,8 @@ import {
   injectQuery,
   QueryClient,
 } from '@tanstack/angular-query-experimental';
+import { HideFromDialog, HideFromTarget } from '../../shared-viewer/hide-from-dialog/hide-from-dialog';
+import { joinNames, Viewer, viewerRulesKeys } from '../../shared-viewer/viewer-rules';
 
 // Shape of a person row from faces.listPeople. Declared locally so the merge
 // dropdown stays typed even when the tRPC router type resolves to `any` in the
@@ -52,7 +55,7 @@ const BROWSE_KEYS = [
 
 @Component({
   selector: 'app-face-detail',
-  providers: [provideIcons({ lucideUser })],
+  providers: [provideIcons({ lucideEyeOff, lucideUser })],
   imports: [
     ErrorAlert,
     Loading,
@@ -72,7 +75,7 @@ const BROWSE_KEYS = [
     } @else if (files.isError() && !files.data()) {
       <app-error-alert [error]="files.error()" />
     } @else {
-      <div class="mb-3 flex items-center gap-2">
+      <div class="mb-3 flex flex-wrap items-center gap-2">
         @if (editing()) {
           <input
             hlmInput
@@ -88,16 +91,30 @@ const BROWSE_KEYS = [
           <h1 class="text-foreground text-2xl font-bold text-balance">
             {{ person.data()?.name || 'Unnamed person' }}
           </h1>
-          @if (person.data()?.hidden) {
-            <span
-              class="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"
-            >
-              Hidden
-            </span>
+          @if (isAdmin()) {
+            @if (person.data()?.hidden) {
+              <span
+                class="rounded bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"
+              >
+                Hidden
+              </span>
+            }
+            @if (hiddenFromLabel(); as label) {
+              <!-- Admin-only: who this person is hidden from. Opens the picker. -->
+              <button
+                type="button"
+                class="text-muted-foreground hover:bg-muted inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs"
+                title="Change who this person is hidden from"
+                (click)="openHideFrom()"
+              >
+                <ng-icon hlm size="xs" name="lucideEyeOff" />
+                Hidden from {{ label }}
+              </button>
+            }
+            <button hlmBtn variant="ghost" size="sm" (click)="startEdit()">
+              {{ person.data()?.name ? 'Rename' : 'Add a name' }}
+            </button>
           }
-          <button hlmBtn variant="ghost" size="sm" (click)="startEdit()">
-            {{ person.data()?.name ? 'Rename' : 'Add a name' }}
-          </button>
         }
       </div>
 
@@ -189,11 +206,22 @@ const BROWSE_KEYS = [
             </div>
           }
 
-          <div class="ml-auto">
+          <div class="ml-auto flex flex-wrap gap-2">
+            <button
+              hlmBtn
+              size="sm"
+              variant="outline"
+              title="Choose who cannot see photos with this person"
+              (click)="openHideFrom()"
+            >
+              <ng-icon hlm size="sm" name="lucideEyeOff" />
+              Hide from…
+            </button>
             <button
               hlmBtn
               size="sm"
               [variant]="person.data()?.hidden ? 'outline' : 'destructive'"
+              title="Hide this person and their photos for everyone, you included"
               (click)="toggleHidden()"
               [disabled]="hideMutation.isPending()"
             >
@@ -233,8 +261,11 @@ export class FaceDetail {
   private readonly queryClient = inject(QueryClient);
   private readonly auth = inject(Auth);
   private readonly router = inject(Router);
+  private readonly dialog = inject(HlmDialogService);
 
-  protected readonly isAdmin = computed(() => this.auth.user()?.type === 'admin');
+  // False while the admin previews as another user, so the page looks exactly
+  // as that user sees it.
+  protected readonly isAdmin = this.auth.isAdmin;
 
   protected readonly editing = signal(false);
   protected draftName = '';
@@ -285,6 +316,27 @@ export class FaceDetail {
     const id = this.mergeTargetId();
     const people = (this.peopleList.data() ?? []) as PersonSummary[];
     return people.find((p: PersonSummary) => p.id === id) ?? null;
+  });
+
+  // Admin-only: the users this person is hidden from, for the header label.
+  // Shares its cache keys with the "Hide from…" picker, so a save updates it.
+  private readonly viewers = injectQuery(() => ({
+    queryKey: viewerRulesKeys.viewers(),
+    queryFn: async (): Promise<Viewer[]> => this.trpc.viewerRules.viewers.query(),
+    enabled: this.isAdmin(),
+  }));
+
+  private readonly personRules = injectQuery(() => ({
+    queryKey: viewerRulesKeys.person(this.id()),
+    queryFn: async (): Promise<{ hiddenFromUserIds: string[] }> =>
+      this.trpc.viewerRules.forPerson.query({ personId: this.id() }),
+    enabled: this.isAdmin(),
+  }));
+
+  protected readonly hiddenFromLabel = computed(() => {
+    const ids = new Set(this.personRules.data()?.hiddenFromUserIds ?? []);
+    const names = (this.viewers.data() ?? []).filter((v) => ids.has(v.id)).map((v) => v.name);
+    return joinNames(names);
   });
 
   files = injectInfiniteQuery(() => ({
@@ -413,6 +465,15 @@ export class FaceDetail {
 
   toggleHidden(): void {
     this.hideMutation.mutate(!this.person.data()?.hidden);
+  }
+
+  openHideFrom(): void {
+    const target: HideFromTarget = {
+      kind: 'person',
+      personId: this.id(),
+      personName: this.person.data()?.name ?? null,
+    };
+    this.dialog.open(HideFromDialog, { context: { target } });
   }
 
   openMerge(): void {

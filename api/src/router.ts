@@ -20,6 +20,8 @@ import { queueRouter } from "./routers/queue.router.js";
 import { settingsRouter } from "./routers/settings.router.js";
 import { uiSettingsRouter } from "./routers/ui-settings.router.js";
 import { usersRouter } from "./routers/users.router.js";
+import { invitesRouter } from "./routers/invites.router.js";
+import { viewerRulesRouter } from "./routers/viewer-rules.router.js";
 import { router } from "./trpc.js";
 
 export const appRouter = router({
@@ -45,6 +47,8 @@ export const appRouter = router({
   duplicates: duplicatesRouter,
   camera: cameraRouter,
   years: yearsRouter,
+  invites: invitesRouter,
+  viewerRules: viewerRulesRouter,
 });
 
 export type AppRouter = typeof appRouter;

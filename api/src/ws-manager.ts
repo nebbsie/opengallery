@@ -22,6 +22,9 @@ class WsManager {
     });
   }
 
+  // Sends to every connected user, admins and viewers alike. Never put a file
+  // id, person id or name in the payload: a viewer must not learn about a
+  // file or person hidden from them. Send a bare "something changed" signal.
   broadcast(event: string, data: unknown): void {
     const message = JSON.stringify({ event, data } satisfies WsEvent);
     for (const sockets of this.clients.values()) {

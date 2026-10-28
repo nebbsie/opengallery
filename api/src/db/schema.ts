@@ -556,3 +556,61 @@ export const AuthSchema = {
   account: AccountTable,
   verification: VerificationTable,
 };
+
+// Per-viewer content rules. A row hides a person (every file with a face of
+// that person) or a single file from one non-admin viewer, everywhere: lists,
+// counts, covers, people, direct links. Applied through getAccessScope /
+// buildFileAccessFilter. No FKs (foreign keys are not enforced here); rows are
+// cleaned up when the user, person or file is deleted, and moved on merge.
+export const ViewerHiddenPersonTable = sqliteTable(
+  "viewer_hidden_person",
+  {
+    id: id(),
+    viewerUserId: text("viewer_user_id").notNull(),
+    personId: text("person_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("viewer_hidden_person_uidx").on(t.viewerUserId, t.personId),
+    index("viewer_hidden_person_person_idx").on(t.personId),
+  ],
+);
+
+export const ViewerHiddenFileTable = sqliteTable(
+  "viewer_hidden_file",
+  {
+    id: id(),
+    viewerUserId: text("viewer_user_id").notNull(),
+    fileId: text("file_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("viewer_hidden_file_uidx").on(t.viewerUserId, t.fileId),
+    index("viewer_hidden_file_file_idx").on(t.fileId),
+  ],
+);
+
+export type InviteScope = "library" | "albums";
+
+// Single-use sign-up link created by an admin. Only the SHA-256 of the token is
+// stored. The presets (what the new user can see) are applied in one
+// transaction when the invite is accepted.
+export const InviteTable = sqliteTable(
+  "invite",
+  {
+    id: id(),
+    tokenHash: text("token_hash").notNull(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    createdByUserId: text("created_by_user_id").notNull(),
+    scope: text("scope").$type<InviteScope>().notNull(),
+    albumIds: text("album_ids").notNull().default("[]"), // JSON string[]
+    hiddenPersonIds: text("hidden_person_ids").notNull().default("[]"), // JSON string[]
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    usedByUserId: text("used_by_user_id"),
+    revokedAt: text("revoked_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("invite_token_hash_uidx").on(t.tokenHash)],
+);
