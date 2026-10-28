@@ -78,6 +78,12 @@ export const routes: Routes = [
     loadChildren: () => import('./settings/settings.routes').then((r) => r.routes),
   },
   {
+    path: 'import/takeout',
+    title: 'Import from Google Takeout - Open Gallery',
+    canActivate: [AuthGuard],
+    loadComponent: () => import('./import/takeout/takeout-page').then((c) => c.TakeoutPage),
+  },
+  {
     path: 'asset/:id',
     title: 'Asset - Open Gallery',
     canActivate: [AuthGuard],

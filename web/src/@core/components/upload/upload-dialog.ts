@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, linkedSignal, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { PluralPipe } from '@core/pipes/plural.pipe';
 import { CacheKey } from '@core/services/cache-key.types';
 import { injectTrpc } from '@core/services/trpc';
@@ -44,6 +45,7 @@ type Target = 'default' | 'album' | 'new';
     HlmSpinner,
     NgIcon,
     PluralPipe,
+    RouterLink,
   ],
   providers: [provideIcons({ lucideFolderOpen, lucideImagePlus })],
   template: `
@@ -158,6 +160,15 @@ type Target = 'default' | 'album' | 'new';
 
         <p class="text-muted-foreground mt-3 text-xs">
           Up to {{ maxSize() }} per file. Duplicates of files already in your library are skipped.
+        </p>
+        <p class="text-muted-foreground mt-2 text-xs">
+          Moving from Google Photos?
+          <a
+            class="text-foreground underline underline-offset-2"
+            routerLink="/import/takeout"
+            (click)="ref.close()"
+            >Import a Google Takeout</a
+          >
         </p>
       }
     } @else if (config.isError()) {

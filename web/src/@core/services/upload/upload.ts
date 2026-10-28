@@ -11,7 +11,30 @@ import { QueryClient } from '@tanstack/angular-query-experimental';
 export type UploadDestination =
   | { kind: 'default' }
   | { kind: 'album'; albumId: string; name: string }
-  | { kind: 'new'; name: string };
+  // folder: a parent folder for the new album, e.g. "Google Photos".
+  | { kind: 'new'; name: string; folder?: string };
+
+// Metadata sent with an upload, e.g. a Google Takeout JSON sidecar. The
+// server keeps it and uses it where the file has no EXIF date or position.
+export interface UploadMeta {
+  source: string;
+  takenAt: string | null;
+  lat: number | null;
+  lon: number | null;
+  description: string | null;
+}
+
+// An upload whose bytes are read only when it starts (e.g. an entry of a
+// 50 GB zip): open() is called once per attempt and the Blob is dropped when
+// the upload ends.
+export interface LazyUpload {
+  name: string;
+  size: number;
+  type: string;
+  open: () => Promise<Blob>;
+  destination: UploadDestination;
+  meta?: UploadMeta | null;
+}
 
 export type UploadState =
   | 'queued'
@@ -26,7 +49,13 @@ export type UploadState =
 export interface UploadItem {
   readonly id: number;
   readonly batch: number;
-  readonly file: File;
+  // Null for a lazy item until its upload starts (and again after it ends).
+  readonly file: Blob | null;
+  readonly open: (() => Promise<Blob>) | null;
+  readonly type: string;
+  readonly meta: UploadMeta | null;
+  // No result toast for the batch (the importer reports itself).
+  readonly quiet: boolean;
   readonly name: string;
   readonly size: number;
   readonly destination: UploadDestination;
@@ -143,6 +172,10 @@ export class UploadService {
         id: this.nextId++,
         batch,
         file,
+        open: null,
+        type: file.type,
+        meta: null,
+        quiet: false,
         name: file.name,
         size: file.size,
         destination,
@@ -157,6 +190,44 @@ export class UploadService {
     this.panelOpen.set(true);
     this.expanded.set(true);
     this.pump();
+  }
+
+  // Queue lazy uploads (see LazyUpload) with no result toast; returns their
+  // ids so the caller can follow them and remove() them when they end.
+  enqueueLazy(uploads: readonly LazyUpload[]): number[] {
+    if (!uploads.length) return [];
+    const batch = this.nextBatch++;
+    const added: UploadItem[] = uploads.map((u) => ({
+      id: this.nextId++,
+      batch,
+      file: null,
+      open: u.open,
+      type: u.type,
+      meta: u.meta ?? null,
+      quiet: true,
+      name: u.name,
+      size: u.size,
+      destination: u.destination,
+      state: u.size === 0 ? 'error' : 'queued',
+      sent: 0,
+      error: u.size === 0 ? 'The file is empty' : null,
+      sessionId: null,
+      albumId: null,
+    }));
+    this.items.update((list) => [...list, ...added]);
+    this.pump();
+    return added.map((i) => i.id);
+  }
+
+  // Drop rows that are no longer running (finished, failed, cancelled).
+  remove(ids: readonly number[]): void {
+    const drop = new Set(ids);
+    this.items.update((list) =>
+      list.filter(
+        (i) => !drop.has(i.id) || i.state === 'queued' || i.state === 'uploading' || i.state === 'finishing',
+      ),
+    );
+    if (!this.items().length) this.panelOpen.set(false);
   }
 
   pause(id: number): void {
@@ -258,9 +329,11 @@ export class UploadService {
         const created = await this.trpc.upload.create.mutate({
           name: item.name,
           size: item.size,
-          mime: item.file.type,
+          mime: item.type,
           albumId: d.kind === 'album' ? d.albumId : null,
           newAlbumName: d.kind === 'new' ? d.name : null,
+          folder: d.kind === 'new' ? (d.folder ?? null) : null,
+          meta: item.meta,
         });
         this.chunkBytes = created.chunkBytes || DEFAULT_CHUNK;
         this.patch(id, { sessionId: created.id, sent: 0 });
@@ -273,7 +346,13 @@ export class UploadService {
         }
       }
       item = this.get(id)!;
+      if (!item.file && item.open) {
+        this.patch(id, { file: await item.open() });
+        if (!this.stillWanted(id)) return;
+        item = this.get(id)!;
+      }
       const sessionId = item.sessionId!;
+      const file = item.file!;
       let offset = item.sent;
       let failures = 0;
 
@@ -281,7 +360,7 @@ export class UploadService {
         if (!this.stillWanted(id)) return;
         const end = Math.min(offset + this.chunkBytes, item.size);
         try {
-          const res = await this.putChunk(id, sessionId, offset, item.file.slice(offset, end));
+          const res = await this.putChunk(id, sessionId, offset, file.slice(offset, end));
           offset = res.received;
           failures = 0;
           this.patch(id, { sent: offset });
@@ -323,6 +402,8 @@ export class UploadService {
         this.patch(id, { sessionId: null, sent: 0 });
       }
     } finally {
+      // A lazy item reopens its bytes on a retry; do not keep them meanwhile.
+      if (this.get(id)?.open && this.get(id)?.file) this.patch(id, { file: null });
       this.maybeFinishBatch(item!.batch);
     }
   }
@@ -370,7 +451,7 @@ export class UploadService {
 
   private maybeFinishBatch(batch: number): void {
     const rows = this.items().filter((i) => i.batch === batch);
-    if (!rows.length) return;
+    if (!rows.length || rows[0]!.quiet) return;
     const pending = rows.some((i) => i.state === 'queued' || i.state === 'uploading' || i.state === 'finishing' || i.state === 'paused');
     if (pending) return;
     // Report each batch once.
