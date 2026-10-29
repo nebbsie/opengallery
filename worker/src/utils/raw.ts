@@ -36,6 +36,8 @@ export class NoRawPreviewError extends Error {
 
 export type RawTags = {
   Orientation?: number;
+  // HEIF "irot" box (degrees), HEIC only. See decodeHeic.
+  Rotation?: number;
   Make?: string;
   Model?: string;
   LensModel?: string;
@@ -228,17 +230,20 @@ export function rawPreviewPath(
 const inFlight = new Map<string, Promise<string>>();
 
 /**
- * Decode a HEIC/HEIF to PNG with ffmpeg (it joins the tile grid). Rotation is
- * left off and the EXIF orientation applied later, as for a JPEG: Apple and
- * Samsung write the same turn in EXIF as in the HEIF "irot" box. A decode
- * error is thrown as a plain Error, so the task is retried.
+ * Decode a HEIC/HEIF to PNG with ffmpeg (it joins the tile grid). ffmpeg
+ * applies the HEIF "irot" turn itself, even with -noautorotate on a grid
+ * image, so the output is already upright when the file has one; the EXIF
+ * orientation (Apple writes the same turn there too) must then not be applied
+ * again. A HEIF with no "irot" falls back to the EXIF orientation, as a JPEG
+ * does. A decode error is thrown as a plain Error, so the task is retried.
  */
 async function decodeHeic(path: string): Promise<{ preview: Buffer | null; tags: RawTags }> {
-  const tags = await readRawTags(path);
+  const tags = await runExiftool(['-j', '-n', '-m', '-q', '-Rotation', ...TAG_ARGS, path]);
+  if (tags.Rotation !== undefined) tags.Orientation = 1;
   const preview = await new Promise<Buffer>((resolve, reject) => {
     const child = spawn(
       'ffmpeg',
-      ['-v', 'error', '-noautorotate', '-i', path, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'],
+      ['-v', 'error', '-i', path, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
     const chunks: Buffer[] = [];
