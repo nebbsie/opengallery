@@ -98,12 +98,18 @@ export const FileTable = sqliteTable(
     // or derived rows, so it never shows on its own. Plain text, no FK, like
     // the other links here; kept in sync by utils/raw-pairing.ts.
     rawFileId: text("raw_file_id"),
+    // Live Photo: the short video (same base name, same folder) of this still.
+    // The video is a hidden "motion" companion: no library, album or analysis
+    // rows, only its encode tasks so it can play in the viewer. Kept in sync
+    // by utils/raw-pairing.ts (linkMotionPairs).
+    motionFileId: text("motion_file_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("file_path_uidx").on(t.dir, t.name),
     index("file_raw_file_id_idx").on(t.rawFileId),
+    index("file_motion_file_id_idx").on(t.motionFileId),
     // Global gallery + asset prev/next: undated media sinks to the sentinel
     // bottom. The sentinel is an inline literal (NOT a bound param) so it
     // matches the ORDER BY expression and SQLite can use this index.

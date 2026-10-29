@@ -132,7 +132,11 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   // Normalize the variant up front so an invalid one is rejected before any query.
   const lower = variant?.toLowerCase();
   const v =
-    lower === "thumbnail" || lower === "optimised" || lower === "thumbnail_lg" || lower === "raw"
+    lower === "thumbnail" ||
+    lower === "optimised" ||
+    lower === "thumbnail_lg" ||
+    lower === "raw" ||
+    lower === "motion"
       ? lower
       : variant
         ? "invalid"
@@ -141,7 +145,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   if (v === "invalid") {
     return reply
       .code(400)
-      .send({ error: "Variant must be thumbnail | thumbnail_lg | optimised | raw" });
+      .send({ error: "Variant must be thumbnail | thumbnail_lg | optimised | raw | motion" });
   }
 
   const variantFile = async (type: string) =>
@@ -178,12 +182,44 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     return isRawName(base.name) ? base : undefined;
   };
 
+  // "motion": the Live Photo video of a still (a hidden companion, so only
+  // reachable through its still): its small playable mp4, or the original
+  // until that encode exists.
+  let motionNotEncoded = false;
+  const motionFile = async () => {
+    const base = await originalRow();
+    if (!base?.motionFileId) return undefined;
+    const encoded = (
+      await db
+        .select({ file: FileTable })
+        .from(FileVariantTable)
+        .innerJoin(FileTable, eq(FileVariantTable.fileId, FileTable.id))
+        .where(
+          and(
+            eq(FileVariantTable.originalFileId, base.motionFileId),
+            eq(FileVariantTable.type, "optimised"),
+          ),
+        )
+        .limit(1)
+    )[0]?.file;
+    if (encoded) return encoded;
+    motionNotEncoded = true;
+    return (await db.select().from(FileTable).where(eq(FileTable.id, base.motionFileId)).limit(1))[0];
+  };
+
   let target =
-    v == null ? await originalRow() : v === "raw" ? await rawFile() : await variantFile(v);
+    v == null
+      ? await originalRow()
+      : v === "raw"
+        ? await rawFile()
+        : v === "motion"
+          ? await motionFile()
+          : await variantFile(v);
 
   // The 640 px grid thumbnail is filled in by a backfill. Until it exists, serve
   // the 320 px one, but only cache it briefly so the sharp one shows up later.
-  let isFallback = false;
+  // The motion original is served until its encode exists: cache it briefly.
+  let isFallback = motionNotEncoded;
   if (!target && v === "thumbnail_lg") {
     target = await variantFile("thumbnail");
     isFallback = !!target;

@@ -76,6 +76,10 @@ import { TakeoutImport } from './takeout-import';
                 <p class="text-muted-foreground text-sm tabular-nums">
                   {{ size(plan.totalBytes) }} in {{ importer.zipCount() | plural: 'zip' }} ·
                   {{ plan.withJson.toLocaleString() }} with Google dates and places
+                  @if (plan.livePhotos) {
+                    · {{ plan.livePhotos.toLocaleString() }}
+                    {{ plan.livePhotos === 1 ? 'Live Photo' : 'Live Photos' }}
+                  }
                 </p>
               </div>
               @if (space(); as sp) {

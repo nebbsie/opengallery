@@ -65,10 +65,13 @@ import {
   deleteFilesWithCascade,
   deleteRawPreviews,
   deleteVariantFilesFromDisk,
+  demoteMotionFilesSync,
   demoteRawFilesSync,
   emptyRawEffects,
   fileTaskRows,
   finishRawMoves,
+  motionTaskRows,
+  reconcileMotionPairs,
   reconcileRawPairs,
   removeFacesForFiles,
 } from "../utils/file-operations.js";
@@ -76,6 +79,7 @@ import {
   hasRawOf,
   isRawCompanion,
   isRawName,
+  linkMotionPairs,
   linkRawPairs,
   rawIdsOf,
 } from "../utils/raw-pairing.js";
@@ -114,22 +118,33 @@ export const filesRouter = router({
         db.transaction(() => {
           const inserted = db.insert(FileTable).values(input).returning().all();
           const pairs = linkRawPairs(inserted.map((f) => f.id));
+          // Live Photos: a short video next to its still becomes the still's
+          // hidden motion companion (either order).
+          const motion = linkMotionPairs(
+            inserted.filter((f) => !pairs.companions.has(f.id)).map((f) => f.id),
+          );
           const rawOfPhoto = new Map([...pairs.primaryOf].map(([raw, photo]) => [photo, raw]));
+          const motionOfStill = new Map([...motion.stillOf].map(([video, still]) => [still, video]));
           const added = inserted.map((f) => ({
             ...f,
             rawFileId: rawOfPhoto.get(f.id) ?? f.rawFileId,
-            rawCompanion: pairs.companions.has(f.id),
+            motionFileId: motionOfStill.get(f.id) ?? f.motionFileId,
+            // A hidden companion (RAW or Live Photo motion): the worker makes no
+            // library or album links for it.
+            rawCompanion: pairs.companions.has(f.id) || motion.companions.has(f.id),
           }));
 
-          // Seed file tasks for downstream processing
+          // Seed file tasks for downstream processing. A motion video only
+          // needs what playback needs.
           const taskRows = added
-            .filter((f) => !f.rawCompanion)
-            .flatMap((f) => fileTaskRows(f.id, f.type));
+            .filter((f) => !pairs.companions.has(f.id))
+            .flatMap((f) => (motion.companions.has(f.id) ? motionTaskRows(f.id) : fileTaskRows(f.id, f.type)));
           for (let i = 0; i < taskRows.length; i += 500) {
             db.insert(FileTaskTable).values(taskRows.slice(i, i + 500)).run();
           }
 
           demoteRawFilesSync(pairs.primaryOf, pairs.demoted, fx);
+          demoteMotionFilesSync(motion.demoted, fx);
           return added;
         }),
       );
@@ -137,9 +152,14 @@ export const filesRouter = router({
       return addedFiles;
     }),
 
-  // Repair half-done RAW pairs (utils/file-operations.ts reconcileRawPairs).
-  // Idempotent; the worker calls it on boot.
-  reconcileRawPairs: internalProcedure.mutation(() => reconcileRawPairs()),
+  // Repair half-done RAW pairs (utils/file-operations.ts reconcileRawPairs),
+  // and pair or repair Live Photos (reconcileMotionPairs). Idempotent; the
+  // worker calls it on boot.
+  reconcileRawPairs: internalProcedure.mutation(async () => {
+    const raw = await reconcileRawPairs();
+    const motion = await reconcileMotionPairs();
+    return { ...raw, motionPaired: motion.paired, motionRepaired: motion.repaired };
+  }),
 
   getFilesInDir: internalProcedure
     .input(z.string())
@@ -661,9 +681,22 @@ export const filesRouter = router({
         raw = { name: file.name, size: file.size, paired: false };
       }
 
+      // Live Photo: the still's motion video, played through
+      // /asset/<still id>/motion. For the viewer's LIVE switch and the info panel.
+      let motion: { fileId: string; name: string } | null = null;
+      if (file.motionFileId) {
+        const [m] = await db
+          .select({ name: FileTable.name })
+          .from(FileTable)
+          .where(eq(FileTable.id, file.motionFileId))
+          .limit(1);
+        if (m) motion = { fileId: file.motionFileId, name: m.name };
+      }
+
       return {
         file,
         raw,
+        motion,
         imageMetadata: imageMetadata ?? null,
         geoLocation: geoLocation ?? null,
         people,

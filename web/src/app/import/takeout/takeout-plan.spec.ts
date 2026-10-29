@@ -86,13 +86,21 @@ describe('takeout-plan', () => {
     );
   });
 
-  it('skips HEIC, Live Photo videos, trash, non-media and empty files', () => {
-    const skip = Object.fromEntries(plan.skipped.map((s) => [s.reason, s.count]));
-    expect(skip['heic']).toBe(1);
-    // IMG_5555.MP4 pairs with an imported JPG; IMG_1234.MP4's photo is HEIC,
-    // so the video is kept, with the HEIC's JSON.
-    expect(skip['live-photo-video']).toBe(1);
+  it('imports HEIC and Live Photo videos next to their still', () => {
+    expect(byPath.get('Photos from 2020/IMG_1234.HEIC')!.type).toBe('image');
+    // Both halves of each Live Photo go to the same folder; the server pairs them.
+    for (const n of ['IMG_1234.HEIC', 'IMG_1234.MP4', 'IMG_5555.JPG', 'IMG_5555.MP4']) {
+      expect(byPath.get(`Photos from 2020/${n}`)!.target).toBe('2020');
+    }
+    expect(plan.livePhotos).toBe(2);
+    // The video uses its still's JSON.
     expect(jsonOf('Photos from 2020/IMG_1234.MP4')).toBe('Photos from 2020/IMG_1234.HEIC.supplemental-metadata.json');
+    // A long video with no still is not a Live Photo.
+    expect(byPath.has('Photos from 2020/VID_0001.mp4')).toBe(true);
+  });
+
+  it('skips the trash, non-media and empty files', () => {
+    const skip = Object.fromEntries(plan.skipped.map((s) => [s.reason, s.count]));
     expect(skip['trash']).toBe(1);
     expect(skip['empty']).toBe(1);
     expect(byPath.has('Photos from 2020/notes.txt')).toBe(false);

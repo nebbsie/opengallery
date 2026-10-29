@@ -15,7 +15,7 @@ import { logger } from "../logger.js";
 import { deleteFilesWithCascade } from "./file-operations.js";
 import { resolveAssetPath } from "./media-path.js";
 import { describeWriteError, MediaWriteError, moveToTrash, validName } from "./media-trash.js";
-import { rawIdsOf } from "./raw-pairing.js";
+import { motionIdsOf, rawIdsOf } from "./raw-pairing.js";
 
 // Edits to the library that change the media folder too: delete files and
 // folders (to the trash, see media-trash.ts) and rename folders. The disk
@@ -30,14 +30,17 @@ const underDir = (column: AnySQLiteColumn, dir: string) =>
 export type EditFailure = { id: string; name: string; reason: string };
 
 // Delete files: move each original (and, with withRaw, its RAW companion) to
-// the trash, then remove the deleted ones from the library.
+// the trash, then remove the deleted ones from the library. A Live Photo's
+// motion video always goes with its still (deleteFilesWithCascade removes its
+// row too), so it never comes back as a video of its own on the next scan.
 export async function trashFiles(
   fileIds: string[],
   deletedBy: string | null,
   opts: { withRaw: boolean } = { withRaw: true },
 ): Promise<{ deleted: number; failed: EditFailure[] }> {
   const raws = opts.withRaw ? rawIdsOf(fileIds) : new Map<string, string>();
-  const ids = [...new Set([...fileIds, ...raws.values()])];
+  const motions = motionIdsOf(fileIds);
+  const ids = [...new Set([...fileIds, ...raws.values(), ...motions.values()])];
   if (ids.length === 0) return { deleted: 0, failed: [] };
   const rows = await db
     .select({ id: FileTable.id, dir: FileTable.dir, name: FileTable.name })
@@ -54,10 +57,11 @@ export async function trashFiles(
       failed.push({ id: f.id, name: f.name, reason: describeWriteError(e) });
     }
   }
-  // A photo whose RAW could not move keeps both, so the pair stays whole.
+  // A photo whose RAW or motion video could not move keeps both, so the pair
+  // stays whole.
   const failedIds = new Set(failed.map((f) => f.id));
   const keep = new Set<string>();
-  for (const [photo, raw] of raws) {
+  for (const [photo, raw] of [...raws, ...motions]) {
     if (failedIds.has(photo) || failedIds.has(raw)) {
       keep.add(photo);
       keep.add(raw);
