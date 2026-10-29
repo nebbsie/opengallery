@@ -410,7 +410,11 @@ export const FileEmbeddingTable = sqliteTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("file_embedding_model_idx").on(t.model)],
+  (t) => [
+    index("file_embedding_model_idx").on(t.model),
+    // The CLIP index finds the newest model with ORDER BY updatedAt DESC.
+    index("file_embedding_updated_idx").on(t.updatedAt),
+  ],
 );
 
 // "This face is not that person": a user answer. Regrouping and live matching

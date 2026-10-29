@@ -37,6 +37,9 @@ import {
 import { backfillLargeThumbnails } from "./routers/files.router.js";
 import { uploadRoutes } from "./uploads/upload-routes.js";
 import { startUploadCleanup } from "./uploads/upload-store.js";
+import { getClipIndex } from "./clip/clip-index.js";
+import { getLibraryIndex, resolveCurrentModel } from "./faces/face-index.js";
+import { LibraryTable } from "./db/schema.js";
 import { wsManager } from "./ws-manager.js";
 
 const server: FastifyInstance = Fastify();
@@ -591,10 +594,31 @@ const start = async () => {
         })
         .catch((e) => logger.warn("[thumbs] backfill failed", e as Error));
     }, 15_000);
+
+    // Build the face and CLIP indexes in the background. Each reads its whole
+    // table (the face table is ~160 MB of vectors), and on a cold start the
+    // first upload, face review or search paid 1.5-5 s for it.
+    setTimeout(() => {
+      void warmIndexes();
+    }, 20_000);
   } catch (err) {
     logger.error("Failed to start server:", err as Error);
     process.exit(1);
   }
 };
+
+async function warmIndexes(): Promise<void> {
+  const t0 = Date.now();
+  try {
+    const model = await resolveCurrentModel();
+    for (const { id } of await db.select({ id: LibraryTable.id }).from(LibraryTable)) {
+      await getLibraryIndex(id, model);
+    }
+    await getClipIndex();
+    logger.info(`[warm] face and CLIP indexes ready in ${Date.now() - t0}ms`);
+  } catch (e) {
+    logger.warn("[warm] index warm-up failed", e as Error);
+  }
+}
 
 start();

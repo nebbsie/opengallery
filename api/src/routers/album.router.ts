@@ -86,33 +86,6 @@ function recursiveItemCount(
   return seen.size;
 }
 
-// Totals over the distinct viewable files of an album's subtree, for the album
-// list sort: bytes, newest import (file created_at) and newest taken date.
-type FileFacts = { size: number; createdAt: string; takenAt: string | null };
-function subtreeStats(
-  albumId: string,
-  directFilesByAlbum: Map<string, Set<string>>,
-  childrenByParent: Map<string, string[]>,
-  facts: Map<string, FileFacts>,
-): { size: number; lastAddedAt: string | null; lastTakenAt: string | null } {
-  const seen = new Set<string>();
-  let size = 0;
-  let lastAddedAt: string | null = null;
-  let lastTakenAt: string | null = null;
-  for (const id of collectSubtree(albumId, childrenByParent)) {
-    for (const f of directFilesByAlbum.get(id) ?? []) {
-      if (seen.has(f)) continue;
-      seen.add(f);
-      const fact = facts.get(f);
-      if (!fact) continue;
-      size += fact.size;
-      if (!lastAddedAt || fact.createdAt > lastAddedAt) lastAddedAt = fact.createdAt;
-      if (fact.takenAt && (!lastTakenAt || fact.takenAt > lastTakenAt)) lastTakenAt = fact.takenAt;
-    }
-  }
-  return { size, lastAddedAt, lastTakenAt };
-}
-
 // First photo and first video (both with a thumbnail) of each album, keyed by
 // album id. A video's thumbnail is its poster frame.
 type CoverCandidates = Map<string, { image: string | null; video: string | null }>;
@@ -387,16 +360,21 @@ export const albumRouter = router({
       }
       const subtreeIdList = [...subtreeIds];
 
-      // Direct (viewable) files per album, summed distinct-per-root below.
-      // JOINs on the unique (original_file_id, type) index are faster than
-      // correlated EXISTS subqueries over the same rows.
-      const itemRows = await db
+      // Per album, in one grouped scan: the viewable files (both variants
+      // ready), their total size, newest import and newest date, and the first
+      // photo and video with a thumbnail for the cover fallback. A file sits in
+      // one album only (albums are folders), so the per-album totals add up
+      // over a subtree with no double counting. Reading one row per album
+      // instead of one per file took this from ~400 ms to a few ms on prod.
+      const aggRows = await db
         .select({
           albumId: AlbumFileTable.albumId,
-          fileId: AlbumFileTable.fileId,
-          size: FileTable.size,
-          createdAt: FileTable.createdAt,
-          takenAt: FileTable.takenAt,
+          items: sql<number>`COUNT(${fvOpt.id})`,
+          size: sql<number>`COALESCE(SUM(CASE WHEN ${fvOpt.id} IS NOT NULL THEN ${FileTable.size} END), 0)`,
+          lastAddedAt: sql<string | null>`MAX(CASE WHEN ${fvOpt.id} IS NOT NULL THEN ${FileTable.createdAt} END)`,
+          lastTakenAt: sql<string | null>`MAX(CASE WHEN ${fvOpt.id} IS NOT NULL THEN ${FileTable.takenAt} END)`,
+          image: coverSelect.image,
+          video: coverSelect.video,
         })
         .from(AlbumFileTable)
         .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
@@ -404,7 +382,7 @@ export const albumRouter = router({
           fvThumb,
           and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
         )
-        .innerJoin(
+        .leftJoin(
           fvOpt,
           and(eq(fvOpt.originalFileId, FileTable.id), eq(fvOpt.type, "optimised")),
         )
@@ -413,49 +391,28 @@ export const albumRouter = router({
             inArray(AlbumFileTable.albumId, subtreeIdList),
             buildFileAccessFilter(accessScope, FileTable.id),
           ),
-        );
-      const directFilesByAlbum = new Map<string, Set<string>>();
-      const facts = new Map<string, FileFacts>();
-      for (const r of itemRows) {
-        if (!facts.has(r.fileId)) {
-          facts.set(r.fileId, { size: r.size ?? 0, createdAt: r.createdAt, takenAt: r.takenAt });
-        }
-        let set = directFilesByAlbum.get(r.albumId);
-        if (!set) {
-          set = new Set();
-          directFilesByAlbum.set(r.albumId, set);
-        }
-        set.add(r.fileId);
-      }
-      const itemsByAlbum: Record<string, number> = {};
-      const statsByAlbum: Record<string, ReturnType<typeof subtreeStats>> = {};
-      for (const rootId of albumIds) {
-        itemsByAlbum[rootId] = recursiveItemCount(
-          rootId,
-          directFilesByAlbum,
-          childrenByParent,
-        );
-        statsByAlbum[rootId] = subtreeStats(rootId, directFilesByAlbum, childrenByParent, facts);
-      }
-
-      // First direct photo and video per album, for the cover fallback that walks the
-      // subtree when an album has no explicit cover and no direct photo.
-      const coverRows = await db
-        .select(coverSelect)
-        .from(AlbumFileTable)
-        .innerJoin(FileTable, eq(FileTable.id, AlbumFileTable.fileId))
-        .innerJoin(
-          fvThumb,
-          and(eq(fvThumb.originalFileId, FileTable.id), eq(fvThumb.type, "thumbnail")),
-        )
-        .where(
-          and(
-            inArray(AlbumFileTable.albumId, subtreeIdList),
-            buildFileAccessFilter(accessScope, FileTable.id),
-          ),
         )
         .groupBy(AlbumFileTable.albumId);
-      const firstImageByAlbum = coverCandidates(coverRows);
+      const aggByAlbum = new Map(aggRows.map((r) => [r.albumId, r]));
+      const itemsByAlbum: Record<string, number> = {};
+      const statsByAlbum: Record<string, { size: number; lastAddedAt: string | null; lastTakenAt: string | null }> = {};
+      for (const rootId of albumIds) {
+        let items = 0;
+        let size = 0;
+        let lastAddedAt: string | null = null;
+        let lastTakenAt: string | null = null;
+        for (const id of collectSubtree(rootId, childrenByParent)) {
+          const g = aggByAlbum.get(id);
+          if (!g) continue;
+          items += Number(g.items);
+          size += Number(g.size);
+          if (g.lastAddedAt && (!lastAddedAt || g.lastAddedAt > lastAddedAt)) lastAddedAt = g.lastAddedAt;
+          if (g.lastTakenAt && (!lastTakenAt || g.lastTakenAt > lastTakenAt)) lastTakenAt = g.lastTakenAt;
+        }
+        itemsByAlbum[rootId] = items;
+        statsByAlbum[rootId] = { size, lastAddedAt, lastTakenAt };
+      }
+      const firstImageByAlbum = coverCandidates(aggRows);
 
       // Pending encode tasks, also rolled up distinct-per-root across the subtree.
       // Outstanding file ids come off file_task_queue_idx (queued) and
@@ -479,13 +436,16 @@ export const albumRouter = router({
         .from(AlbumFileTable)
         .where(
           and(
-            inArray(AlbumFileTable.albumId, subtreeIdList),
+            // Start from the few outstanding files (album_file_file_id_idx);
+            // a filter on all the subtree album ids made SQLite walk every
+            // album's links instead. The album filter is applied below.
             inArray(AlbumFileTable.fileId, outstandingFileIds),
             buildFileAccessFilter(accessScope, AlbumFileTable.fileId),
           ),
         );
       const pendingFilesByAlbum = new Map<string, Set<string>>();
       for (const r of pendingRows) {
+        if (!subtreeIds.has(r.albumId)) continue;
         let set = pendingFilesByAlbum.get(r.albumId);
         if (!set) {
           set = new Set();
