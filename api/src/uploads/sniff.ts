@@ -94,7 +94,10 @@ export function sniffMedia(head: Buffer, fileName: string): SniffResult {
   if (head.length >= 12 && ascii(head, 4, 8) === "ftyp") {
     const brand = ascii(head, 8, 12);
     if (["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"].includes(brand)) {
-      return { ok: false, reason: "HEIC photos are not supported yet. Upload a JPEG" };
+      // iPhone photos. The worker decodes them with ffmpeg (worker utils/raw.ts).
+      return brand.startsWith("he")
+        ? media("image", "heic", "image/heic")
+        : media("image", "heif", "image/heif");
     }
     if (brand === "avif" || brand === "avis") {
       return { ok: false, reason: "AVIF images are not supported yet" };

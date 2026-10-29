@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { getVideoMetadata } from '../utils/ffprobe.js';
 import { logger } from '../utils/logger.js';
-import { isRawName } from '../utils/media-types.js';
+import { needsPreview } from '../utils/media-types.js';
 import { getRawPreview, NoRawPreviewError } from '../utils/raw.js';
 import { toContainerPath } from '../utils/paths.js';
 import { trpc } from '../utils/trpc.js';
@@ -129,7 +129,7 @@ export async function detectFaces(fileId: string): Promise<void> {
     if (file.type === 'image') {
       // A camera RAW is read through its embedded JPEG preview (utils/raw.ts).
       const frame = await imageFrame(
-        isRawName(file.name) ? await getRawPreview(file, variantsPath) : sourcePath,
+        needsPreview(file.name) ? await getRawPreview(file, variantsPath) : sourcePath,
       );
       const result = await detectFacesRemote(frame.jpeg);
       model = result.model;

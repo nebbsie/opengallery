@@ -2,7 +2,10 @@ import { extname } from 'node:path';
 
 export type MediaType = 'image' | 'video';
 
-export const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff']);
+export const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'heic', 'heif']);
+// HEIC/HEIF (iPhone photos). sharp's libvips has no HEVC decoder, so these are
+// decoded with ffmpeg into a cached JPEG, like a RAW's preview (utils/raw.ts).
+export const HEIC_EXTENSIONS = new Set(['heic', 'heif']);
 // Camera RAW. Imported as photos: a RAW with a photo of the same name in the
 // same folder becomes that photo's hidden companion (API utils/raw-pairing.ts),
 // a RAW on its own shows through its embedded JPEG preview (utils/raw.ts).
@@ -42,6 +45,15 @@ export function rawMime(ext: string): string | null {
 
 export function isRawName(name: string): boolean {
   return RAW_EXTENSIONS.has(extname(name).slice(1).toLowerCase());
+}
+
+export function isHeicName(name: string): boolean {
+  return HEIC_EXTENSIONS.has(extname(name).slice(1).toLowerCase());
+}
+
+// A photo libvips cannot decode: read through a cached JPEG (getRawPreview).
+export function needsPreview(name: string): boolean {
+  return isRawName(name) || isHeicName(name);
 }
 
 export function isSupportedFile(name: string): boolean {

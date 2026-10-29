@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import sharp from 'sharp';
 import { logger } from './logger.js';
+import { isHeicName } from './media-types.js';
 import { toContainerPath } from './paths.js';
 
 // Camera RAW files (media-types.ts RAW_EXTENSIONS). libvips cannot decode
@@ -20,6 +21,8 @@ const EXIFTOOL_TIMEOUT_MS = 2 * 60 * 1000;
 // JSON with base64 previews; a full-size preview is a few MB.
 const EXIFTOOL_MAX_BYTES = 256 * 1024 * 1024;
 const PREVIEW_QUALITY = 92;
+// One HEIC decode; a 12 MP grid takes about a second.
+const HEIC_DECODE_TIMEOUT_MS = 2 * 60 * 1000;
 
 // Thrown only when exiftool read the RAW without an error and found tags but
 // no embedded preview. The callers mark the task skipped: retrying cannot
@@ -225,6 +228,39 @@ export function rawPreviewPath(
 const inFlight = new Map<string, Promise<string>>();
 
 /**
+ * Decode a HEIC/HEIF to PNG with ffmpeg (it joins the tile grid). Rotation is
+ * left off and the EXIF orientation applied later, as for a JPEG: Apple and
+ * Samsung write the same turn in EXIF as in the HEIF "irot" box. A decode
+ * error is thrown as a plain Error, so the task is retried.
+ */
+async function decodeHeic(path: string): Promise<{ preview: Buffer | null; tags: RawTags }> {
+  const tags = await readRawTags(path);
+  const preview = await new Promise<Buffer>((resolve, reject) => {
+    const child = spawn(
+      'ffmpeg',
+      ['-v', 'error', '-noautorotate', '-i', path, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), HEIC_DECODE_TIMEOUT_MS);
+    child.stdout.on('data', (d: Buffer) => chunks.push(d));
+    child.stderr.on('data', (d) => (stderr = (stderr + String(d)).slice(-2000)));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const buf = Buffer.concat(chunks);
+      if (code === 0 && buf.length > 0) resolve(buf);
+      else reject(new Error(`ffmpeg could not decode the HEIC (code ${code}): ${stderr.trim()}`));
+    });
+  });
+  return { preview, tags };
+}
+
+/**
  * Path of an upright JPEG for a RAW file: the embedded preview with the RAW's
  * orientation applied (no orientation tag left, so a later .rotate() is a
  * no-op). Extracted once and cached. Throws NoRawPreviewError when the RAW has
@@ -241,7 +277,9 @@ export function getRawPreview(
 
   const job = (async () => {
     const source = toContainerPath(join(file.dir, file.name));
-    const { preview, tags } = await readRawPreview(source);
+    const { preview, tags } = isHeicName(file.name)
+      ? await decodeHeic(source)
+      : await readRawPreview(source);
     if (!preview) throw new NoRawPreviewError(`No embedded preview in ${file.name}`);
     const data = await applyOrientation(sharp(preview, { failOn: 'none' }), tags.Orientation ?? 1)
       .jpeg({ quality: PREVIEW_QUALITY })

@@ -7,7 +7,7 @@ import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
 import { validateCamera } from '../utils/camera-validator.js';
 import { getExifInfo } from '../utils/exif.js';
-import { isRawName } from '../utils/media-types.js';
+import { isRawName, needsPreview } from '../utils/media-types.js';
 import { getRawPreview, NoRawPreviewError } from '../utils/raw.js';
 import { getVideoMetadata } from '../utils/ffprobe.js';
 import { throttleIo } from '../utils/io-throttle.js';
@@ -191,9 +191,10 @@ async function encodeImage(
   const hostPath = join(file.dir, file.name);
   const originalPath = toContainerPath(hostPath);
   const fileId = file.id;
-  // A camera RAW is decoded from its embedded JPEG preview (already upright);
-  // its tags still come from the RAW itself.
-  const isRaw = isRawName(file.name);
+  // A camera RAW is decoded from its embedded JPEG preview, a HEIC from an
+  // ffmpeg decode (both cached and already upright); the tags still come from
+  // the original file.
+  const isRaw = needsPreview(file.name);
   let path = originalPath;
   if (isRaw) {
     try {
@@ -413,7 +414,7 @@ async function encodeImage(
     height: rawHeight,
   } = exif;
   // A RAW's preview can be smaller than the sensor: store the real size.
-  if (isRaw && rawWidth && rawHeight) {
+  if (isRawName(file.name) && rawWidth && rawHeight) {
     width = rawWidth;
     height = rawHeight;
   }

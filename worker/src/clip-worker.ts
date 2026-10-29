@@ -5,7 +5,7 @@ import { faceServiceHealthy } from './face-detection/face-client.js';
 import { videoFrameAt } from './face-detection/detect.js';
 import { getVideoMetadata } from './utils/ffprobe.js';
 import { logger } from './utils/logger.js';
-import { isRawName } from './utils/media-types.js';
+import { needsPreview } from './utils/media-types.js';
 import { getRawPreview, NoRawPreviewError } from './utils/raw.js';
 import { toContainerPath } from './utils/paths.js';
 import { trpc } from './utils/trpc.js';
@@ -38,7 +38,7 @@ async function frameFor(file: {
 }): Promise<Buffer | null> {
   const path = toContainerPath(join(file.dir, file.name));
   let source: Buffer | string = path;
-  if (file.type === 'image' && isRawName(file.name)) {
+  if (file.type === 'image' && needsPreview(file.name)) {
     // A camera RAW is read through its embedded JPEG preview (utils/raw.ts),
     // usually cached by the encode step already.
     const settings = await trpc.settings.get.query();
