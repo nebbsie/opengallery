@@ -160,6 +160,7 @@ async function encodeLargeThumbOnly(
         mime: 'image/avif',
         size: data.length,
         quality,
+        rotation: file.rotation ?? 0,
       },
     ],
   });
@@ -191,6 +192,8 @@ async function encodeImage(
   const hostPath = join(file.dir, file.name);
   const originalPath = toContainerPath(hostPath);
   const fileId = file.id;
+  // Turn the user asked for, clockwise, on top of the EXIF orientation.
+  const turn = file.rotation ?? 0;
   // A camera RAW is decoded from its embedded JPEG preview, a HEIC from an
   // ffmpeg decode (both cached and already upright); the tags still come from
   // the original file.
@@ -226,6 +229,10 @@ async function encodeImage(
     if ((metadata.orientation ?? 1) >= 5) {
       [width, height] = [height, width];
     }
+    // A quarter turn the user asked for (file.rotation) swaps them again.
+    if (turn % 180 === 90) {
+      [width, height] = [height, width];
+    }
   } catch (e) {
     logger.warn(`[encode:image] metadata read failed for id=${fileId}`, e as Error);
   }
@@ -236,7 +243,8 @@ async function encodeImage(
   let blurhash: string | null = null;
   try {
     const smallImg = await openImage(path)
-      .rotate()
+      .autoOrient()
+      .rotate(turn)
       .resize(32, 32, { fit: 'inside' })
       .ensureAlpha()
       .raw()
@@ -293,13 +301,15 @@ async function encodeImage(
     // source factory is swapped to a repaired in-memory buffer on the fallback.
     const renderThumb = (src: () => sharp.Sharp) =>
       src()
-        .rotate()
+        .autoOrient()
+        .rotate(turn)
         .resize({ width: 320, height: 320, fit: 'cover', withoutEnlargement: true })
         .avif({ quality: thumbQuality, effort: 4 })
         .toBuffer({ resolveWithObject: true });
     const renderOpt = (src: () => sharp.Sharp) =>
       src()
-        .rotate()
+        .autoOrient()
+        .rotate(turn)
         .resize({ width: 4096, height: 4096, fit: 'inside', withoutEnlargement: true })
         .avif({ quality: optQuality, effort: 3 })
         .toBuffer({ resolveWithObject: true });
@@ -373,6 +383,7 @@ async function encodeImage(
               mime: 'image/avif',
               size: lg.length,
               quality: thumbQuality,
+              rotation: turn,
             },
           ]
         : []),
@@ -384,6 +395,7 @@ async function encodeImage(
         mime: 'image/avif',
         size: thumb.data.length,
         quality: thumbQuality,
+        rotation: turn,
       },
       {
         type: 'optimised',
@@ -393,6 +405,7 @@ async function encodeImage(
         mime: 'image/avif',
         size: opt.data.length,
         quality: optQuality,
+        rotation: turn,
       },
     ],
   });
@@ -479,8 +492,13 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
   // If both required variants exist in DB and quality matches, skip encoding
   const hasThumb = !!fileResult.thumbnail;
   const hasOpt = !!fileResult.optimized;
-  const thumbQualityMatches = fileResult.thumbnail?.quality === thumbQuality;
-  const optQualityMatches = fileResult.optimized?.quality === optQuality;
+  // A variant made with another rotation than the photo has now (edit.rotateFiles)
+  // counts as a quality change: encode again.
+  const turn = file.rotation ?? 0;
+  const thumbQualityMatches =
+    fileResult.thumbnail?.quality === thumbQuality && (fileResult.thumbnail?.rotation ?? 0) === turn;
+  const optQualityMatches =
+    fileResult.optimized?.quality === optQuality && (fileResult.optimized?.rotation ?? 0) === turn;
 
   if (file.type === 'image' && hasThumb && hasOpt && thumbQualityMatches && optQualityMatches) {
     // Older files have no large grid thumbnail; the API backfill re-queues
@@ -558,8 +576,9 @@ export async function encode(fileId: string): Promise<EncodeResult | null> {
           existingVariants = {
             thumbPath,
             optPath,
-            thumbQuality: fileResult.thumbnail?.quality ?? undefined,
-            optQuality: fileResult.optimized?.quality ?? undefined,
+            // Files made with another rotation are not reused.
+            thumbQuality: thumbQualityMatches ? (fileResult.thumbnail?.quality ?? undefined) : undefined,
+            optQuality: optQualityMatches ? (fileResult.optimized?.quality ?? undefined) : undefined,
           };
         }
       }

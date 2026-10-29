@@ -15,6 +15,7 @@ import {
   viewChild,
 } from '@angular/core';
 import { environment } from '@env/environment';
+import { RotationService } from '@core/services/rotation/rotation';
 import { FaceOverlay } from './face-overlay';
 import { containRect, TAP_ZOOM, ZoomPan } from './zoom-pan';
 
@@ -28,6 +29,8 @@ export interface StageSlot {
   /** Size from the metadata, used until the thumbnail tells us the real one. */
   width: number | null;
   height: number | null;
+  /** Clockwise turn the user gave the photo (file.rotation). */
+  rotation: number;
 }
 
 type Gesture = 'none' | 'pending' | 'ignored' | 'swipe' | 'dismiss' | 'swipe-up' | 'pan' | 'pinch';
@@ -96,50 +99,58 @@ const DISPLAYABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif
             } @else {
               <!-- The grid thumbnail is in the browser cache, so it shows at once at
                    full size. The large image fades in over it when it has loaded. -->
-              <img
-                [src]="apiUrl + '/asset/' + slot.id + '/thumbnail'"
-                alt=""
-                draggable="false"
-                decoding="async"
-                class="absolute inset-0 h-full w-full object-contain"
-                [style.visibility]="isLoaded(optimisedUrl(slot.id)) ? 'hidden' : 'visible'"
-                [style.transition]="'visibility 0s linear 250ms'"
-                (load)="onNatural(slot.id, $event)"
-              />
-              @if (slot.type === 'image') {
+              <!-- While a rotate is encoded the old variant is turned by CSS, in a
+                   box with width and height swapped for a quarter turn. -->
+              <div class="absolute" [style]="turnBox(slot.id)">
                 <img
-                  [src]="optimisedUrl(slot.id)"
-                  [alt]="slot.pos === 0 ? alt() : ''"
+                  [src]="thumbUrl(slot)"
+                  alt=""
                   draggable="false"
                   decoding="async"
-                  class="absolute inset-0 h-full w-full object-contain transition-opacity duration-200 ease-out"
-                  [class.opacity-0]="!isLoaded(optimisedUrl(slot.id))"
-                  (load)="markLoaded(optimisedUrl(slot.id))"
+                  class="absolute inset-0 h-full w-full object-contain"
+                  [style.visibility]="isLoaded(optimisedUrl(slot)) ? 'hidden' : 'visible'"
+                  [style.transition]="'visibility 0s linear 250ms'"
+                  (load)="onNatural(slot.id, $event)"
                 />
-                @if (slot.pos === 0 && showOriginal()) {
+                @if (slot.type === 'image') {
                   <img
-                    [src]="originalUrl(slot.id)"
-                    alt=""
+                    [src]="optimisedUrl(slot)"
+                    [alt]="slot.pos === 0 ? alt() : ''"
                     draggable="false"
                     decoding="async"
                     class="absolute inset-0 h-full w-full object-contain transition-opacity duration-200 ease-out"
-                    [class.opacity-0]="!isLoaded(originalUrl(slot.id))"
-                    (load)="markLoaded(originalUrl(slot.id))"
+                    [class.opacity-0]="!isLoaded(optimisedUrl(slot))"
+                    (load)="markLoaded(optimisedUrl(slot))"
                   />
+                  @if (slot.pos === 0 && showOriginal()) {
+                    <img
+                      [src]="originalUrl(slot.id)"
+                      alt=""
+                      draggable="false"
+                      decoding="async"
+                      class="absolute inset-0 h-full w-full object-contain transition-opacity duration-200 ease-out"
+                      [class.opacity-0]="!isLoaded(originalUrl(slot.id))"
+                      (load)="markLoaded(originalUrl(slot.id))"
+                    />
+                  }
                 }
-                @if (slot.pos === 0 && motionUrl() && motionPlaying()) {
-                  <!-- Live Photo: the motion video plays once over the still,
-                       muted, then the still shows again. -->
-                  <video
-                    [src]="motionUrl()"
-                    class="pointer-events-none absolute inset-0 h-full w-full object-contain"
-                    muted
-                    playsInline
-                    autoplay
-                    (ended)="motionPlaying.set(false)"
-                    (error)="motionPlaying.set(false)"
-                  ></video>
-                }
+              </div>
+              @if (slot.type === 'image' && slot.pos === 0 && motionUrl() && liveOn()) {
+                <!-- Live Photo with Live on: the motion video loops over the
+                     still, muted and without controls. It stays invisible until
+                     it plays, so there is no black frame. -->
+                <video
+                  [src]="motionUrl()"
+                  class="pointer-events-none absolute inset-0 h-full w-full object-contain transition-opacity duration-300 ease-out"
+                  [class.opacity-0]="!motionReady()"
+                  muted
+                  loop
+                  playsInline
+                  autoplay
+                  disablePictureInPicture
+                  (playing)="motionReady.set(true)"
+                  (error)="motionReady.set(false)"
+                ></video>
               }
             }
           </div>
@@ -171,8 +182,12 @@ export class ViewerStage {
   readonly tagMode = model(false);
   /** Live Photo video of the current still, or null. */
   readonly motionUrl = input<string | null>(null);
-  /** True while the motion video plays; it sets itself back when it ends. */
-  readonly motionPlaying = model(false);
+  /** Live on: the motion video loops over the still. Off: the still only. */
+  readonly liveOn = input(false);
+  /** True once the motion video plays (it fades in over the still). */
+  protected readonly motionReady = signal(false);
+
+  private readonly rotation = inject(RotationService);
 
   readonly navigate = output<'prev' | 'next'>();
   readonly dismiss = output<void>();
@@ -229,7 +244,14 @@ export class ViewerStage {
 
   protected readonly showOriginal = computed(() => {
     const cur = this.current();
-    return this.originalWanted() && !!cur?.mime && DISPLAYABLE.has(cur.mime);
+    // The original's pixels are not turned: a turned photo stays on its variant.
+    return (
+      this.originalWanted() &&
+      !!cur?.mime &&
+      DISPLAYABLE.has(cur.mime) &&
+      !cur.rotation &&
+      !this.rotation.turn(cur.id)
+    );
   });
 
   protected readonly overlayVisible = computed(
@@ -237,6 +259,8 @@ export class ViewerStage {
       this.showFaces() &&
       this.isImage() &&
       !!this.currentId() &&
+      // The faces are being found again on the turned pixels.
+      !this.rotation.turn(this.currentId()!) &&
       this.offset() === 0 &&
       this.dragY() === 0 &&
       !this.closing(),
@@ -275,6 +299,14 @@ export class ViewerStage {
   private readonly destroyRef = inject(DestroyRef);
 
   constructor() {
+    // A new photo, or Live switched: show the still until the video plays.
+    effect(() => {
+      this.currentId();
+      this.motionUrl();
+      this.liveOn();
+      untracked(() => this.motionReady.set(false));
+    });
+
     // New current item: back to 1x, track centred, no slide animation for the
     // jump (the track already shows the new item where it needs to be).
     effect(() => {
@@ -334,8 +366,32 @@ export class ViewerStage {
     });
   }
 
-  protected optimisedUrl(id: string): string {
-    return `${this.apiUrl}/asset/${id}/optimised`;
+  protected thumbUrl(slot: StageSlot): string {
+    return this.rotation.variantUrl(slot.id, 'thumbnail', slot.rotation);
+  }
+
+  protected optimisedUrl(slot: StageSlot): string {
+    return this.rotation.variantUrl(slot.id, 'optimised', slot.rotation);
+  }
+
+  // Box of the images: the whole stage, or for a pending quarter turn a box
+  // with width and height swapped, turned around its centre to fill the stage.
+  protected turnBox(id: string): Record<string, string> {
+    const turn = this.rotation.turn(id);
+    if (!turn) return { inset: '0' };
+    const w = this.vw();
+    const h = this.vh();
+    const quarter = Math.abs(turn) % 180 === 90;
+    const bw = quarter ? h : w;
+    const bh = quarter ? w : h;
+    return {
+      width: `${bw}px`,
+      height: `${bh}px`,
+      left: `${(w - bw) / 2}px`,
+      top: `${(h - bh) / 2}px`,
+      transform: `rotate(${turn}deg)`,
+      transition: 'transform 200ms ease-out',
+    };
   }
 
   protected originalUrl(id: string): string {

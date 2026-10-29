@@ -24,6 +24,8 @@ export async function createFaceCrop(opts: {
   source: string | Buffer;
   box: NormalizedBox;
   variantsPath: string;
+  // Clockwise turn the user asked for (file.rotation); a path source only.
+  turn?: number;
 }): Promise<{ cropDir: string; cropName: string } | null> {
   const { faceId, source, box, variantsPath } = opts;
   try {
@@ -32,7 +34,8 @@ export async function createFaceCrop(opts: {
     const { data, info } =
       typeof source === 'string'
         ? await sharp(source, { failOn: 'none' })
-            .rotate()
+            .autoOrient()
+            .rotate(opts.turn ?? 0)
             .resize({ width: DECODE_MAX, height: DECODE_MAX, fit: 'inside', withoutEnlargement: true })
             .toBuffer({ resolveWithObject: true })
         : await sharp(source, { failOn: 'none' }).toBuffer({ resolveWithObject: true });

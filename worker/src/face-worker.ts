@@ -4,6 +4,8 @@ import { detectFaces } from './face-detection/detect.js';
 import { createFaceCrop } from './face-detection/face-crop.js';
 import { faceServiceHealthy } from './face-detection/face-client.js';
 import { logger } from './utils/logger.js';
+import { needsPreview } from './utils/media-types.js';
+import { getRawPreview } from './utils/raw.js';
 import { toContainerPath } from './utils/paths.js';
 import { trpc } from './utils/trpc.js';
 
@@ -30,10 +32,14 @@ async function backfillCrops(): Promise<void> {
         const file = fileResult.raw;
         // Video faces come from a frame; their crop is made at detection time.
         if (file.type !== 'image') continue;
-        const sourcePath = toContainerPath(join(file.dir, file.name));
+        // RAW and HEIC are read through their cached JPEG (utils/raw.ts).
+        const sourcePath = needsPreview(file.name)
+          ? await getRawPreview(file, variantsPath)
+          : toContainerPath(join(file.dir, file.name));
         const crop = await createFaceCrop({
           faceId: f.faceId,
           source: sourcePath,
+          turn: file.rotation ?? 0,
           box: { x: f.boxX, y: f.boxY, width: f.boxW, height: f.boxH },
           variantsPath,
         });

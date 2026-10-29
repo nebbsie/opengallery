@@ -11,8 +11,8 @@ import { Router } from '@angular/router';
 import { BlurhashCanvas } from '@core/components/blurhash-canvas/blurhash-canvas';
 import { GRID_CELL } from '@core/components/virtual-thumbnail-grid/grid-layout';
 import { PrefetchService } from '@core/services/prefetch/prefetch';
+import { RotationService } from '@core/services/rotation/rotation';
 import { GridSelection } from '@core/services/selection/grid-selection';
-import { environment } from '@env/environment';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCheck, lucideCirclePause, lucideCirclePlay } from '@ng-icons/lucide';
 import { HlmIcon } from '@spartan-ng/helm/icon';
@@ -24,6 +24,8 @@ export interface ThumbnailAsset {
   takenAt?: Date | string | null;
   // Has a camera RAW (RAW + JPEG pair) or is one.
   hasRaw?: boolean;
+  // Clockwise turn the user gave the photo (file.rotation).
+  rotation?: number | null;
 }
 
 const LONG_PRESS_MS = 450;
@@ -97,6 +99,7 @@ const altDate = new Intl.DateTimeFormat(undefined, {
           [attr.sizes]="justified() ? null : sizes()"
           [attr.srcset]="justified() ? null : smallUrl() + ' 320w, ' + largeUrl() + ' 640w'"
           [src]="justified() ? largeUrl() : smallUrl()"
+          [style.transform]="turn() ? 'rotate(' + turn() + 'deg)' : null"
           [alt]="alt()"
           width="400"
           height="400"
@@ -150,9 +153,9 @@ const altDate = new Intl.DateTimeFormat(undefined, {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AssetThumbnail implements OnDestroy {
-  protected readonly apiUrl = environment.api.url;
   protected readonly imageLoaded = signal(false);
   private readonly prefetch = inject(PrefetchService);
+  private readonly rotation = inject(RotationService);
   private readonly router = inject(Router);
   protected readonly selection = inject(GridSelection, { optional: true });
   private readonly cell = inject(GRID_CELL, { optional: true });
@@ -174,10 +177,14 @@ export class AssetThumbnail implements OnDestroy {
     () => !!this.selection && this.selection.ids().has(this.asset().id),
   );
 
-  protected readonly smallUrl = computed(() => `${this.apiUrl}/asset/${this.asset().id}/thumbnail`);
-  protected readonly largeUrl = computed(
-    () => `${this.apiUrl}/asset/${this.asset().id}/thumbnail_lg`,
+  protected readonly smallUrl = computed(() =>
+    this.rotation.variantUrl(this.asset().id, 'thumbnail', this.asset().rotation),
   );
+  protected readonly largeUrl = computed(() =>
+    this.rotation.variantUrl(this.asset().id, 'thumbnail_lg', this.asset().rotation),
+  );
+  // While a turn is being encoded, the old thumbnail is turned by CSS.
+  protected readonly turn = computed(() => this.rotation.turn(this.asset().id));
 
   // The browser picks 320w or 640w from this and the screen density.
   protected readonly sizes = computed(() => {

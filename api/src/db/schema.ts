@@ -103,6 +103,10 @@ export const FileTable = sqliteTable(
     // rows, only its encode tasks so it can play in the viewer. Kept in sync
     // by utils/raw-pairing.ts (linkMotionPairs).
     motionFileId: text("motion_file_id"),
+    // Turn the user asked for, clockwise degrees (0, 90, 180, 270), on top of
+    // the EXIF orientation. Variants, faces and search are rebuilt from it
+    // (edit.rotateFiles); the original file on disk is not changed.
+    rotation: integer("rotation").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -218,6 +222,10 @@ export const FileVariantTable = sqliteTable(
       .notNull()
       .references(() => FileTable.id),
     quality: integer("quality"),
+    // The original's rotation this variant was made with. When it differs
+    // from file.rotation the variant is stale: the worker encodes it again and
+    // the asset route does not let browsers cache it.
+    rotation: integer("rotation").notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

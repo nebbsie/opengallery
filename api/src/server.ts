@@ -5,7 +5,7 @@ import {
   type FastifyTRPCPluginOptions,
 } from "@trpc/server/adapters/fastify";
 import "dotenv/config";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import Fastify, { type FastifyInstance } from "fastify";
 import * as fs from "node:fs";
 import path from "path";
@@ -148,10 +148,18 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
       .send({ error: "Variant must be thumbnail | thumbnail_lg | optimised | raw | motion" });
   }
 
-  const variantFile = async (type: string) =>
-    (
+  // A variant made before the photo was rotated (file_variant.rotation is not
+  // the original's rotation now) is served, but not cached: the worker is
+  // encoding it again, and the web asks for it under the same ?r= URL.
+  let staleVariant = false;
+  const variantFile = async (type: string) => {
+    const row = (
       await db
-        .select({ file: FileTable })
+        .select({
+          file: FileTable,
+          rotation: FileVariantTable.rotation,
+          wanted: sql<number>`(SELECT o.rotation FROM file o WHERE o.id = ${FileVariantTable.originalFileId})`,
+        })
         .from(FileVariantTable)
         .innerJoin(FileTable, eq(FileVariantTable.fileId, FileTable.id))
         .where(
@@ -161,7 +169,10 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
           ),
         )
         .limit(1)
-    )[0]?.file;
+    )[0];
+    if (row && (row.wanted ?? 0) !== row.rotation) staleVariant = true;
+    return row?.file;
+  };
 
   // Single query on the hot thumbnail path: fetch either the original row or the
   // variant's file row directly. A variant request doesn't need the base row, so
@@ -237,7 +248,7 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
   const updatedAt = new Date(target.updatedAt);
   const etag = `${target.id}-${target.size}-${Math.floor(updatedAt.getTime() / 1000)}`;
 
-  if (req.headers["if-none-match"] === etag) return reply.code(304).send();
+  if (!staleVariant && req.headers["if-none-match"] === etag) return reply.code(304).send();
 
   reply
     .header("Content-Type", target.mime || "application/octet-stream")
@@ -246,7 +257,11 @@ server.get("/asset/:id/:variant?", async (req, reply) => {
     .header("Last-Modified", updatedAt.toUTCString())
     .header(
       "Cache-Control",
-      isFallback ? "private, max-age=600" : "private, max-age=31536000, immutable",
+      staleVariant
+        ? "no-store"
+        : isFallback
+          ? "private, max-age=600"
+          : "private, max-age=31536000, immutable",
     );
 
   // ?download=1 on the original (or its RAW) saves it under its own file name.
