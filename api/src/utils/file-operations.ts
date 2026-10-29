@@ -253,7 +253,8 @@ export async function deleteRawPreviews(fileIds: string[]): Promise<void> {
     .from(FileTable)
     .where(inArray(FileTable.id, fileIds));
   for (const r of rows) {
-    if (!isRawName(r.name)) continue;
+    // RAW and HEIC both read through a cached JPEG (worker utils/raw.ts).
+    if (!isRawName(r.name) && !/\.hei[cf]$/i.test(r.name)) continue;
     try {
       await fs.promises.unlink(await resolveAssetPath(rawPreviewCachePath(variantsPath, r)));
     } catch {
