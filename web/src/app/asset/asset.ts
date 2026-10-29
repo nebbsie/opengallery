@@ -128,16 +128,6 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
             }
           </div>
 
-          @if (current()?.raw; as raw) {
-            <!-- Camera RAW: the photo has a RAW file (RAW + JPEG), or is one. -->
-            <span
-              class="shrink-0 rounded-md bg-black/35 px-2 py-1 text-[11px] leading-none font-semibold tracking-wide text-white backdrop-blur-sm"
-              [title]="raw.paired ? 'RAW + JPEG: ' + raw.name : 'RAW photo'"
-            >
-              RAW
-            </span>
-          }
-
           @if (current()?.file?.type === 'image' || (!current() && slotType() !== 'video')) {
             <button
               hlmBtn

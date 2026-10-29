@@ -106,15 +106,6 @@ const altDate = new Intl.DateTimeFormat(undefined, {
           (load)="onImageLoad()"
         />
 
-        @if (_asset.hasRaw) {
-          <span
-            class="pointer-events-none absolute right-1.5 bottom-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] leading-none font-semibold tracking-wide text-white backdrop-blur-sm"
-            aria-hidden="true"
-          >
-            RAW
-          </span>
-        }
-
         @if (_asset.type === 'video') {
           <div
             class="absolute top-2 right-2 grid h-8 w-8 place-items-center rounded-full bg-black/60 shadow-md backdrop-blur-sm"
