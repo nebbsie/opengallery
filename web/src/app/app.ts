@@ -65,7 +65,14 @@ import { HlmIcon } from '@spartan-ng/helm/icon';
               : ''
         "
       >
-        <router-outlet />
+        <!-- Clips the page (and its scroll areas) with corners concentric to
+             the window's: window radius minus its padding (16-12, 24-16). -->
+        <div
+          class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          [class]="isAuthenticated() && !isAssetRoute() ? 'rounded-[4px] sm:rounded-[8px]' : ''"
+        >
+          <router-outlet />
+        </div>
       </div>
     </main>
 
