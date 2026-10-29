@@ -8,6 +8,7 @@ import {
   inject,
   input,
   signal,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -43,6 +44,8 @@ import { AssetInfoPanel, ViewFileData } from './info-panel';
 import { StageSlot, ViewerStage } from './viewer-stage';
 
 const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
+// Play Live Photos when they open ('0' = off; on by default).
+const LIVE_AUTO_STORAGE_KEY = 'asset.livePhotos';
 
 @Component({
   selector: 'app-asset',
@@ -76,6 +79,8 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
         [alt]="alt()"
         [showFaces]="showFaces()"
         [(tagMode)]="tagMode"
+        [motionUrl]="motionUrl()"
+        [(motionPlaying)]="motionPlaying"
         (navigate)="go($event)"
         (dismiss)="close()"
         (tapped)="chromeVisible.set(!chromeVisible())"
@@ -127,6 +132,26 @@ const INFO_OPEN_STORAGE_KEY = 'asset.infoOpen';
               </p>
             }
           </div>
+
+          @if (current()?.motion) {
+            <!-- Live Photo. Tap turns auto-play on or off (on plays it now);
+                 press and hold, or hover, plays it either way. -->
+            <button
+              type="button"
+              [class]="(liveAuto() ? ctrlBtnOn : ctrlBtn) + ' !w-auto px-3 text-xs font-bold tracking-wider'"
+              [attr.aria-pressed]="liveAuto()"
+              aria-label="Live Photo: play automatically"
+              [title]="liveAuto() ? 'Live Photo plays when opened. Tap to turn off' : 'Live Photo: tap to play when opened, or hold to play'"
+              (click)="onLiveClick()"
+              (pointerdown)="onLiveDown($event)"
+              (pointerup)="onLiveUp()"
+              (pointerleave)="onLiveUp()"
+              (pointercancel)="onLiveUp()"
+              (mouseenter)="motionPlaying.set(true)"
+            >
+              LIVE
+            </button>
+          }
 
           @if (current()?.file?.type === 'image' || (!current() && slotType() !== 'video')) {
             <button
@@ -399,6 +424,17 @@ export class Asset {
   protected readonly isFullscreen = signal(false);
   // RAW + JPEG download menu in the top bar.
   protected readonly downloadMenuOpen = signal(false);
+
+  // Live Photos: play the motion video when a still opens (per viewer, on by
+  // default), and whether it is playing now.
+  protected readonly liveAuto = signal(this.readLiveAuto());
+  protected readonly motionPlaying = signal(false);
+  protected readonly motionUrl = computed(() => {
+    const data = this.current();
+    return data?.motion ? `${this.apiUrl}/asset/${data.file.id}/motion` : null;
+  });
+  private liveHold: ReturnType<typeof setTimeout> | null = null;
+  private liveHeld = false;
   protected readonly bytes = formatBytes;
 
   private readonly stage = viewChild(ViewerStage);
@@ -573,6 +609,51 @@ export class Asset {
         // Storage can be blocked; the panel still works.
       }
     });
+
+    // A Live Photo plays once when it opens (if auto-play is on); moving to
+    // another item stops it.
+    effect(() => {
+      const id = this.current()?.file.id;
+      const hasMotion = !!this.motionUrl();
+      untracked(() => this.motionPlaying.set(!!id && hasMotion && this.liveAuto()));
+    });
+  }
+
+  protected onLiveClick(): void {
+    // A hold already played it; that was not a tap.
+    if (this.liveHeld) {
+      this.liveHeld = false;
+      return;
+    }
+    const next = !this.liveAuto();
+    this.liveAuto.set(next);
+    this.motionPlaying.set(next);
+    try {
+      localStorage.setItem(LIVE_AUTO_STORAGE_KEY, next ? '1' : '0');
+    } catch {
+      // Storage can be blocked; the switch still works for this visit.
+    }
+  }
+
+  protected onLiveDown(event: PointerEvent): void {
+    if (event.pointerType === 'mouse') return;
+    this.liveHold = setTimeout(() => {
+      this.liveHeld = true;
+      this.motionPlaying.set(true);
+    }, 300);
+  }
+
+  protected onLiveUp(): void {
+    if (this.liveHold) clearTimeout(this.liveHold);
+    this.liveHold = null;
+  }
+
+  private readLiveAuto(): boolean {
+    try {
+      return localStorage.getItem(LIVE_AUTO_STORAGE_KEY) !== '0';
+    } catch {
+      return true;
+    }
   }
 
   private async prefetch(id: string): Promise<void> {

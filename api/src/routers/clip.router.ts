@@ -12,7 +12,7 @@ import {
 import { internalProcedure, router } from "../trpc.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { staleRequeueSet } from "./file-task.router.js";
-import { isRawCompanion, notRawCompanion } from "../utils/raw-pairing.js";
+import { isMotionCompanion, isRawCompanion, notRawCompanion } from "../utils/raw-pairing.js";
 import { taskQueued } from "../utils/task-queue.js";
 
 // Worker side of object search: seed and lease `embed_clip` tasks, and store
@@ -131,8 +131,8 @@ export const clipRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      // A RAW companion is never searched on its own.
-      if (isRawCompanion(input.fileId)) return { ok: true as const };
+      // A RAW or Live Photo motion companion is never searched on its own.
+      if (isRawCompanion(input.fileId) || isMotionCompanion(input.fileId)) return { ok: true as const };
       const vec = Buffer.from(input.embedding, "base64");
       const now = new Date().toISOString();
       await db

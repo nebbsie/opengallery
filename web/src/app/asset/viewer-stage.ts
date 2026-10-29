@@ -127,6 +127,19 @@ const DISPLAYABLE = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif
                     (load)="markLoaded(originalUrl(slot.id))"
                   />
                 }
+                @if (slot.pos === 0 && motionUrl() && motionPlaying()) {
+                  <!-- Live Photo: the motion video plays once over the still,
+                       muted, then the still shows again. -->
+                  <video
+                    [src]="motionUrl()"
+                    class="pointer-events-none absolute inset-0 h-full w-full object-contain"
+                    muted
+                    playsInline
+                    autoplay
+                    (ended)="motionPlaying.set(false)"
+                    (error)="motionPlaying.set(false)"
+                  ></video>
+                }
               }
             }
           </div>
@@ -156,6 +169,10 @@ export class ViewerStage {
   readonly alt = input('');
   readonly showFaces = input(false);
   readonly tagMode = model(false);
+  /** Live Photo video of the current still, or null. */
+  readonly motionUrl = input<string | null>(null);
+  /** True while the motion video plays; it sets itself back when it ends. */
+  readonly motionPlaying = model(false);
 
   readonly navigate = output<'prev' | 'next'>();
   readonly dismiss = output<void>();

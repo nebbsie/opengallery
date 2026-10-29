@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { eq, inArray, notExists, sql, type SQL } from "drizzle-orm";
+import { eq, inArray, notExists, or, sql, type SQL } from "drizzle-orm";
 import { alias, type SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { db } from "../db/index.js";
 import { FileTable } from "../db/schema.js";
@@ -49,18 +49,28 @@ export function hasRawOf(f: { rawFileId?: string | null; name: string }): boolea
   return !!f.rawFileId || isRawName(f.name);
 }
 
-// SQL condition: the file is not the RAW companion of another file. The worker
+// SQL condition: the file is not a hidden companion of another file (the RAW
+// of a RAW+JPEG pair, or the motion video of a Live Photo). The worker
 // backfills and Settings > Duplicates look at every file row, so they need it;
-// the browse queries do not (a companion has no variants, metadata or library
-// rows).
+// the browse queries do not (a companion has no library rows).
 export function notRawCompanion(fileIdColumn: SQLiteColumn): SQL {
   const primary = alias(FileTable, "raw_primary");
   return notExists(
     db
       .select({ one: sql`1` })
       .from(primary)
-      .where(eq(primary.rawFileId, fileIdColumn)),
+      .where(or(eq(primary.rawFileId, fileIdColumn), eq(primary.motionFileId, fileIdColumn))),
   );
+}
+
+// True when the file is the motion video of a Live Photo.
+export function isMotionCompanion(fileId: string): boolean {
+  return !!db
+    .select({ id: FileTable.id })
+    .from(FileTable)
+    .where(eq(FileTable.motionFileId, fileId))
+    .limit(1)
+    .get();
 }
 
 // True when the file is the RAW companion of another file. Internal writers
@@ -214,18 +224,152 @@ export function linkRawPairs(newFileIds: string[]): PairResult {
   return result;
 }
 
-// Ids in the list that are RAW companions.
+// Ids in the list that are hidden companions (RAW or Live Photo motion).
 export function companionIdsIn(fileIds: string[]): Set<string> {
   const out = new Set<string>();
   for (let i = 0; i < fileIds.length; i += 500) {
+    const chunk = fileIds.slice(i, i + 500);
     const rows = db
-      .select({ rawFileId: FileTable.rawFileId })
+      .select({ rawFileId: FileTable.rawFileId, motionFileId: FileTable.motionFileId })
       .from(FileTable)
-      .where(inArray(FileTable.rawFileId, fileIds.slice(i, i + 500)))
+      .where(or(inArray(FileTable.rawFileId, chunk), inArray(FileTable.motionFileId, chunk)))
       .all();
-    for (const r of rows) if (r.rawFileId) out.add(r.rawFileId);
+    for (const r of rows) {
+      if (r.rawFileId && chunk.includes(r.rawFileId)) out.add(r.rawFileId);
+      if (r.motionFileId && chunk.includes(r.motionFileId)) out.add(r.motionFileId);
+    }
   }
   return out;
+}
+
+// Live Photo motion videos of the given stills (still id -> video id).
+export function motionIdsOf(fileIds: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < fileIds.length; i += 500) {
+    const rows = db
+      .select({ id: FileTable.id, motionFileId: FileTable.motionFileId })
+      .from(FileTable)
+      .where(inArray(FileTable.id, fileIds.slice(i, i + 500)))
+      .all();
+    for (const r of rows) if (r.motionFileId) out.set(r.id, r.motionFileId);
+  }
+  return out;
+}
+
+// ---------- Live Photos ----------
+//
+// An iPhone (or Google Takeout) Live Photo is a still and a short video with
+// the same base name in the same folder: IMG_1234.HEIC + IMG_1234.MOV. The
+// still shows; the video is its hidden motion companion (file.motion_file_id
+// on the still). Unlike a RAW companion the video keeps its encode tasks, so
+// the viewer can play a browser-friendly copy.
+
+export const MOTION_STILL_EXTENSIONS = new Set(["heic", "heif", "jpg", "jpeg"]);
+export const MOTION_VIDEO_EXTENSIONS = new Set(["mov", "mp4"]);
+// Live Photo videos are about 3 s; a longer clip with the same name is a real
+// video and stays one.
+export const MOTION_MAX_BYTES = 20 * 1024 * 1024;
+// The only tasks a motion video gets: a poster and a small playable mp4.
+export const MOTION_TASK_TYPES = ["video_poster", "encode_optimised"] as const;
+
+type MotionRow = {
+  id: string;
+  dir: string;
+  name: string;
+  type: string;
+  size: number;
+  rawFileId: string | null;
+  motionFileId: string | null;
+};
+
+function isMotionStill(r: MotionRow): boolean {
+  return r.type === "image" && MOTION_STILL_EXTENSIONS.has(extOf(r.name));
+}
+
+function isMotionVideo(r: MotionRow): boolean {
+  return r.type === "video" && MOTION_VIDEO_EXTENSIONS.has(extOf(r.name)) && r.size <= MOTION_MAX_BYTES;
+}
+
+export type MotionPairResult = {
+  // New videos that became a hidden motion companion: no library or album
+  // rows, only MOTION_TASK_TYPES.
+  companions: Set<string>;
+  // Videos that were already in the library as videos of their own and now
+  // belong to a still (file-operations.ts demoteMotionFilesSync).
+  demoted: string[];
+  // Video id -> its still, for both lists above.
+  stillOf: Map<string, string>;
+};
+
+const motionColumns = {
+  id: FileTable.id,
+  dir: FileTable.dir,
+  name: FileTable.name,
+  type: FileTable.type,
+  size: FileTable.size,
+  rawFileId: FileTable.rawFileId,
+  motionFileId: FileTable.motionFileId,
+};
+
+/**
+ * Link files with their Live Photo partners in the same folder, either order.
+ * Only a pair with at least one new file forms (as linkRawPairs), unless
+ * `includeOld` is set: the boot reconcile pairs a library imported before
+ * Live Photos existed. Synchronous (better-sqlite3), so it can run inside a
+ * transaction.
+ */
+export function linkMotionPairs(fileIds: string[], includeOld = false): MotionPairResult {
+  const result: MotionPairResult = { companions: new Set(), demoted: [], stillOf: new Map() };
+  if (fileIds.length === 0) return result;
+
+  const rows: MotionRow[] = [];
+  for (let i = 0; i < fileIds.length; i += 500) {
+    rows.push(
+      ...db.select(motionColumns).from(FileTable).where(inArray(FileTable.id, fileIds.slice(i, i + 500))).all(),
+    );
+  }
+  const newIds = includeOld ? null : new Set(rows.map((r) => r.id));
+
+  const stemsByDir = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if (!isMotionStill(r) && !isMotionVideo(r)) continue;
+    const set = stemsByDir.get(r.dir) ?? new Set<string>();
+    set.add(stemKey(r.name));
+    stemsByDir.set(r.dir, set);
+  }
+
+  for (const [dir, stems] of stemsByDir) {
+    const dirRows: MotionRow[] = db.select(motionColumns).from(FileTable).where(eq(FileTable.dir, dir)).all();
+    const taken = new Set(dirRows.map((r) => r.motionFileId).filter((v): v is string => !!v));
+    // A RAW companion is never a still of its own.
+    const raws = new Set(dirRows.map((r) => r.rawFileId).filter((v): v is string => !!v));
+
+    for (const stem of stems) {
+      const group = dirRows.filter((r) => stemKey(r.name) === stem);
+      const videos = group
+        .filter((r) => isMotionVideo(r) && !taken.has(r.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const stills = group
+        .filter((r) => isMotionStill(r) && !r.motionFileId && !raws.has(r.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      for (let i = 0; i < Math.min(videos.length, stills.length); i++) {
+        const video = videos[i]!;
+        const still = stills[i]!;
+        if (newIds && !newIds.has(video.id) && !newIds.has(still.id)) continue;
+        db.update(FileTable)
+          .set({ motionFileId: video.id, updatedAt: new Date().toISOString() })
+          .where(eq(FileTable.id, still.id))
+          .run();
+        still.motionFileId = video.id;
+        taken.add(video.id);
+        result.stillOf.set(video.id, still.id);
+        if (newIds?.has(video.id)) result.companions.add(video.id);
+        else result.demoted.push(video.id);
+      }
+    }
+  }
+  return result;
 }
 
 // RAW companions of the given photos (photo id -> RAW id).

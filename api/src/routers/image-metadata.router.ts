@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { FileImportMetaTable, FileTable, ImageMetadataTable } from "../db/schema.js";
 import { internalProcedure, router } from "../trpc.js";
-import { isRawCompanion } from "../utils/raw-pairing.js";
+import { isMotionCompanion, isRawCompanion } from "../utils/raw-pairing.js";
 
 export const imageMetadataRouter = router({
   save: internalProcedure
@@ -24,8 +24,9 @@ export const imageMetadataRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      // A RAW companion has no metadata (it would show in the gallery).
-      if (isRawCompanion(input.fileId)) return null;
+      // A RAW or Live Photo motion companion has no metadata (it would show
+      // in the gallery).
+      if (isRawCompanion(input.fileId) || isMotionCompanion(input.fileId)) return null;
       // No date in the file: use the one an import brought (Takeout JSON).
       const imported = input.takenAt
         ? undefined

@@ -22,7 +22,7 @@ import {
 } from "../trpc.js";
 import { hiddenPeopleFilter } from "../db/file-filters.js";
 import { fileSortExpr, galleryOrderBy, keysetBefore } from "../db/file-sort.js";
-import { hasRawOf, isRawCompanion, notRawCompanion } from "../utils/raw-pairing.js";
+import { hasRawOf, isMotionCompanion, isRawCompanion, notRawCompanion } from "../utils/raw-pairing.js";
 
 // Below this zoom, points are snapped to a lat/lon grid and aggregated
 // server-side so the client never receives more than a handful of points per
@@ -63,8 +63,9 @@ export const geoLocationRouter = router({
       ) {
         return null;
       }
-      // A RAW companion has no coordinates of its own (the map would show it).
-      if (isRawCompanion(input.fileId)) return null;
+      // A RAW or Live Photo motion companion has no coordinates of its own
+      // (the map would show it).
+      if (isRawCompanion(input.fileId) || isMotionCompanion(input.fileId)) return null;
 
       const [result] = await db
         .insert(GeoLocationTable)

@@ -24,20 +24,11 @@ export interface TakeoutMeta {
   description: string | null;
 }
 
-export type SkipReason =
-  | 'heic'
-  | 'unsupported'
-  | 'trash'
-  | 'live-photo-video'
-  | 'in-album'
-  | 'in-other-album'
-  | 'empty';
+export type SkipReason = 'unsupported' | 'trash' | 'in-album' | 'in-other-album' | 'empty';
 
 export const SKIP_LABELS: Record<SkipReason, string> = {
-  heic: 'HEIC photos (not supported yet)',
   unsupported: 'Not a photo or video',
   trash: 'In the Google Photos trash',
-  'live-photo-video': 'Live Photo videos (the photo is imported)',
   'in-album': 'Already in an album folder',
   'in-other-album': 'Also in another album',
   empty: 'Empty files',
@@ -60,6 +51,8 @@ export interface TakeoutPlan {
   albums: { name: string; count: number }[];
   years: { name: string; count: number }[];
   withJson: number;
+  // Live Photo videos imported next to their still; the server pairs them.
+  livePhotos: number;
   skipped: { reason: SkipReason; count: number }[];
   totalBytes: number;
 }
@@ -80,9 +73,13 @@ const PHOTOS_ROOTS = new Set([
 
 const TRASH_FOLDERS = new Set(['trash', 'bin', 'papierkorb', 'corbeille', 'papelera', 'cestino', 'prullenbak', 'kosz']);
 
-const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif']);
+const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif', 'heic', 'heif']);
 const RAW_EXT = new Set(['rw2', 'nef', 'cr2', 'cr3', 'arw', 'dng', 'raf', 'orf', 'pef', 'srw']);
-const HEIC_EXT = new Set(['heic', 'heif']);
+// A Live Photo: a still and a short video with the same name in a folder. The
+// server pairs them (api/src/utils/raw-pairing.ts, same limit).
+const LIVE_STILL_EXT = new Set(['heic', 'heif', 'jpg', 'jpeg']);
+const LIVE_VIDEO_EXT = new Set(['mov', 'mp4']);
+const LIVE_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_EXT = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'wmv', 'flv', 'm4v', '3gp', 'mts', 'm2ts']);
 
 // "-edited" copies share the JSON of the original (localized suffixes too).
@@ -221,6 +218,7 @@ export function buildPlan(entries: readonly TakeoutEntry[]): TakeoutPlan {
   const albums = new Map<string, number>();
   const years = new Map<string, number>();
   let withJson = 0;
+  let livePhotos = 0;
   let totalBytes = 0;
 
   // Albums first (sorted by name), then year folders oldest first.
@@ -242,14 +240,12 @@ export function buildPlan(entries: readonly TakeoutEntry[]): TakeoutPlan {
 
   for (const { f, year, isAlbum } of ordered) {
     const photoNames = new Set([...f.names].filter((n) => !VIDEO_EXT.has(extOf(n))));
-    const importablePhotos = new Set([...photoNames].filter((n) => !HEIC_EXT.has(extOf(n))));
+    const liveStills = new Set(
+      [...photoNames].filter((n) => LIVE_STILL_EXT.has(extOf(n))).map((n) => n.slice(0, n.lastIndexOf('.')).toLowerCase()),
+    );
     for (const e of f.media) {
       const name = e.path.slice(e.path.lastIndexOf('/') + 1);
       const ext = extOf(name);
-      if (HEIC_EXT.has(ext)) {
-        skip('heic');
-        continue;
-      }
       const type: 'image' | 'video' | null =
         IMAGE_EXT.has(ext) || RAW_EXT.has(ext) ? 'image' : VIDEO_EXT.has(ext) ? 'video' : null;
       if (!type) {
@@ -260,19 +256,20 @@ export function buildPlan(entries: readonly TakeoutEntry[]): TakeoutPlan {
         skip('empty');
         continue;
       }
-      // A Live Photo's short video next to an imported photo of the same name.
-      if (type === 'video') {
-        const stem = name.slice(0, name.lastIndexOf('.')).toLowerCase();
-        const paired = [...importablePhotos].some((p) => p.slice(0, p.lastIndexOf('.')).toLowerCase() === stem);
-        if (paired && e.size < 20 * 1024 * 1024) {
-          skip('live-photo-video');
-          continue;
-        }
-      }
       const same = `${name.toLowerCase()}|${e.size}`;
       if (albumKeys.has(same)) {
         skip(isAlbum ? 'in-other-album' : 'in-album');
         continue;
+      }
+      // A Live Photo's short video goes into the same folder as its still, so
+      // the server pairs them and shows one photo.
+      if (
+        type === 'video' &&
+        LIVE_VIDEO_EXT.has(ext) &&
+        e.size <= LIVE_MAX_BYTES &&
+        liveStills.has(name.slice(0, name.lastIndexOf('.')).toLowerCase())
+      ) {
+        livePhotos++;
       }
       if (isAlbum) albumKeys.add(same);
       const json = sidecarFor(name, f.jsons, photoNames);
@@ -289,6 +286,7 @@ export function buildPlan(entries: readonly TakeoutEntry[]): TakeoutPlan {
     albums: [...albums].map(([name, count]) => ({ name, count })),
     years: [...years].map(([name, count]) => ({ name, count })),
     withJson,
+    livePhotos,
     skipped: [...skipped].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
     totalBytes,
   };

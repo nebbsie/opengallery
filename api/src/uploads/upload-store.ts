@@ -25,12 +25,14 @@ import {
 import { logger } from "../logger.js";
 import { withFaceLock } from "../faces/face-index.js";
 import {
+  demoteMotionFilesSync,
   demoteRawFilesSync,
   emptyRawEffects,
   fileTaskRows,
   finishRawMoves,
+  motionTaskRows,
 } from "../utils/file-operations.js";
-import { linkRawPairs, primaryOfRaw } from "../utils/raw-pairing.js";
+import { linkMotionPairs, linkRawPairs, primaryOfRaw } from "../utils/raw-pairing.js";
 import { getCachedSystemSettings } from "../utils/settings-cache.js";
 import { wsManager } from "../ws-manager.js";
 import { SNIFF_BYTES, finalFileName, sniffMedia } from "./sniff.js";
@@ -563,7 +565,7 @@ async function insertFileRows(opts: {
   // Insert, link and demote commit together, under the face lock because a
   // demoted RAW's faces move to the JPEG; disk cleanup follows the commit.
   const fx = emptyRawEffects();
-  const { fileId, pairs } = await withFaceLock(async () => db.transaction((tx) => {
+  const { fileId, pairs, motion } = await withFaceLock(async () => db.transaction((tx) => {
     const [file] = tx
       .insert(FileTable)
       .values({
@@ -579,17 +581,25 @@ async function insertFileRows(opts: {
     const fileId = file!.id;
     // Same connection, so this runs inside the transaction.
     const pairs = linkRawPairs([fileId]);
-    if (!pairs.companions.has(fileId)) {
+    // A Live Photo's video (or its still) arriving after the other half.
+    const motion = pairs.companions.has(fileId)
+      ? { companions: new Set<string>(), demoted: [], stillOf: new Map<string, string>() }
+      : linkMotionPairs([fileId]);
+    if (motion.companions.has(fileId)) {
+      tx.insert(FileTaskTable).values(motionTaskRows(fileId)).run();
+    } else if (!pairs.companions.has(fileId)) {
       tx.insert(FileTaskTable).values(fileTaskRows(fileId, opts.type)).run();
       tx.insert(LibraryFileTable).values({ fileId, libraryId: opts.libraryId }).run();
       tx.insert(AlbumFileTable).values({ fileId, albumId: opts.albumId }).run();
     }
     // The upload is a JPEG and its RAW was already here as a photo of its own.
     demoteRawFilesSync(pairs.primaryOf, pairs.demoted, fx);
-    return { fileId, pairs };
+    // The upload is a still and its video was already here as a video.
+    demoteMotionFilesSync(motion.demoted, fx);
+    return { fileId, pairs, motion };
   }));
   await finishRawMoves(fx);
-  return pairs.primaryOf.get(fileId) ?? fileId;
+  return pairs.primaryOf.get(fileId) ?? motion.stillOf.get(fileId) ?? fileId;
 }
 
 export type FinishResult = {

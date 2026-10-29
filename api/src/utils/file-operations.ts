@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import path from 'node:path';
-import { and, eq, exists, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, exists, inArray, isNotNull, isNull, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
   AlbumFileTable,
@@ -26,7 +26,15 @@ import { invalidateFaceIndex, removeFromIndexes, withFaceLock } from '../faces/f
 import { addToClipIndex, removeFromClipIndex } from '../clip/clip-index.js';
 import { refreshPeople } from '../faces/people.js';
 import { getCachedSystemSettings } from './settings-cache.js';
-import { isRawName, rawPreviewCachePath } from './raw-pairing.js';
+import {
+  isRawName,
+  linkMotionPairs,
+  MOTION_MAX_BYTES,
+  MOTION_TASK_TYPES,
+  motionIdsOf,
+  notRawCompanion,
+  rawPreviewCachePath,
+} from './raw-pairing.js';
 
 const RULE_CHUNK = 200;
 
@@ -659,10 +667,102 @@ export async function reconcileRawPairs(): Promise<{ demoted: number; relinked: 
   return { demoted: dirty.size, relinked };
 }
 
+// ---------- Live Photo motion videos (utils/raw-pairing.ts) ----------
+
+// The tasks of a Live Photo's motion video: only what playback needs.
+export function motionTaskRows(fileId: string): (typeof FileTaskTable.$inferInsert)[] {
+  return MOTION_TASK_TYPES.map((type) => ({ fileId, type }));
+}
+
+/**
+ * A video that was a video of its own became a Live Photo's motion companion.
+ * Synchronous, inside the caller's transaction (face lock held): drop what
+ * made it show (library, album, share and hide-rule links, GPS, metadata,
+ * search embedding, analysis tasks) and keep its encode tasks and variants for
+ * playback. Faces and the clip index are cleaned after the commit (fx).
+ */
+export function demoteMotionFilesSync(videoIds: string[], fx: RawMoveEffects): void {
+  for (const id of videoIds) {
+    db.delete(AlbumFileTable).where(eq(AlbumFileTable.fileId, id)).run();
+    db.delete(LibraryFileTable).where(eq(LibraryFileTable.fileId, id)).run();
+    db.delete(ViewerHiddenFileTable).where(eq(ViewerHiddenFileTable.fileId, id)).run();
+    db.delete(SharedItemTable)
+      .where(and(eq(SharedItemTable.sourceType, 'file'), eq(SharedItemTable.sourceId, id)))
+      .run();
+    db.update(AlbumTable).set({ cover: null }).where(eq(AlbumTable.cover, id)).run();
+    db.delete(GeoLocationTable).where(eq(GeoLocationTable.fileId, id)).run();
+    db.delete(ImageMetadataTable).where(eq(ImageMetadataTable.fileId, id)).run();
+    if (db.select({ one: sql`1` }).from(FileEmbeddingTable).where(eq(FileEmbeddingTable.fileId, id)).get()) {
+      db.delete(FileEmbeddingTable).where(eq(FileEmbeddingTable.fileId, id)).run();
+      fx.clipRemove.push(id);
+    }
+    if (db.select({ one: sql`1` }).from(FaceTable).where(eq(FaceTable.fileId, id)).get()) {
+      fx.leftoverFaceFiles.push(id);
+    }
+    db.delete(FileTaskTable)
+      .where(and(eq(FileTaskTable.fileId, id), notInArray(FileTaskTable.type, [...MOTION_TASK_TYPES])))
+      .run();
+    db.insert(FileTaskTable).values(motionTaskRows(id)).onConflictDoNothing().run();
+    // Takes it out of the denormalized sort column too.
+    db.update(FileTable).set({ takenAt: null }).where(eq(FileTable.id, id)).run();
+  }
+}
+
+/**
+ * Pair the Live Photos of a library imported before they were supported (a
+ * still and a short video with the same name in a folder), and repair motion
+ * videos that still hold rows of a video of their own. Idempotent; the worker
+ * calls it on boot with reconcileRawPairs.
+ */
+export async function reconcileMotionPairs(): Promise<{ paired: number; repaired: number }> {
+  const candidates = await db
+    .select({ id: FileTable.id })
+    .from(FileTable)
+    .where(
+      and(
+        eq(FileTable.type, 'video'),
+        sql`${FileTable.size} <= ${MOTION_MAX_BYTES}`,
+        sql`(lower(${FileTable.name}) LIKE '%.mov' OR lower(${FileTable.name}) LIKE '%.mp4')`,
+        notRawCompanion(FileTable.id),
+      ),
+    );
+  const paired = await db
+    .select({ id: FileTable.motionFileId })
+    .from(FileTable)
+    .where(isNotNull(FileTable.motionFileId));
+  const motionIds = paired.map((p) => p.id!);
+  const dirty = new Set<string>();
+  for (let i = 0; i < motionIds.length; i += 500) {
+    const ids = motionIds.slice(i, i + 500);
+    for (const r of db.selectDistinct({ id: LibraryFileTable.fileId }).from(LibraryFileTable).where(inArray(LibraryFileTable.fileId, ids)).all()) dirty.add(r.id);
+    for (const r of db.selectDistinct({ id: AlbumFileTable.fileId }).from(AlbumFileTable).where(inArray(AlbumFileTable.fileId, ids)).all()) dirty.add(r.id);
+    for (const r of db
+      .selectDistinct({ id: FileTaskTable.fileId })
+      .from(FileTaskTable)
+      .where(and(inArray(FileTaskTable.fileId, ids), notInArray(FileTaskTable.type, [...MOTION_TASK_TYPES])))
+      .all())
+      dirty.add(r.id);
+  }
+  if (candidates.length === 0 && dirty.size === 0) return { paired: 0, repaired: 0 };
+
+  const fx = emptyRawEffects();
+  const result = await withFaceLock(async () =>
+    db.transaction(() => {
+      const pairs = linkMotionPairs(candidates.map((c) => c.id), true);
+      demoteMotionFilesSync([...pairs.demoted, ...dirty], fx);
+      return pairs;
+    }),
+  );
+  await finishRawMoves(fx);
+  return { paired: result.stillOf.size, repaired: dirty.size };
+}
+
 export async function deleteFilesWithCascade(fileIds: string[]) {
   if (!fileIds.length) return [];
 
-  const idsToDelete = Array.from(new Set([...fileIds]));
+  // A Live Photo's motion video goes with its still: it never shows alone.
+  const originals = Array.from(new Set([...fileIds, ...motionIdsOf(fileIds).values()]));
+  const idsToDelete = [...originals];
 
   // Camera RAW+JPEG pairs: a RAW whose JPEG goes becomes a photo of its own.
   idsToDelete.push(...(await promoteRawCompanions(idsToDelete)));
@@ -671,7 +771,7 @@ export async function deleteFilesWithCascade(fileIds: string[]) {
   const variantRows = await db
     .select({ fileId: FileVariantTable.fileId })
     .from(FileVariantTable)
-    .where(inArray(FileVariantTable.originalFileId, fileIds));
+    .where(inArray(FileVariantTable.originalFileId, originals));
 
   const variantFileIds = variantRows.map((r) => r.fileId);
   idsToDelete.push(...variantFileIds);
@@ -740,6 +840,11 @@ export async function deleteFilesWithCascade(fileIds: string[]) {
     .update(FileTable)
     .set({ rawFileId: null })
     .where(inArray(FileTable.rawFileId, idsToDelete));
+  // A deleted motion video (removed from disk on its own): the still stays.
+  await db
+    .update(FileTable)
+    .set({ motionFileId: null })
+    .where(inArray(FileTable.motionFileId, idsToDelete));
 
   // Per-viewer hide rules of the deleted files (no FKs to cascade them).
   await deleteViewerRulesForFiles(idsToDelete);

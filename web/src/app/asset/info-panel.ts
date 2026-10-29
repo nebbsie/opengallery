@@ -240,6 +240,12 @@ export type ViewFileData = RouterOutputs['files']['viewFile'];
                 </div>
               }
             }
+            @if (d.motion; as motion) {
+              <div [class]="row">
+                <span class="text-muted-foreground text-xs">Live Photo</span>
+                <span class="text-right text-sm font-medium break-all">{{ motion.name }}</span>
+              </div>
+            }
             <div [class]="row">
               <span class="text-muted-foreground text-xs">Imported</span>
               <span class="text-sm tabular-nums">{{ f.createdAt | date: 'MMM d, y, h:mm a' }}</span>
