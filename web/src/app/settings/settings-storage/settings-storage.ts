@@ -99,8 +99,8 @@ function formatBytes(bytes: number): string {
         <div>
           <h2 class="text-foreground block text-lg font-bold">Uploads Location</h2>
           <p class="text-muted-foreground text-sm text-pretty">
-            Where uploaded photos and videos are saved. Each user gets a folder here, and each
-            album is a folder inside it. Pick a writable folder outside your read-only library.
+            Where new uploads and Google Takeout imports are saved. Each user gets a folder here,
+            and each album is a folder inside it.
           </p>
         </div>
       </div>
@@ -121,6 +121,23 @@ function formatBytes(bytes: number): string {
       } @else {
         <p class="text-muted-foreground mb-4 text-sm italic">No upload path set. Defaults to source path/uploads when added.</p>
       }
+
+      <!-- Changing the location moves nothing: say so before people worry. -->
+      <div class="bg-muted/40 mb-4 max-w-lg rounded-lg border p-3 text-sm text-pretty">
+        <p class="text-foreground font-medium">Changing it is safe</p>
+        <ul class="text-muted-foreground mt-1 list-disc space-y-1 pl-5">
+          <li>Photos you already uploaded stay where they are, and stay in your library.</li>
+          <li>Only new uploads go to the new location.</li>
+          <li>
+            Each earlier uploads folder stays in Settings, Source Folders. Keep it there: if you
+            remove it, its photos leave the library.
+          </li>
+          <li>
+            To use more than one disk, pool them (for example with mergerfs) and pick a folder
+            in the pool.
+          </li>
+        </ul>
+      </div>
 
       <button class="mb-6" hlmBtn variant="outline" (click)="setUploadPath()">
         {{ uploadPath() ? 'Change Upload Path' : 'Add Upload Path' }}
@@ -337,13 +354,29 @@ export class SettingsStorage {
   }
 
   setUploadPath() {
+    const old = this.uploadPath();
     this.dialog
       .open(PathSelect, { contentClass: 'sm:max-w-[640px]' })
       .closed$.subscribe((path: string | null) => {
-        if (path) {
+        if (!path || path === old) return;
+        if (!old) {
           this.uploadPath.set(path);
           this.savePaths();
+          return;
         }
+        this.dialog
+          .open(Confirm, {
+            context: {
+              message:
+                `New uploads will go to ${path}. Photos already uploaded stay in ${old} and stay ` +
+                'in your library. Nothing is moved or deleted.',
+            },
+          })
+          .closed$.subscribe((ok: boolean) => {
+            if (!ok) return;
+            this.uploadPath.set(path);
+            this.savePaths();
+          });
       });
   }
 
@@ -363,7 +396,9 @@ export class SettingsStorage {
     this.dialog
       .open(Confirm, {
         context: {
-          message: 'Clear the uploads path? Encoded files will fail until a new path is set.',
+          message:
+            'Clear the uploads location? Uploads stop until a new location is set. Photos ' +
+            'already uploaded stay where they are and stay in your library.',
         },
       })
       .closed$.subscribe((res: boolean) => {

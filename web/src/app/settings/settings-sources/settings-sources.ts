@@ -259,7 +259,10 @@ export class SettingsSources {
     this.dialog
       .open(Confirm, {
         context: {
-          message: 'You will no longer track and show media from this source if deleted.',
+          message:
+            'Remove this folder? Its photos and videos stop showing in the library. The files ' +
+            'on the drive are not deleted. If this is an earlier uploads folder, keep it: ' +
+            'removing it hides everything uploaded there.',
         },
       })
       .closed$.subscribe((res: boolean) => {
