@@ -35,6 +35,7 @@ async function frameFor(file: {
   dir: string;
   name: string;
   contentHash: string | null;
+  rotation?: number;
 }): Promise<Buffer | null> {
   const path = toContainerPath(join(file.dir, file.name));
   let source: Buffer | string = path;
@@ -50,8 +51,10 @@ async function frameFor(file: {
     if (!frame) return null;
     source = frame;
   }
+  // A video frame is upright already; a photo takes the user's turn too.
   return sharp(source, { failOn: 'none' })
-    .rotate()
+    .autoOrient()
+    .rotate(file.type === 'image' ? (file.rotation ?? 0) : 0)
     .removeAlpha()
     .resize({ width: SEND_MAX, height: SEND_MAX, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 90 })

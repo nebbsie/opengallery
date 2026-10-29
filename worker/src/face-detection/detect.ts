@@ -43,11 +43,13 @@ function dot(a: Float32Array, b: Float32Array): number {
   return s;
 }
 
-async function imageFrame(sourcePath: string): Promise<Frame> {
+// turn: the clockwise turn the user asked for (file.rotation), after EXIF.
+async function imageFrame(sourcePath: string, turn = 0): Promise<Frame> {
   // failOn:'none' so truncated/slightly-corrupt JPEGs still decode (matches
   // the encode pipeline) rather than throwing and failing detection.
   const { data, info } = await sharp(sourcePath, { failOn: 'none' })
-    .rotate()
+    .autoOrient()
+    .rotate(turn)
     .removeAlpha()
     .resize({ width: SEND_MAX, height: SEND_MAX, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 92 })
@@ -130,6 +132,7 @@ export async function detectFaces(fileId: string): Promise<void> {
       // A camera RAW is read through its embedded JPEG preview (utils/raw.ts).
       const frame = await imageFrame(
         needsPreview(file.name) ? await getRawPreview(file, variantsPath) : sourcePath,
+        file.rotation ?? 0,
       );
       const result = await detectFacesRemote(frame.jpeg);
       model = result.model;

@@ -20,10 +20,12 @@ import {
   lucideDownload,
   lucideEyeOff,
   lucideImage,
+  lucideRotateCw,
   lucideShare2,
   lucideTrash2,
   lucideX,
 } from '@ng-icons/lucide';
+import { RotationService } from '@core/services/rotation/rotation';
 import { HlmDialogService } from '@spartan-ng/helm/dialog';
 import { HlmIcon } from '@spartan-ng/helm/icon';
 import { HlmSpinner } from '@spartan-ng/helm/spinner';
@@ -42,6 +44,7 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
       lucideDownload,
       lucideEyeOff,
       lucideImage,
+      lucideRotateCw,
       lucideShare2,
       lucideTrash2,
       lucideX,
@@ -121,6 +124,16 @@ import { BulkPeopleDialog, BulkPeopleDialogContext } from './bulk-people-dialog'
             <span class="sr-only sm:hidden">Set as cover</span>
           </button>
         }
+        <button
+          type="button"
+          class="hover:bg-glass-tint-strong flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-[background-color,scale] duration-150 active:scale-[0.96] disabled:opacity-50"
+          [disabled]="rotating()"
+          (click)="rotateSelected()"
+        >
+          <ng-icon hlm size="sm" name="lucideRotateCw" />
+          <span class="hidden sm:inline">Rotate</span>
+          <span class="sr-only sm:hidden">Rotate</span>
+        </button>
       }
       @if (isAdmin() || allowDelete()) {
         <button
@@ -160,6 +173,8 @@ export class SelectionBar {
   protected readonly visible = computed(() => this.selection.active());
   protected readonly downloading = signal(false);
   protected readonly deleting = signal(false);
+  protected readonly rotating = signal(false);
+  private readonly rotation = inject(RotationService);
 
   // Keep the last count while the bar slides away, so it never reads "0 items".
   private readonly lastCount = signal(0);
@@ -217,6 +232,30 @@ export class SelectionBar {
     ref.closed$.subscribe((done) => {
       if (done) this.selection.clear();
     });
+  }
+
+  // Turn the selected photos a quarter clockwise (videos are left as they are).
+  protected async rotateSelected(): Promise<void> {
+    const fileIds = [...this.selection.ids()];
+    if (!fileIds.length || this.rotating()) return;
+    this.rotating.set(true);
+    try {
+      const res = await this.rotation.rotate(fileIds, 90);
+      if (res.rotated) {
+        this.toast.success(`Rotating ${res.rotated.toLocaleString()} ${res.rotated === 1 ? 'photo' : 'photos'}`);
+      }
+      if (res.failed.length) {
+        this.toast.error(
+          res.failed.length === 1
+            ? `Could not rotate ${res.failed[0]!.name}: ${res.failed[0]!.reason}`
+            : `Could not rotate ${res.failed.length} items: ${res.failed[0]!.reason}`,
+        );
+      }
+    } catch (err) {
+      this.toast.error((err as Error)?.message || 'Could not rotate. Try again.');
+    } finally {
+      this.rotating.set(false);
+    }
   }
 
   protected async setCover(): Promise<void> {

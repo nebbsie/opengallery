@@ -47,6 +47,7 @@ import {
   LibraryTable,
   PersonTable,
   SharedItemTable,
+  UploadSessionTable,
   UserTable,
   VideoMetadataTable,
   ViewerHiddenFileTable,
@@ -693,10 +694,29 @@ export const filesRouter = router({
         if (m) motion = { fileId: file.motionFileId, name: m.name };
       }
 
+      // May turn the photo (edit.rotateFiles): an admin, or whoever uploaded it.
+      const canRotate =
+        file.type === "image" &&
+        (accessScope.isAdmin ||
+          !!(
+            await db
+              .select({ id: UploadSessionTable.id })
+              .from(UploadSessionTable)
+              .where(
+                and(
+                  eq(UploadSessionTable.fileId, file.id),
+                  eq(UploadSessionTable.userId, userId),
+                  eq(UploadSessionTable.status, "done"),
+                ),
+              )
+              .limit(1)
+          )[0]);
+
       return {
         file,
         raw,
         motion,
+        canRotate,
         imageMetadata: imageMetadata ?? null,
         geoLocation: geoLocation ?? null,
         people,
@@ -736,6 +756,8 @@ export const filesRouter = router({
               mime: z.string(),
               size: z.number().int().nonnegative(),
               quality: z.number().int().min(1).max(100).optional(),
+              // The original's rotation the variant was made with.
+              rotation: z.number().int().optional(),
             }),
           )
           .min(1)
@@ -783,6 +805,8 @@ export const filesRouter = router({
               mime: v.mime,
               size: v.size,
               type: v.fileType,
+              // A new encode under the same path: a new ETag.
+              updatedAt: new Date().toISOString(),
             },
           })
           .returning({ id: FileTable.id });
@@ -801,12 +825,15 @@ export const filesRouter = router({
             fileId: res.id,
             type: v.type,
             quality: v.quality,
+            rotation: v.rotation ?? 0,
           })
           .onConflictDoUpdate({
             target: [FileVariantTable.originalFileId, FileVariantTable.type],
             set: {
               fileId: res.id,
               ...(v.quality !== undefined && { quality: v.quality }),
+              rotation: v.rotation ?? 0,
+              updatedAt: new Date().toISOString(),
             },
           });
 
@@ -860,6 +887,7 @@ export const filesRouter = router({
             dir: file.dir,
             name: `${basename(file.name, extname(file.name))}__thumb.avif`,
             quality: thumbnail.quality,
+            rotation: thumbnail.rotation,
           }
         : null,
       optimized: optimized
@@ -868,10 +896,11 @@ export const filesRouter = router({
             dir: file.dir,
             name: `${basename(file.name, extname(file.name))}__opt.avif`,
             quality: optimized.quality,
+            rotation: optimized.rotation,
           }
         : null,
       thumbnailLg: thumbnailLg
-        ? { id: thumbnailLg.id, quality: thumbnailLg.quality }
+        ? { id: thumbnailLg.id, quality: thumbnailLg.quality, rotation: thumbnailLg.rotation }
         : null,
     };
   }),
