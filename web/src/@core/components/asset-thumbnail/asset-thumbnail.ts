@@ -94,7 +94,7 @@ const altDate = new Intl.DateTimeFormat(undefined, {
         }
         <!-- sizes and srcset are bound before src so the browser fetches one file. -->
         <img
-          class="absolute inset-0 h-full w-full object-cover outline outline-1 -outline-offset-1 outline-black/10 transition-opacity duration-300 dark:outline-white/10"
+          class="absolute inset-0 h-full w-full object-cover transition-opacity duration-300"
           [class.opacity-0]="!imageLoaded()"
           [attr.sizes]="justified() ? null : sizes()"
           [attr.srcset]="justified() ? null : smallUrl() + ' 320w, ' + largeUrl() + ' 640w'"

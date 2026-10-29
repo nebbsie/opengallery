@@ -263,7 +263,7 @@ const SEARCH_DEBOUNCE_MS = 250;
                 [attr.aria-label]="(person.name || 'Unnamed person') + ', ' + (person.faceCount | plural: 'photo')"
               >
                 <div
-                  class="bg-muted relative h-28 w-28 overflow-hidden rounded-full outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+                  class="bg-muted relative h-28 w-28 overflow-hidden rounded-full"
                 >
                   @if (isAdmin() && person.hidden) {
                     <span

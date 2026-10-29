@@ -97,7 +97,7 @@ const PAGE = 48;
             (click)="single() ? choose(p) : toggle(p.id)"
           >
             <span
-              class="bg-muted relative block aspect-square w-full max-w-24 overflow-hidden rounded-full outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+              class="bg-muted relative block aspect-square w-full max-w-24 overflow-hidden rounded-full"
               [class.ring-2]="isSelected(p.id)"
               [class.ring-destructive]="!single() && isSelected(p.id)"
               [class.ring-primary]="single() && isSelected(p.id)"

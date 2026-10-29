@@ -112,7 +112,7 @@ type Tab = 'photos' | 'faces';
       <div class="mb-3 flex items-center gap-3">
         @if (person.data()?.coverFaceId; as cover) {
           <img
-            class="bg-muted size-12 shrink-0 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+            class="bg-muted size-12 shrink-0 rounded-full object-cover"
             [src]="apiUrl + '/face/' + cover"
             [alt]="faceAlt(person.data()?.name)"
           />

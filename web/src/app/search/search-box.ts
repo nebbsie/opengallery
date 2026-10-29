@@ -142,7 +142,7 @@ let nextId = 0;
                 <img
                   [src]="option.image"
                   alt=""
-                  class="size-8 shrink-0 object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+                  class="size-8 shrink-0 object-cover"
                   [class.rounded-full]="option.round"
                   [class.rounded-md]="!option.round"
                   loading="lazy"

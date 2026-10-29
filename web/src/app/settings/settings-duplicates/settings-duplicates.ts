@@ -174,7 +174,7 @@ const STRIP = 8;
                     [src]="thumb(g.files[0]!)"
                     alt=""
                     loading="lazy"
-                    class="bg-muted size-14 shrink-0 rounded-md object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+                    class="bg-muted size-14 shrink-0 rounded-md object-cover"
                   />
                 }
                 @if (s.groups.length > STRIP) {
@@ -209,7 +209,7 @@ const STRIP = 8;
                               [src]="thumb(file)"
                               alt=""
                               loading="lazy"
-                              class="h-full w-full object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+                              class="h-full w-full object-cover"
                             />
                             @if (file.type === 'video') {
                               <span

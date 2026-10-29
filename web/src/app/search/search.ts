@@ -107,7 +107,7 @@ import { SearchState, searchLinks } from './search-state';
                       <img
                         [src]="apiUrl + '/face/' + p.coverFaceId"
                         alt=""
-                        class="size-20 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 sm:size-24 dark:outline-white/10"
+                        class="size-20 rounded-full object-cover sm:size-24"
                         loading="lazy"
                       />
                     } @else {
@@ -137,7 +137,7 @@ import { SearchState, searchLinks } from './search-state';
                           class="hover:bg-accent flex min-h-12 items-center gap-3 rounded-lg p-1.5 transition-[background-color,scale] duration-100 active:scale-[0.98]"
                         >
                           @if (pl.cover) {
-                            <img [src]="apiUrl + '/asset/' + pl.cover + '/thumbnail'" alt="" class="size-10 rounded-md object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10" loading="lazy" />
+                            <img [src]="apiUrl + '/asset/' + pl.cover + '/thumbnail'" alt="" class="size-10 rounded-md object-cover" loading="lazy" />
                           } @else {
                             <span class="bg-muted text-muted-foreground grid size-10 place-items-center rounded-md"><ng-icon hlm size="sm" name="lucideMapPin" /></span>
                           }
@@ -162,7 +162,7 @@ import { SearchState, searchLinks } from './search-state';
                           class="hover:bg-accent flex min-h-12 items-center gap-3 rounded-lg p-1.5 transition-[background-color,scale] duration-100 active:scale-[0.98]"
                         >
                           @if (al.cover) {
-                            <img [src]="apiUrl + '/asset/' + al.cover + '/thumbnail'" alt="" class="size-10 rounded-md object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10" loading="lazy" />
+                            <img [src]="apiUrl + '/asset/' + al.cover + '/thumbnail'" alt="" class="size-10 rounded-md object-cover" loading="lazy" />
                           } @else {
                             <span class="bg-muted text-muted-foreground grid size-10 place-items-center rounded-md"><ng-icon hlm size="sm" name="lucideImages" /></span>
                           }

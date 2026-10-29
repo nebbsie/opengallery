@@ -103,12 +103,12 @@ export function reviewCountText(n: number): string {
 
         <div class="flex items-end gap-4">
           <img
-            class="bg-muted size-56 rounded-full object-cover outline outline-1 -outline-offset-1 outline-black/10 sm:size-64 dark:outline-white/10"
+            class="bg-muted size-56 rounded-full object-cover sm:size-64"
             [src]="faceUrl(item.faceId)"
             [alt]="faceAlt(item.personName)"
           />
           <a
-            class="focus-visible:ring-ring block size-24 shrink-0 overflow-hidden rounded-lg outline outline-1 -outline-offset-1 outline-black/10 focus-visible:ring-2 dark:outline-white/10"
+            class="focus-visible:ring-ring block size-24 shrink-0 overflow-hidden rounded-lg focus-visible:ring-2"
             [routerLink]="['/asset', item.fileId]"
             target="_blank"
             aria-label="Open the full photo in a new tab"

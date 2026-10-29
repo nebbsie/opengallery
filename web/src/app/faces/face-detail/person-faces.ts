@@ -219,7 +219,7 @@ const MAX_SELECTION = 5000;
 
     <ng-template #tile let-f>
       <img
-        class="bg-muted h-full w-full object-cover outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+        class="bg-muted h-full w-full object-cover"
         [src]="f.hasCrop ? faceUrl(f.faceId) : thumbUrl(f.fileId)"
         [alt]="faceAlt(name())"
         loading="lazy"
